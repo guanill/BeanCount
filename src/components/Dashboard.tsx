@@ -128,9 +128,11 @@ export default function Dashboard() {
             </button>
             <button
               onClick={async () => {
+                if (!confirm("Are you sure you want to sign out?")) return;
                 const supabase = createClient();
                 await supabase.auth.signOut();
-                window.location.href = "/login";
+                const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+                window.location.href = `${basePath}/login`;
               }}
               className="flex items-center gap-2 px-3 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/40 hover:text-red transition-all"
               title="Sign out"
