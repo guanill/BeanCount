@@ -24,6 +24,7 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import { createAccount, updateAccount, deleteAccount } from "@/lib/supabase/queries";
+import { callEdgeFunction } from "@/lib/supabase/functions";
 
 // Teller Connect contains browser-only code — load client-side only
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
@@ -114,9 +115,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const res = await fetch("/api/teller/sync", { method: "POST" });
-      const data = await res.json() as { synced?: number; errors?: SyncError[]; error?: string };
-      if (data.error) throw new Error(data.error);
+      const data = await callEdgeFunction<{ synced?: number; errors?: SyncError[] }>("teller-sync");
 
       // Track per-account errors so we can show inline reconnect banners
       const errMap: Record<string, SyncError> = {};
@@ -136,7 +135,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
 
   async function handleDisconnect(id: string) {
     if (!confirm("Disconnect from Teller? The account stays but won't auto-sync.")) return;
-    await fetch(`/api/teller/disconnect/${id}`, { method: "DELETE" });
+    await callEdgeFunction("teller-disconnect", { method: "POST", body: { id } });
     onRefresh();
   }
 

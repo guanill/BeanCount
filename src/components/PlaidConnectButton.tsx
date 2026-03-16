@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePlaidLink, PlaidLinkOnSuccess } from "react-plaid-link";
 import { Link2, Loader2 } from "lucide-react";
+import { callEdgeFunction } from "@/lib/supabase/functions";
 
 interface Props {
   onConnected: () => void;
@@ -15,15 +16,8 @@ export default function PlaidConnectButton({ onConnected }: Props) {
 
   // Fetch link token when component mounts
   useEffect(() => {
-    fetch("/api/plaid/create-link-token", { method: "POST" })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) {
-          setError(data.error);
-        } else {
-          setLinkToken(data.link_token);
-        }
-      })
+    callEdgeFunction<{ link_token: string }>("plaid-create-link-token")
+      .then((data) => setLinkToken(data.link_token))
       .catch((e) => setError(e.message));
   }, []);
 
@@ -32,13 +26,9 @@ export default function PlaidConnectButton({ onConnected }: Props) {
       setLoading(true);
       try {
         const institutionName = metadata.institution?.name ?? "Bank";
-        const res = await fetch("/api/plaid/exchange-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ public_token, institution_name: institutionName }),
+        await callEdgeFunction("plaid-exchange-token", {
+          body: { public_token, institution_name: institutionName },
         });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
         onConnected();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Connection failed");
