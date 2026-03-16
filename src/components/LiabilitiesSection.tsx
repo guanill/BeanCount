@@ -93,23 +93,23 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
   }
 
   return (
-    <div className="rounded-2xl bg-linear-to-br from-orange-500/15 to-red-500/10 border border-border/50 p-6 animate-slide-up">
+    <div className="rounded-2xl bg-linear-to-br from-orange-500/15 to-red-500/10 border border-border/50 p-4 sm:p-6 animate-slide-up">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-orange-500/20">
-            <Landmark className="w-5 h-5 text-orange-400" />
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="p-2 sm:p-2.5 rounded-xl bg-orange-500/20 shrink-0">
+            <Landmark className="w-4 h-4 sm:w-5 sm:h-5 text-orange-400" />
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">Pending & Owed</h2>
-            <p className="text-sm text-foreground/50">Money you owe not tracked elsewhere</p>
+          <div className="min-w-0">
+            <h2 className="text-sm sm:text-lg font-bold text-foreground">Pending & Owed</h2>
+            <p className="text-[10px] sm:text-sm text-foreground/50">Money you owe</p>
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold text-red-400">-{formatCurrency(total)}</p>
+        <div className="text-right shrink-0">
+          <p className="text-lg sm:text-2xl font-bold text-red-400">-{formatCurrency(total)}</p>
           <button
             onClick={() => { setAdding(true); setAddForm(EMPTY_FORM); }}
-            className="text-xs text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1 mt-1 ml-auto"
+            className="text-[10px] sm:text-xs text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1 mt-1 ml-auto"
           >
             <Plus className="w-3 h-3" /> Add
           </button>

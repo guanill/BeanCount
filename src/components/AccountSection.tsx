@@ -151,31 +151,31 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   return (
     <div className={`rounded-2xl bg-linear-to-br ${gradient} border border-border/50 p-4 sm:p-6 animate-slide-up`}>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`p-2.5 rounded-xl shrink-0 ${iconBg}`}>
-            <Icon className="w-5 h-5 text-foreground" />
+          <div className={`p-2 sm:p-2.5 rounded-xl shrink-0 ${iconBg}`}>
+            <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-foreground" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-bold text-foreground truncate">{label}</h2>
-            <p className="text-xs sm:text-sm text-foreground/50">
+            <h2 className="text-sm sm:text-lg font-bold text-foreground truncate">{label}</h2>
+            <p className="text-[10px] sm:text-sm text-foreground/50">
               {accounts.length} account{accounts.length !== 1 ? "s" : ""}
               {hasLinked && (
-                <span className="ml-1.5 inline-flex items-center gap-1 text-accent/80">
+                <span className="ml-1 sm:ml-1.5 inline-flex items-center gap-1 text-accent/80">
                   · <CheckCircle2 className="w-3 h-3" /> {linkedAccounts.length} linked
                 </span>
               )}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 justify-between sm:justify-end">
+        <div className="flex items-center gap-2 shrink-0">
           {hasLinked && (
             <button
               type="button"
               onClick={handleSync}
               disabled={syncing}
               title="Sync balances from your bank"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-foreground/60
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-foreground/60
                          hover:text-accent border border-border/40 hover:border-accent/30 transition-colors
                          disabled:opacity-40"
             >
@@ -186,12 +186,12 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
             </button>
           )}
           <div className="text-right">
-            <p className="text-xl sm:text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
+            <p className="text-lg sm:text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
             <button
               onClick={() => { setAdding(!adding); setEditingId(null); setAddValues({ name: "", balance: "" }); }}
-              className="text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1 mt-1 ml-auto"
+              className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1 mt-1 ml-auto"
             >
-              <Plus className="w-3 h-3" /> Add manually
+              <Plus className="w-3 h-3" /> Add
             </button>
           </div>
         </div>

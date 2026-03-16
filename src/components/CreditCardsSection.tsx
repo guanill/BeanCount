@@ -162,34 +162,34 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
     <div className="space-y-6 animate-slide-up">
       {/* Credit Card Debt */}
       <div className="rounded-2xl bg-linear-to-br from-red-500/15 to-orange-500/10 border border-border/50 p-4 sm:p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div className="flex items-center justify-between gap-2 mb-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="p-2.5 rounded-xl bg-red-500/20 shrink-0">
-              <CreditCardIcon className="w-5 h-5 text-red" />
+            <div className="p-2 sm:p-2.5 rounded-xl bg-red-500/20 shrink-0">
+              <CreditCardIcon className="w-4 h-4 sm:w-5 sm:h-5 text-red" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base sm:text-lg font-bold text-foreground">Credit Card Debt</h2>
-              <p className="text-xs sm:text-sm text-foreground/50">
+              <h2 className="text-sm sm:text-lg font-bold text-foreground">Credit Card Debt</h2>
+              <p className="text-[10px] sm:text-sm text-foreground/50">
                 {cards.length} card{cards.length !== 1 ? "s" : ""}
                 {hasLinked && (
-                  <span className="ml-1.5 inline-flex items-center gap-1 text-accent/80">
+                  <span className="ml-1 sm:ml-1.5 inline-flex items-center gap-1 text-accent/80">
                     · <CheckCircle2 className="w-3 h-3" /> {linkedCards.length} linked
                   </span>
                 )}
               </p>
             </div>
           </div>
-          <div className="flex items-center justify-between sm:justify-end gap-2">
-            <p className={`text-xl sm:text-2xl font-bold ${totalDebt <= 0 ? "text-green" : "text-red"}`}>
+          <div className="text-right shrink-0">
+            <p className={`text-lg sm:text-2xl font-bold ${totalDebt <= 0 ? "text-green" : "text-red"}`}>
               {totalDebt <= 0 ? formatCurrency(Math.abs(totalDebt)) : `-${formatCurrency(totalDebt)}`}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 justify-end mt-1">
               {hasLinked && (
                 <button
                   type="button"
                   onClick={handleSync}
                   disabled={syncing}
-                  className={`flex items-center gap-1 text-xs transition-colors disabled:opacity-40 ${
+                  className={`hidden sm:flex items-center gap-1 text-xs transition-colors disabled:opacity-40 ${
                     syncMsg?.includes("failed")
                       ? "text-yellow-400 hover:text-yellow-300"
                       : "text-foreground/50 hover:text-accent"
@@ -201,9 +201,9 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
               )}
               <button
                 onClick={() => { setAdding(!adding); setAddForm({ name: "", balance_owed: "", credit_limit: "", points_balance: "", points_value_cents: "1", due_date: "", min_payment: "" }); }}
-                className="text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1"
+                className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1"
               >
-                <Plus className="w-3 h-3" /> Add Card
+                <Plus className="w-3 h-3" /> Add
               </button>
             </div>
           </div>
