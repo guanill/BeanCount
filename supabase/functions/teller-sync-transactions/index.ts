@@ -137,7 +137,12 @@ serve(async (req) => {
           const merchantName = tx.details?.counterparty?.name ?? null;
           const { category: catKey, txType } = classifyTellerTransaction(tx, merchantName);
 
-          const { error: upsertErr } = await admin.from("transactions").upsert({
+          // Check if this teller transaction already exists
+          const { data: existing } = await admin.from("transactions")
+            .select("id").eq("teller_transaction_id", tx.id).maybeSingle();
+          if (existing) continue;
+
+          const { error: insertErr } = await admin.from("transactions").insert({
             id: crypto.randomUUID(),
             user_id: user.id,
             account_id: row.id,
@@ -145,8 +150,8 @@ serve(async (req) => {
             amount, date: tx.date, name: tx.description,
             merchant_name: merchantName, category: catKey,
             subcategory: null, transaction_type: txType, is_manual: false,
-          }, { onConflict: "teller_transaction_id", ignoreDuplicates: true });
-          if (upsertErr) console.error("[sync-tx] Upsert error:", upsertErr.message, "tx:", tx.id);
+          });
+          if (insertErr) console.error("[sync-tx] Insert error:", insertErr.message, "tx:", tx.id);
           else added++;
         }
         console.log("[sync-tx] Upserted", added, "transactions for", row.teller_account_id);
