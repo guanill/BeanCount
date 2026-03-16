@@ -1,8 +1,6 @@
 // Teller API helper for Edge Functions.
-// NOTE: Teller requires mTLS with client certs for development/production.
-// Deno Deploy does not support custom TLS clients. This uses plain fetch
-// with Basic auth, which works in sandbox mode. For development/production,
-// you may need a proxy or a separate Node.js service for mTLS.
+// Routes through a mTLS proxy when TELLER_PROXY_URL is set (required for
+// development/production). Falls back to direct API calls for sandbox.
 
 export interface TellerAccount {
   id: string;
@@ -44,13 +42,33 @@ export async function tellerFetch<T>(
   accessToken: string,
   method = "GET",
 ): Promise<T> {
-  const resp = await fetch(`https://api.teller.io${path}`, {
-    method,
-    headers: {
-      Authorization: `Basic ${btoa(`${accessToken}:`)}`,
-      Accept: "application/json",
-    },
-  });
+  const proxyUrl = Deno.env.get("TELLER_PROXY_URL");
+  const proxySecret = Deno.env.get("TELLER_PROXY_SECRET");
+
+  let resp: Response;
+
+  if (proxyUrl) {
+    // Route through mTLS proxy for real bank connections
+    resp = await fetch(`${proxyUrl}/teller${path}`, {
+      method,
+      headers: {
+        "x-teller-token": accessToken,
+        "x-proxy-secret": proxySecret ?? "",
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+  } else {
+    // Direct call — works in sandbox only
+    resp = await fetch(`https://api.teller.io${path}`, {
+      method,
+      headers: {
+        Authorization: `Basic ${btoa(`${accessToken}:`)}`,
+        Accept: "application/json",
+      },
+    });
+  }
+
   if (!resp.ok) {
     const body = await resp.text();
     throw new Error(`Teller ${resp.status}: ${body}`);

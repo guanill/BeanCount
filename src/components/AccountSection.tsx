@@ -127,7 +127,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
       onRefresh();
       setTimeout(() => setSyncMsg(null), 4000);
     } catch (e) {
-      setSyncMsg(e instanceof Error ? e.message : "Sync failed");
+      setSyncMsg("⚠ Sync failed");
     } finally {
       setSyncing(false);
     }
@@ -141,7 +141,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
 
   function formatSynced(ts: string | null): string {
     if (!ts) return "never";
-    const diff = Math.round((Date.now() - new Date(ts + "Z").getTime()) / 60000);
+    const date = new Date(ts.endsWith("Z") ? ts : ts + "Z");
+    const diff = Math.round((Date.now() - date.getTime()) / 60000);
+    if (isNaN(diff)) return "synced";
     if (diff < 1) return "just now";
     if (diff < 60) return `${diff}m ago`;
     if (diff < 1440) return `${Math.round(diff / 60)}h ago`;
@@ -177,10 +179,10 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
               title="Sync balances from your bank"
               className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-foreground/60
                          hover:text-accent border border-border/40 hover:border-accent/30 transition-colors
-                         disabled:opacity-40"
+                         disabled:opacity-40 max-w-48 whitespace-nowrap"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-              <span className={syncMsg?.includes("failed") ? "text-yellow-400" : ""}>
+              <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${syncing ? "animate-spin" : ""}`} />
+              <span className={`truncate ${syncMsg?.includes("failed") ? "text-yellow-400" : ""}`}>
                 {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
               </span>
             </button>
@@ -313,7 +315,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                         <AccIcon className="w-4 h-4" style={{ color: account.color || undefined }} />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{account.name}</p>
+                        <p className="text-sm font-medium text-foreground wrap-break-word">{account.name}</p>
                         {isLinked && !syncErr && (
                           <p className="text-xs text-accent/60 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
