@@ -59,19 +59,26 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
+    console.log("[sync-tx] Starting sync...");
     const supabase = getSupabaseClient(req.headers.get("Authorization")!);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (!user) {
+      console.log("[sync-tx] No user found, returning 401");
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    console.log("[sync-tx] User:", user.id);
 
     const admin = getSupabaseAdmin();
 
-    const { data: accountTokens } = await admin.from("integration_tokens")
+    const { data: accountTokens, error: atErr } = await admin.from("integration_tokens")
       .select("entity_id, access_token")
       .eq("user_id", user.id).eq("provider", "teller").eq("entity_type", "account");
+    console.log("[sync-tx] Account tokens found:", accountTokens?.length ?? 0, atErr ? `error: ${atErr.message}` : "");
 
-    const { data: cardTokens } = await admin.from("integration_tokens")
+    const { data: cardTokens, error: ctErr } = await admin.from("integration_tokens")
       .select("entity_id, access_token")
       .eq("user_id", user.id).eq("provider", "teller").eq("entity_type", "credit_card");
+    console.log("[sync-tx] Card tokens found:", cardTokens?.length ?? 0, ctErr ? `error: ${ctErr.message}` : "");
 
     const accountIds = (accountTokens ?? []).map((t) => t.entity_id);
     const cardIds = (cardTokens ?? []).map((t) => t.entity_id);
@@ -84,6 +91,8 @@ serve(async (req) => {
       ? await admin.from("credit_cards").select("id, teller_account_id").in("id", cardIds)
       : { data: [] };
 
+    console.log("[sync-tx] DB accounts matched:", accounts?.length ?? 0, "cards:", cards?.length ?? 0);
+
     const tokenMap = new Map<string, string>();
     for (const t of accountTokens ?? []) tokenMap.set(t.entity_id, t.access_token);
     for (const t of cardTokens ?? []) tokenMap.set(t.entity_id, t.access_token);
@@ -93,30 +102,42 @@ serve(async (req) => {
       ...(cards ?? []).map((c) => ({ id: c.id, teller_account_id: c.teller_account_id })),
     ];
 
-    if (!linked.length) return new Response(JSON.stringify({ added: 0, message: "No linked accounts" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    console.log("[sync-tx] Linked accounts to sync:", linked.length, linked.map(l => l.teller_account_id));
+
+    if (!linked.length) {
+      console.log("[sync-tx] No linked accounts, returning early");
+      return new Response(JSON.stringify({ added: 0, message: "No linked accounts" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     let totalAdded = 0;
 
     for (const row of linked) {
       const accessToken = tokenMap.get(row.id);
-      if (!accessToken || !row.teller_account_id) continue;
+      if (!accessToken || !row.teller_account_id) {
+        console.log("[sync-tx] Skipping row - no token or teller_account_id:", row.id);
+        continue;
+      }
 
       try {
+        console.log("[sync-tx] Fetching transactions for teller account:", row.teller_account_id);
         const transactions = await tellerFetch<TellerTransaction[]>(
           `/accounts/${row.teller_account_id}/transactions`, accessToken);
 
         if (!Array.isArray(transactions)) {
-          console.error(`Unexpected response for account ${row.id}:`, transactions);
+          console.error("[sync-tx] Unexpected response for account", row.id, ":", JSON.stringify(transactions).slice(0, 500));
           continue;
         }
 
+        console.log("[sync-tx] Got", transactions.length, "transactions from Teller for", row.teller_account_id);
+
+        let added = 0;
         for (const tx of transactions) {
           if (tx.status === "pending") continue;
           const amount = parseFloat(tx.amount);
           const merchantName = tx.details?.counterparty?.name ?? null;
           const { category: catKey, txType } = classifyTellerTransaction(tx, merchantName);
 
-          await admin.from("transactions").upsert({
+          const { error: upsertErr } = await admin.from("transactions").upsert({
             id: crypto.randomUUID(),
             user_id: user.id,
             account_id: row.id,
@@ -125,20 +146,24 @@ serve(async (req) => {
             merchant_name: merchantName, category: catKey,
             subcategory: null, transaction_type: txType, is_manual: false,
           }, { onConflict: "teller_transaction_id", ignoreDuplicates: true });
-          totalAdded++;
+          if (upsertErr) console.error("[sync-tx] Upsert error:", upsertErr.message, "tx:", tx.id);
+          else added++;
         }
+        console.log("[sync-tx] Upserted", added, "transactions for", row.teller_account_id);
+        totalAdded += added;
       } catch (e) {
-        console.error(`Failed to sync transactions for account ${row.id}:`, e);
+        console.error("[sync-tx] Failed to sync for account", row.id, ":", e instanceof Error ? e.message : e);
         const msg = e instanceof Error ? e.message : String(e);
-        // Don't let one account failure kill the whole sync
         if (linked.length === 1) {
           return new Response(JSON.stringify({ error: `Sync failed: ${msg.slice(0, 200)}` }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
       }
     }
 
+    console.log("[sync-tx] Done! Total added:", totalAdded);
     return new Response(JSON.stringify({ added: totalAdded }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
+    console.error("[sync-tx] Top-level error:", (err as Error).message, (err as Error).stack);
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
