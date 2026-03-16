@@ -20,6 +20,7 @@ export async function callEdgeFunction<T = unknown>(
     method: options.method ?? "POST",
     headers: {
       Authorization: `Bearer ${session.access_token}`,
+      apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       "Content-Type": "application/json",
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
