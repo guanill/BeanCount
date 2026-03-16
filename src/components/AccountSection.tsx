@@ -149,16 +149,16 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   return (
-    <div className={`rounded-2xl bg-linear-to-br ${gradient} border border-border/50 p-6 animate-slide-up`}>
+    <div className={`rounded-2xl bg-linear-to-br ${gradient} border border-border/50 p-4 sm:p-6 animate-slide-up`}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className={`p-2.5 rounded-xl ${iconBg}`}>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`p-2.5 rounded-xl shrink-0 ${iconBg}`}>
             <Icon className="w-5 h-5 text-foreground" />
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">{label}</h2>
-            <p className="text-sm text-foreground/50">
+          <div className="min-w-0">
+            <h2 className="text-base sm:text-lg font-bold text-foreground truncate">{label}</h2>
+            <p className="text-xs sm:text-sm text-foreground/50">
               {accounts.length} account{accounts.length !== 1 ? "s" : ""}
               {hasLinked && (
                 <span className="ml-1.5 inline-flex items-center gap-1 text-accent/80">
@@ -168,7 +168,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 justify-between sm:justify-end">
           {hasLinked && (
             <button
               type="button"
@@ -186,7 +186,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
             </button>
           )}
           <div className="text-right">
-            <p className="text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
+            <p className="text-xl sm:text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
             <button
               onClick={() => { setAdding(!adding); setEditingId(null); setAddValues({ name: "", balance: "" }); }}
               className="text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1 mt-1 ml-auto"
