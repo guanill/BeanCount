@@ -406,7 +406,7 @@ export async function getTransactions(
 ): Promise<{ transactions: Transaction[]; summary: TransactionSummary }> {
   let query = supabase
     .from("transactions")
-    .select("*, accounts!left(name)")
+    .select("*")
     .order("date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(500);
@@ -441,11 +441,17 @@ export async function getTransactions(
   const { data, error } = await query;
   if (error) throw error;
 
-  // Map joined account name
+  // Map account names from a separate lookup
+  const accountIds = [...new Set((data ?? []).map((r: any) => r.account_id).filter(Boolean))];
+  let accountMap = new Map<string, string>();
+  if (accountIds.length > 0) {
+    const { data: accts } = await supabase.from("accounts").select("id, name").in("id", accountIds);
+    for (const a of accts ?? []) accountMap.set(a.id, a.name);
+  }
+
   const transactions: Transaction[] = (data ?? []).map((row: any) => ({
     ...row,
-    account_name: row.accounts?.name ?? null,
-    accounts: undefined,
+    account_name: accountMap.get(row.account_id) ?? null,
   }));
 
   // Calculate summary (excluding ignored)
