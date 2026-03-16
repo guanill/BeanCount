@@ -61,64 +61,14 @@ export default function LoginPage() {
     setError("");
     const supabase = createClient();
     const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-    const redirectTo = `${window.location.origin}${basePath}/`;
-
-    const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo,
-        skipBrowserRedirect: true,
-      },
+      options: { redirectTo: `${window.location.origin}${basePath}/` },
     });
-
-    if (oauthError || !data.url) {
-      setError(oauthError?.message ?? "Failed to start Google sign-in");
+    if (error) {
+      setError(error.message);
       setGoogleLoading(false);
-      return;
     }
-
-    // Open Google sign-in in a popup
-    const width = 500, height = 600;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-    const popup = window.open(
-      data.url,
-      "google-signin",
-      `width=${width},height=${height},left=${left},top=${top}`,
-    );
-
-    // Poll for the popup returning with a code
-    const interval = setInterval(async () => {
-      try {
-        if (!popup || popup.closed) {
-          clearInterval(interval);
-          setGoogleLoading(false);
-          return;
-        }
-        const popupUrl = popup.location.href;
-        if (popupUrl.startsWith(window.location.origin)) {
-          clearInterval(interval);
-          const url = new URL(popupUrl);
-          const code = url.searchParams.get("code");
-          popup.close();
-          if (code) {
-            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-            if (exchangeError) {
-              setError(exchangeError.message);
-              setGoogleLoading(false);
-            } else {
-              router.push("/");
-              router.refresh();
-            }
-          } else {
-            setError("Google sign-in was cancelled.");
-            setGoogleLoading(false);
-          }
-        }
-      } catch {
-        // Cross-origin — popup still on Google's domain, keep polling
-      }
-    }, 500);
   }
 
   return (
