@@ -146,7 +146,7 @@ serve(async (req) => {
 
         if (posted.length === 0) continue;
 
-        // Build rows and use raw SQL INSERT ... ON CONFLICT DO NOTHING for speed + safety
+        // Build rows and batch upsert (ON CONFLICT now works with non-partial unique index)
         const rows = posted.map(tx => {
           const amount = parseFloat(tx.amount);
           const merchantName = tx.details?.counterparty?.name ?? null;
@@ -162,19 +162,18 @@ serve(async (req) => {
           };
         });
 
-        // Insert one-by-one but skip duplicates (fast enough with small batches)
-        let added = 0;
-        for (const r of rows) {
-          const { error: insertErr } = await admin.from("transactions").insert(r);
-          if (insertErr) {
-            if (insertErr.message.includes("duplicate") || insertErr.message.includes("unique")) continue; // skip existing
-            console.error("[sync-tx] Insert error:", insertErr.message, "tx:", r.teller_transaction_id);
+        // Batch upsert in chunks of 100, skip existing
+        for (let i = 0; i < rows.length; i += 100) {
+          const batch = rows.slice(i, i + 100);
+          const { error: upsertErr, count } = await admin.from("transactions")
+            .upsert(batch, { onConflict: "teller_transaction_id", ignoreDuplicates: true, count: "exact" });
+          if (upsertErr) {
+            console.error("[sync-tx] Batch upsert error:", upsertErr.message);
           } else {
-            added++;
+            totalAdded += count ?? batch.length;
           }
         }
-        totalAdded += added;
-        console.log("[sync-tx] Inserted", added, "new for", row.teller_account_id, "(skipped", rows.length - added, "existing)");
+        console.log("[sync-tx] Done for", row.teller_account_id);
       } catch (e) {
         console.error("[sync-tx] Failed to sync for account", row.id, ":", e instanceof Error ? e.message : e);
         const msg = e instanceof Error ? e.message : String(e);
