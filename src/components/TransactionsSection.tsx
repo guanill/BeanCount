@@ -146,32 +146,32 @@ function TxRow({
 
   return (
     <div
-      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-background/60 transition-colors cursor-pointer ${isIgnored ? "opacity-40" : ""}`}
+      className={`group flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-2 sm:py-2.5 rounded-xl hover:bg-background/60 transition-colors cursor-pointer ${isIgnored ? "opacity-40" : ""}`}
       onClick={onClick}
     >
       <div
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0"
+        className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center text-xs sm:text-sm shrink-0"
         style={{ backgroundColor: meta.color + "20" }}
       >
         {meta.emoji}
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className={`text-sm font-medium truncate ${isIgnored ? "line-through text-foreground/40" : "text-foreground"}`}>
+        <p className={`text-xs sm:text-sm font-medium truncate ${isIgnored ? "line-through text-foreground/40" : "text-foreground"}`}>
           {tx.merchant_name || tx.name}
         </p>
-        <div className="flex items-center gap-2 mt-0.5">
-          <span className="text-xs text-foreground/40">{formatDate(tx.date)}</span>
-          <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ backgroundColor: meta.color + "20", color: meta.color }}>
+        <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 flex-wrap">
+          <span className="text-[10px] sm:text-xs text-foreground/40">{formatDate(tx.date)}</span>
+          <span className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded-full hidden sm:inline" style={{ backgroundColor: meta.color + "20", color: meta.color }}>
             {meta.label}
           </span>
-          {isIgnored && <span className="flex items-center gap-0.5 text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>}
-          {tx.is_manual && <span className="text-xs text-foreground/25">manual</span>}
+          {isIgnored && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>}
+          {tx.is_manual && <span className="text-[10px] sm:text-xs text-foreground/25">manual</span>}
         </div>
       </div>
 
       <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-        <span className={`text-sm font-bold ${isIgnored ? "line-through text-foreground/30" : isIncome ? "text-green-400" : "text-foreground/90"}`}>
+        <span className={`text-xs sm:text-sm font-bold ${isIgnored ? "line-through text-foreground/30" : isIncome ? "text-green-400" : "text-foreground/90"}`}>
           {isIncome ? "+" : "-"}{formatCurrency(displayAmt)}
         </span>
         {tx.is_manual && (
@@ -677,10 +677,10 @@ export default function TransactionsSection() {
     <div className="rounded-2xl border border-border/50 bg-card p-6 animate-slide-up">
 
       {/* â"€â"€ Header â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h2 className="text-xl font-bold text-foreground">Transactions</h2>
-          <p className="text-sm text-foreground/40 mt-0.5">Spending and income - auto-categorized</p>
+          <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>
+          <p className="text-xs sm:text-sm text-foreground/40 mt-0.5">Spending and income - auto-categorized</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
@@ -695,7 +695,7 @@ export default function TransactionsSection() {
             <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-sm font-semibold text-foreground min-w-32 text-center">{periodLabel}</span>
+            <span className="text-xs sm:text-sm font-semibold text-foreground min-w-24 sm:min-w-32 text-center">{periodLabel}</span>
             <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -703,7 +703,7 @@ export default function TransactionsSection() {
           <button onClick={handleSyncTransactions} disabled={syncing}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:border-accent/30 text-foreground/60 hover:text-accent transition-colors disabled:opacity-40">
             <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-            {syncMsg ?? (syncing ? "Syncing…" : "Sync Teller")}
+            {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
           </button>
           <button onClick={() => setShowAdd(!showAdd)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
@@ -769,27 +769,27 @@ export default function TransactionsSection() {
 
       {/* â"€â"€ Summary cards â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
       {summary && (
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          <div className="rounded-xl p-4 bg-green-500/10 border border-green-500/20">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="w-4 h-4 text-green-400" />
-              <span className="text-xs text-foreground/50">Income</span>
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
+          <div className="rounded-xl p-2.5 sm:p-4 bg-green-500/10 border border-green-500/20">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-400" />
+              <span className="text-[10px] sm:text-xs text-foreground/50">Income</span>
             </div>
-            <p className="text-lg font-bold text-green-400">{formatCurrency(summary.totalIncome)}</p>
+            <p className="text-sm sm:text-lg font-bold text-green-400 tabular-nums">{formatCurrency(summary.totalIncome)}</p>
           </div>
-          <div className="rounded-xl p-4 bg-red-500/10 border border-red-500/20">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingDown className="w-4 h-4 text-red-400" />
-              <span className="text-xs text-foreground/50">Expenses</span>
+          <div className="rounded-xl p-2.5 sm:p-4 bg-red-500/10 border border-red-500/20">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TrendingDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-400" />
+              <span className="text-[10px] sm:text-xs text-foreground/50">Expenses</span>
             </div>
-            <p className="text-lg font-bold text-red-400">{formatCurrency(summary.totalExpenses)}</p>
+            <p className="text-sm sm:text-lg font-bold text-red-400 tabular-nums">{formatCurrency(summary.totalExpenses)}</p>
           </div>
-          <div className={`rounded-xl p-4 border ${summary.net >= 0 ? "bg-accent/10 border-accent/20" : "bg-orange-500/10 border-orange-500/20"}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <Minus className="w-4 h-4 text-foreground/50" />
-              <span className="text-xs text-foreground/50">Net</span>
+          <div className={`rounded-xl p-2.5 sm:p-4 border ${summary.net >= 0 ? "bg-accent/10 border-accent/20" : "bg-orange-500/10 border-orange-500/20"}`}>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Minus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-foreground/50" />
+              <span className="text-[10px] sm:text-xs text-foreground/50">Net</span>
             </div>
-            <p className={`text-lg font-bold ${summary.net >= 0 ? "text-accent" : "text-orange-400"}`}>
+            <p className={`text-sm sm:text-lg font-bold ${summary.net >= 0 ? "text-accent" : "text-orange-400"}`}>
               {summary.net >= 0 ? "+" : ""}{formatCurrency(summary.net)}
             </p>
           </div>
@@ -808,7 +808,7 @@ export default function TransactionsSection() {
         <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6">
 
           {/* â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-          <div className="flex flex-col items-center gap-4">
+          <div className="hidden lg:flex flex-col items-center gap-4">
             <div className="w-44 h-44">
               <SpendingDonut
                 segments={donutSegments}
@@ -944,22 +944,22 @@ export default function TransactionsSection() {
                       <button
                         type="button"
                         onClick={() => toggleCat(cat)}
-                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-background/30 transition-colors"
+                        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 text-left hover:bg-background/30 transition-colors"
                       >
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0"
+                        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center text-sm sm:text-base shrink-0"
                           style={{ backgroundColor: meta.color + "22" }}>
                           {meta.emoji}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm font-semibold text-foreground">{meta.label}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-foreground/35">{txs.length} txn{txs.length !== 1 ? "s" : ""}</span>
-                              <span className={"text-sm font-bold tabular-nums " + (meta.type === "income" ? "text-green-400" : "text-foreground/90")}>
+                            <span className="text-xs sm:text-sm font-semibold text-foreground">{meta.label}</span>
+                            <div className="flex items-center gap-1.5 sm:gap-2">
+                              <span className="text-[10px] sm:text-xs text-foreground/35 hidden sm:inline">{txs.length} txn{txs.length !== 1 ? "s" : ""}</span>
+                              <span className={"text-xs sm:text-sm font-bold tabular-nums " + (meta.type === "income" ? "text-green-400" : "text-foreground/90")}>
                                 {meta.type === "income" ? "+" : ""}{formatCurrency(catTotal)}
                               </span>
                               {pct !== null && (
-                                <span className="text-xs text-foreground/30 w-8 text-right tabular-nums">{pct}%</span>
+                                <span className="text-[10px] sm:text-xs text-foreground/30 w-7 sm:w-8 text-right tabular-nums">{pct}%</span>
                               )}
                             </div>
                           </div>

@@ -480,7 +480,7 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
     <div className="rounded-2xl bg-card border border-border/30 overflow-hidden transition-all shadow-md">
       <div className="h-1 w-full" style={{ background: colors.ring, opacity: 0.6 }} />
 
-      <div className="p-5">
+      <div className="p-4 sm:p-5">
         {editing ? (
           <>
             <div className="flex items-center gap-2 mb-4">
@@ -498,35 +498,35 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
         ) : (
           <div className="space-y-4">
             {/* Header row */}
-            <div className="flex items-start gap-3">
-              <div className={`w-11 h-11 rounded-2xl ${colors.bg} ${colors.border} border flex items-center justify-center text-xl shrink-0`}>
+            <div className="flex items-start gap-2 sm:gap-3">
+              <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl ${colors.bg} ${colors.border} border flex items-center justify-center text-base sm:text-xl shrink-0`}>
                 {meta.emoji}
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-foreground leading-tight truncate">{loan.name}</h3>
-                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>
+                <h3 className="font-bold text-foreground leading-tight text-sm sm:text-base truncate">{loan.name}</h3>
+                <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 flex-wrap">
+                  <span className={`text-[10px] sm:text-[11px] font-semibold px-1.5 sm:px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>
                     {meta.label}
                   </span>
-                  <span className="text-[11px] text-foreground/40 font-medium">
+                  <span className="text-[10px] sm:text-[11px] text-foreground/40 font-medium">
                     {loan.interest_rate}% APR
                   </span>
                   {deferralMonths > 0 && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 text-[10px] font-bold border border-yellow-500/20">
-                      ⏸ {deferralMonths}mo deferred
+                      ⏸ {deferralMonths}mo
                     </span>
                   )}
                 </div>
               </div>
               {progress !== null && (
-                <div className="relative shrink-0 flex items-center justify-center" style={{ width: 52, height: 52 }}>
+                <div className="relative shrink-0 items-center justify-center hidden sm:flex" style={{ width: 52, height: 52 }}>
                   <ProgressRing pct={progress} color={colors.ring} size={52} stroke={5} />
                   <span className="absolute text-[10px] font-bold text-foreground/70">
                     {Math.round(progress)}%
                   </span>
                 </div>
               )}
-              <div className="flex items-center gap-0.5 shrink-0 ml-1">
+              <div className="flex items-center gap-0.5 shrink-0">
                 <button onClick={startEdit}
                   className="p-1.5 rounded-lg text-foreground/30 hover:text-accent hover:bg-accent/10 transition-all">
                   <Pencil className="w-3.5 h-3.5" />
@@ -539,36 +539,36 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
             </div>
 
             {/* Key stats */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-background/70 p-3 space-y-0.5">
+            <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
                 <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Balance</p>
-                <p className="text-lg font-bold text-red-400 tabular-nums">{formatCurrency(loan.balance)}</p>
+                <p className="text-base sm:text-lg font-bold text-red-400 tabular-nums">{formatCurrency(loan.balance)}</p>
                 {loan.original_amount && (
                   <p className="text-[10px] text-foreground/30">of {formatCurrency(loan.original_amount)}</p>
                 )}
               </div>
-              <div className="rounded-xl bg-background/70 p-3 space-y-0.5">
+              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
                 <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Monthly</p>
-                <p className="text-lg font-bold text-foreground tabular-nums">{formatCurrency(loan.monthly_payment)}</p>
+                <p className="text-base sm:text-lg font-bold text-foreground tabular-nums">{formatCurrency(loan.monthly_payment)}</p>
                 <p className="text-[10px] text-foreground/30">per month</p>
               </div>
-              <div className="rounded-xl bg-background/70 p-3 space-y-0.5">
+              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
                 <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Payoff Date</p>
-                <p className="text-sm font-bold text-accent-light">{payoffDate(repaymentRows.length)}</p>
+                <p className="text-xs sm:text-sm font-bold text-accent-light">{payoffDate(repaymentRows.length)}</p>
                 <p className="text-[10px] text-foreground/30">{payoffLabel(repaymentRows.length)}</p>
               </div>
-              <div className="rounded-xl bg-background/70 p-3 space-y-0.5">
+              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
                 <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Total Interest</p>
-                <p className="text-sm font-bold text-orange-400 tabular-nums">{formatCurrency(lifetimeInterest)}</p>
+                <p className="text-xs sm:text-sm font-bold text-orange-400 tabular-nums">{formatCurrency(lifetimeInterest)}</p>
                 <p className="text-[10px] text-foreground/30">over loan life</p>
               </div>
             </div>
 
             {/* Planner badge */}
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/8 border border-violet-500/15">
+            <div className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-violet-500/8 border border-violet-500/15">
               <CheckCircle2 className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-              <p className="text-[11px] text-violet-300/70">
-                <span className="font-semibold text-violet-300">{formatCurrency(loan.monthly_payment)}/mo</span> counted in your Planner cash flow
+              <p className="text-[10px] sm:text-[11px] text-violet-300/70">
+                <span className="font-semibold text-violet-300">{formatCurrency(loan.monthly_payment)}/mo</span> <span className="hidden sm:inline">counted in your</span><span className="sm:hidden">in</span> Planner
               </p>
             </div>
 
@@ -859,14 +859,14 @@ export default function LoansSection() {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <div className="rounded-2xl bg-linear-to-br from-violet-600/15 via-purple-500/10 to-transparent border border-violet-500/20 p-6 space-y-5">
+      <div className="rounded-2xl bg-linear-to-br from-violet-600/15 via-purple-500/10 to-transparent border border-violet-500/20 p-4 sm:p-6 space-y-4 sm:space-y-5">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-violet-500/20 border border-violet-500/20">
-            <TrendingDown className="w-5 h-5 text-violet-400" />
+          <div className="p-2 sm:p-2.5 rounded-xl bg-violet-500/20 border border-violet-500/20">
+            <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-violet-400" />
           </div>
-          <div>
-            <h2 className="text-xl font-bold text-foreground">Loans</h2>
-            <p className="text-sm text-foreground/50">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg sm:text-xl font-bold text-foreground">Loans</h2>
+            <p className="text-xs sm:text-sm text-foreground/50 truncate">
               {loans.length > 0
                 ? `${loans.length} active loan${loans.length !== 1 ? "s" : ""} · debt-free ${debtFreeYear ?? "soon"}`
                 : "Track and pay down your loans"}
@@ -874,29 +874,29 @@ export default function LoansSection() {
           </div>
           <button
             onClick={() => { setAdding(v => !v); setAddForm(EMPTY_FORM); }}
-            className="ml-auto flex items-center gap-1.5 px-4 py-2 bg-accent hover:bg-accent/90 text-white rounded-xl text-sm font-semibold transition-colors"
+            className="ml-auto flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 bg-accent hover:bg-accent/90 text-white rounded-xl text-xs sm:text-sm font-semibold transition-colors shrink-0"
           >
-            <Plus className="w-4 h-4" /> Add Loan
+            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Add Loan</span><span className="sm:hidden">Add</span>
           </button>
         </div>
 
         {loans.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-white/5 rounded-xl p-4 space-y-1">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            <div className="bg-white/5 rounded-xl p-3 sm:p-4 space-y-1">
               <p className="text-white/50 text-[10px] uppercase tracking-wider">Total Owed</p>
-              <p className="text-red-300 text-xl font-bold tabular-nums">{formatCurrency(totalBalance)}</p>
+              <p className="text-red-300 text-base sm:text-xl font-bold tabular-nums">{formatCurrency(totalBalance)}</p>
             </div>
-            <div className="bg-white/5 rounded-xl p-4 space-y-1">
+            <div className="bg-white/5 rounded-xl p-3 sm:p-4 space-y-1">
               <p className="text-white/50 text-[10px] uppercase tracking-wider">Monthly</p>
-              <p className="text-white text-xl font-bold tabular-nums">{formatCurrency(totalMonthly)}</p>
+              <p className="text-white text-base sm:text-xl font-bold tabular-nums">{formatCurrency(totalMonthly)}</p>
             </div>
-            <div className="bg-white/5 rounded-xl p-4 space-y-1">
+            <div className="bg-white/5 rounded-xl p-3 sm:p-4 space-y-1">
               <p className="text-white/50 text-[10px] uppercase tracking-wider">Total Interest</p>
-              <p className="text-orange-300 text-xl font-bold tabular-nums">{formatCurrency(totalInterestAll)}</p>
+              <p className="text-orange-300 text-base sm:text-xl font-bold tabular-nums">{formatCurrency(totalInterestAll)}</p>
             </div>
-            <div className="bg-white/5 rounded-xl p-4 space-y-1">
+            <div className="bg-white/5 rounded-xl p-3 sm:p-4 space-y-1">
               <p className="text-white/50 text-[10px] uppercase tracking-wider">Debt Free</p>
-              <p className="text-violet-300 text-xl font-bold">{debtFreeYear ?? "—"}</p>
+              <p className="text-violet-300 text-base sm:text-xl font-bold">{debtFreeYear ?? "—"}</p>
             </div>
           </div>
         )}
