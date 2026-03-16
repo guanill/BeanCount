@@ -165,6 +165,7 @@ function TxRow({
           <span className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded-full hidden sm:inline" style={{ backgroundColor: meta.color + "20", color: meta.color }}>
             {meta.label}
           </span>
+          {tx.account_name && <span className="text-[10px] sm:text-xs text-foreground/30 truncate max-w-24 sm:max-w-40">{tx.account_name}</span>}
           {isIgnored && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>}
           {tx.is_manual && <span className="text-[10px] sm:text-xs text-foreground/25">manual</span>}
         </div>
@@ -514,6 +515,8 @@ export default function TransactionsSection() {
       const data = await fetchTransactionsFromSupabase(supabase, filters);
       setTransactions(data.transactions ?? []);
       setSummary(data.summary ?? null);
+    } catch (err) {
+      console.error("Failed to fetch transactions:", err);
     } finally {
       setLoading(false);
     }
@@ -581,12 +584,17 @@ export default function TransactionsSection() {
   async function handleSyncTransactions() {
     setSyncing(true); setSyncMsg(null);
     try {
-      const data = await callEdgeFunction<{ added: number }>("teller-sync-transactions");
-      setSyncMsg(`âœ" ${data.added} new transactions`);
+      const data = await callEdgeFunction<{ added: number; message?: string }>("teller-sync-transactions");
+      if (data.added === 0 && data.message) {
+        setSyncMsg(data.message);
+      } else {
+        setSyncMsg(`✓ ${data.added} new`);
+      }
       fetchTransactions();
-      setTimeout(() => setSyncMsg(null), 4000);
+      setTimeout(() => setSyncMsg(null), 5000);
     } catch (e) {
-      setSyncMsg(e instanceof Error ? e.message : "Sync failed");
+      const msg = e instanceof Error ? e.message : "Sync failed";
+      setSyncMsg(msg.length > 40 ? "Sync failed" : msg);
     } finally {
       setSyncing(false);
     }
@@ -677,12 +685,25 @@ export default function TransactionsSection() {
     <div className="rounded-2xl border border-border/50 bg-card p-6 animate-slide-up">
 
       {/* â"€â"€ Header â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>
-          <p className="text-xs sm:text-sm text-foreground/40 mt-0.5">Spending and income - auto-categorized</p>
+      <div className="space-y-3 mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>
+            <p className="text-xs sm:text-sm text-foreground/40 mt-0.5">Spending and income</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={handleSyncTransactions} disabled={syncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:border-accent/30 text-foreground/60 hover:text-accent transition-colors disabled:opacity-40">
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
+              {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
+            </button>
+            <button onClick={() => setShowAdd(!showAdd)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center justify-center gap-2">
           <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
             {(["month", "year"] as const).map((m) => (
               <button key={m} onClick={() => setViewMode(m)}
@@ -695,20 +716,11 @@ export default function TransactionsSection() {
             <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-xs sm:text-sm font-semibold text-foreground min-w-24 sm:min-w-32 text-center">{periodLabel}</span>
+            <span className="text-sm font-semibold text-foreground min-w-28 text-center">{periodLabel}</span>
             <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
-          <button onClick={handleSyncTransactions} disabled={syncing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:border-accent/30 text-foreground/60 hover:text-accent transition-colors disabled:opacity-40">
-            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-            {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
-          </button>
-          <button onClick={() => setShowAdd(!showAdd)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
-            <Plus className="w-3.5 h-3.5" /> Add
-          </button>
         </div>
       </div>
 
@@ -805,11 +817,11 @@ export default function TransactionsSection() {
           <p className="text-foreground/30 text-sm">Sync your bank via Teller or add one manually</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6">
+        <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[220px_1fr] lg:gap-6">
 
           {/* â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-          <div className="hidden lg:flex flex-col items-center gap-4">
-            <div className="w-44 h-44">
+          <div className="flex flex-row lg:flex-col items-center gap-4 pb-2 lg:pb-0">
+            <div className="w-28 h-28 sm:w-36 sm:h-36 lg:w-44 lg:h-44 shrink-0">
               <SpendingDonut
                 segments={donutSegments}
                 total={donutTotal}
@@ -818,7 +830,7 @@ export default function TransactionsSection() {
               />
             </div>
             {/* Donut legend - click to filter list */}
-            <div className="w-full space-y-1">
+            <div className="flex-1 min-w-0 flex flex-row flex-wrap gap-1 lg:flex-col lg:w-full lg:space-y-1 lg:gap-0">
               {donutSegments.map(seg => {
                 const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
                 const isActive = catFilter === seg.category;
