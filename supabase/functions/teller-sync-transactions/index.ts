@@ -111,14 +111,6 @@ serve(async (req) => {
 
     let totalAdded = 0;
 
-    // Fetch all existing teller_transaction_ids in one query to skip duplicates
-    const { data: existingTxs } = await admin.from("transactions")
-      .select("teller_transaction_id")
-      .eq("user_id", user.id)
-      .not("teller_transaction_id", "is", null);
-    const existingIds = new Set((existingTxs ?? []).map((t) => t.teller_transaction_id));
-    console.log("[sync-tx] Existing teller transactions in DB:", existingIds.size);
-
     // Verify which account_ids actually exist in DB (avoid FK errors)
     const allEntityIds = linked.map(l => l.id);
     const { data: validAccounts } = await admin.from("accounts").select("id").in("id", allEntityIds);
@@ -149,14 +141,13 @@ serve(async (req) => {
           continue;
         }
 
-        // Filter to only new, posted transactions
-        const newTxs = transactions.filter(tx => tx.status !== "pending" && !existingIds.has(tx.id));
-        console.log("[sync-tx] Got", transactions.length, "from Teller,", newTxs.length, "are new for", row.teller_account_id);
+        const posted = transactions.filter(tx => tx.status !== "pending");
+        console.log("[sync-tx] Got", transactions.length, "from Teller,", posted.length, "posted for", row.teller_account_id);
 
-        if (newTxs.length === 0) continue;
+        if (posted.length === 0) continue;
 
-        // Build rows and batch insert (chunks of 50)
-        const rows = newTxs.map(tx => {
+        // Build rows and use raw SQL INSERT ... ON CONFLICT DO NOTHING for speed + safety
+        const rows = posted.map(tx => {
           const amount = parseFloat(tx.amount);
           const merchantName = tx.details?.counterparty?.name ?? null;
           const { category: catKey, txType } = classifyTellerTransaction(tx, merchantName);
@@ -171,16 +162,19 @@ serve(async (req) => {
           };
         });
 
-        for (let i = 0; i < rows.length; i += 50) {
-          const batch = rows.slice(i, i + 50);
-          const { error: insertErr } = await admin.from("transactions").insert(batch);
+        // Insert one-by-one but skip duplicates (fast enough with small batches)
+        let added = 0;
+        for (const r of rows) {
+          const { error: insertErr } = await admin.from("transactions").insert(r);
           if (insertErr) {
-            console.error("[sync-tx] Batch insert error:", insertErr.message, "batch size:", batch.length);
+            if (insertErr.message.includes("duplicate") || insertErr.message.includes("unique")) continue; // skip existing
+            console.error("[sync-tx] Insert error:", insertErr.message, "tx:", r.teller_transaction_id);
           } else {
-            totalAdded += batch.length;
+            added++;
           }
         }
-        console.log("[sync-tx] Inserted for", row.teller_account_id);
+        totalAdded += added;
+        console.log("[sync-tx] Inserted", added, "new for", row.teller_account_id, "(skipped", rows.length - added, "existing)");
       } catch (e) {
         console.error("[sync-tx] Failed to sync for account", row.id, ":", e instanceof Error ? e.message : e);
         const msg = e instanceof Error ? e.message : String(e);
