@@ -105,6 +105,11 @@ serve(async (req) => {
         const transactions = await tellerFetch<TellerTransaction[]>(
           `/accounts/${row.teller_account_id}/transactions`, accessToken);
 
+        if (!Array.isArray(transactions)) {
+          console.error(`Unexpected response for account ${row.id}:`, transactions);
+          continue;
+        }
+
         for (const tx of transactions) {
           if (tx.status === "pending") continue;
           const amount = parseFloat(tx.amount);
@@ -124,6 +129,11 @@ serve(async (req) => {
         }
       } catch (e) {
         console.error(`Failed to sync transactions for account ${row.id}:`, e);
+        const msg = e instanceof Error ? e.message : String(e);
+        // Don't let one account failure kill the whole sync
+        if (linked.length === 1) {
+          return new Response(JSON.stringify({ error: `Sync failed: ${msg.slice(0, 200)}` }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
       }
     }
 
