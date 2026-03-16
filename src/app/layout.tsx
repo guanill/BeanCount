@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WealthPulse — Budget Dashboard",
+  title: "BeanCount — Budget Dashboard",
   description: "Track your finances across bank accounts, stocks, crypto, credit cards, and debts",
 };
 

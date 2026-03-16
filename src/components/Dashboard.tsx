@@ -11,7 +11,10 @@ import FinalTotals from "./FinalTotals";
 import TransactionsSection from "./TransactionsSection";
 import PlannerSection from "./PlannerSection";
 import LoansSection from "./LoansSection";
-import { RefreshCw, Activity, LayoutDashboard, Receipt, Sparkles, Landmark } from "lucide-react";
+import LiabilitiesSection from "./LiabilitiesSection";
+import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, LogOut } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { getDashboardData } from "@/lib/supabase/queries";
 
 type View = "overview" | "spending" | "planner" | "loans";
 
@@ -23,9 +26,9 @@ export default function Dashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/dashboard");
-      const json = await res.json();
-      setData(json);
+      const supabase = createClient();
+      const dashboardData = await getDashboardData(supabase);
+      setData(dashboardData);
     } catch (err) {
       console.error("Failed to fetch dashboard:", err);
     } finally {
@@ -36,6 +39,20 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
+  }, [fetchData]);
+
+  // Realtime: auto-refresh when any table changes
+  useEffect(() => {
+    const supabase = createClient();
+    const tables = ["accounts", "credit_cards", "transactions", "debts_owed", "liabilities", "loans"];
+    const channel = supabase.channel("dashboard-realtime");
+    for (const table of tables) {
+      channel.on("postgres_changes" as any, { event: "*", schema: "public", table }, () => {
+        fetchData();
+      });
+    }
+    channel.subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [fetchData]);
 
   const handleRefresh = () => {
@@ -69,10 +86,10 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-accent rounded-xl glow-pulse">
-              <Activity className="w-5 h-5 text-white" />
+              <Bean className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground tracking-tight">WealthPulse</h1>
+              <h1 className="text-xl font-bold text-foreground tracking-tight">BeanCount</h1>
               <p className="text-xs text-foreground/40">Personal Finance Dashboard</p>
             </div>
           </div>
@@ -125,14 +142,27 @@ export default function Dashboard() {
             </button>
           </div>
 
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 px-4 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/70 hover:text-foreground transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-4 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/70 hover:text-foreground transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+            <button
+              onClick={async () => {
+                const supabase = createClient();
+                await supabase.auth.signOut();
+                window.location.href = "/login";
+              }}
+              className="flex items-center gap-2 px-3 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/40 hover:text-red transition-all"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -176,8 +206,8 @@ export default function Dashboard() {
               assetsTotal={data.totals.assetsTotal}
             />
 
-            {/* Credit Cards + Debts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Credit Cards + Debts + Liabilities */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <CreditCardsSection
                 cards={data.creditCards}
                 totalDebt={data.totals.creditCardDebt}
@@ -189,6 +219,11 @@ export default function Dashboard() {
                 total={data.totals.debtsOwedTotal}
                 onRefresh={handleRefresh}
               />
+              <LiabilitiesSection
+                liabilities={data.liabilities}
+                total={data.totals.liabilitiesTotal}
+                onRefresh={handleRefresh}
+              />
             </div>
 
             {/* Final Summary */}
@@ -197,6 +232,7 @@ export default function Dashboard() {
               debtsOwedTotal={data.totals.debtsOwedTotal}
               pointsValue={data.totals.pointsValue}
               creditCardDebt={data.totals.creditCardDebt}
+              liabilitiesTotal={data.totals.liabilitiesTotal}
               netWorth={data.totals.netWorth}
             />
           </>
@@ -210,7 +246,7 @@ export default function Dashboard() {
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">
-          WealthPulse — Built with Next.js · Updated in real-time
+          BeanCount — Built with Next.js · Updated in real-time
         </footer>
       </main>
     </div>

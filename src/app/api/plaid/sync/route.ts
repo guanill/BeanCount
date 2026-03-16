@@ -1,28 +1,49 @@
 import { NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
-import { getDb } from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST() {
   try {
-    const db = getDb();
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // Find all accounts that have a Plaid access token
-    const linked = db
-      .prepare(
-        "SELECT id, plaid_access_token, plaid_account_id FROM accounts WHERE plaid_access_token IS NOT NULL"
-      )
-      .all() as { id: string; plaid_access_token: string; plaid_account_id: string }[];
+    // Find all accounts that have a Plaid integration token
+    const { data: linked } = await supabaseAdmin
+      .from("integration_tokens")
+      .select("entity_id, access_token")
+      .eq("user_id", user.id)
+      .eq("provider", "plaid")
+      .eq("entity_type", "account");
 
-    if (linked.length === 0) {
+    if (!linked || linked.length === 0) {
       return NextResponse.json({ synced: 0 });
     }
 
+    // Get the account details for these entities
+    const entityIds = linked.map((r) => r.entity_id);
+    const { data: accounts } = await supabaseAdmin
+      .from("accounts")
+      .select("id, plaid_account_id")
+      .in("id", entityIds);
+
+    if (!accounts || accounts.length === 0) {
+      return NextResponse.json({ synced: 0 });
+    }
+
+    // Build lookup maps
+    const tokenByEntityId = new Map(linked.map((r) => [r.entity_id, r.access_token]));
+    const accountById = new Map(accounts.map((a) => [a.id, a]));
+
     // Group by access token (one item can have many accounts)
-    const byToken = new Map<string, typeof linked>();
-    for (const row of linked) {
-      const list = byToken.get(row.plaid_access_token) ?? [];
-      list.push(row);
-      byToken.set(row.plaid_access_token, list);
+    const byToken = new Map<string, { id: string; plaid_account_id: string }[]>();
+    for (const account of accounts) {
+      const token = tokenByEntityId.get(account.id);
+      if (!token) continue;
+      const list = byToken.get(token) ?? [];
+      list.push(account);
+      byToken.set(token, list);
     }
 
     let synced = 0;
@@ -35,9 +56,13 @@ export async function POST() {
         if (!matched) continue;
 
         const balance = pa.balances.current ?? pa.balances.available ?? 0;
-        db.prepare(
-          `UPDATE accounts SET balance = ?, plaid_last_synced = datetime('now'), updated_at = datetime('now') WHERE id = ?`
-        ).run(balance, matched.id);
+        await supabaseAdmin
+          .from("accounts")
+          .update({
+            balance,
+            plaid_last_synced: new Date().toISOString(),
+          })
+          .eq("id", matched.id);
         synced++;
       }
     }

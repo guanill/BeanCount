@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { tellerGet, TellerAccount, TellerBalance } from "@/lib/teller";
-import { getDb } from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const { access_token, enrollment_id, institution_name } = await req.json() as {
       access_token: string;
       enrollment_id: string;
@@ -14,7 +19,6 @@ export async function POST(req: NextRequest) {
     // Fetch all accounts for this enrollment
     const tellerAccounts = await tellerGet<TellerAccount[]>("/accounts", access_token);
 
-    const db = getDb();
     const created: object[] = [];
 
     for (const ta of tellerAccounts) {
@@ -41,54 +45,134 @@ export async function POST(req: NextRequest) {
 
       if (ta.type === "credit") {
         // ── Credit card → credit_cards table ──────────────────────────────
-        const existing = db
-          .prepare("SELECT id FROM credit_cards WHERE teller_account_id = ?")
-          .get(ta.id) as { id: string } | undefined;
+        const { data: existing } = await supabaseAdmin
+          .from("credit_cards")
+          .select("id")
+          .eq("teller_account_id", ta.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
 
         if (existing) {
-          db.prepare(
-            `UPDATE credit_cards
-             SET balance_owed = ?, teller_access_token = ?, teller_enrollment_id = ?,
-                 teller_institution_name = ?, teller_last_synced = datetime('now'),
-                 updated_at = datetime('now')
-             WHERE id = ?`
-          ).run(balance, access_token, enrollment_id, institution_name, existing.id);
+          await supabaseAdmin
+            .from("credit_cards")
+            .update({
+              balance_owed: balance,
+              teller_enrollment_id: enrollment_id,
+              teller_institution_name: institution_name,
+              teller_last_synced: new Date().toISOString(),
+            })
+            .eq("id", existing.id);
+
+          // Upsert access token
+          await supabaseAdmin
+            .from("integration_tokens")
+            .upsert(
+              {
+                user_id: user.id,
+                provider: "teller",
+                entity_type: "credit_card",
+                entity_id: existing.id,
+                access_token,
+              },
+              { onConflict: "provider,entity_type,entity_id" }
+            );
+
           created.push({ id: existing.id, name, balance, table: "credit_cards", updated: true });
         } else {
           const id = uuidv4();
-          db.prepare(
-            `INSERT INTO credit_cards
-               (id, name, balance_owed, credit_limit, points_balance, points_value_cents,
-                teller_access_token, teller_account_id, teller_enrollment_id,
-                teller_institution_name, teller_last_synced)
-             VALUES (?, ?, ?, 0, 0, 1, ?, ?, ?, ?, datetime('now'))`
-          ).run(id, name, balance, access_token, ta.id, enrollment_id, institution_name);
+          await supabaseAdmin
+            .from("credit_cards")
+            .insert({
+              id,
+              user_id: user.id,
+              name,
+              balance_owed: balance,
+              credit_limit: 0,
+              points_balance: 0,
+              points_value_cents: 1,
+              teller_account_id: ta.id,
+              teller_enrollment_id: enrollment_id,
+              teller_institution_name: institution_name,
+              teller_last_synced: new Date().toISOString(),
+            });
+
+          // Store access token
+          await supabaseAdmin
+            .from("integration_tokens")
+            .insert({
+              user_id: user.id,
+              provider: "teller",
+              entity_type: "credit_card",
+              entity_id: id,
+              access_token,
+            });
+
           created.push({ id, name, balance, table: "credit_cards" });
         }
       } else {
         // ── Depository (checking/savings) → accounts table ─────────────────
-        const existing = db
-          .prepare("SELECT id FROM accounts WHERE teller_account_id = ?")
-          .get(ta.id) as { id: string } | undefined;
+        const { data: existing } = await supabaseAdmin
+          .from("accounts")
+          .select("id")
+          .eq("teller_account_id", ta.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
 
         if (existing) {
-          db.prepare(
-            `UPDATE accounts
-             SET balance = ?, teller_access_token = ?, teller_enrollment_id = ?,
-                 teller_institution_name = ?, teller_last_synced = datetime('now'),
-                 updated_at = datetime('now')
-             WHERE id = ?`
-          ).run(balance, access_token, enrollment_id, institution_name, existing.id);
+          await supabaseAdmin
+            .from("accounts")
+            .update({
+              balance,
+              teller_enrollment_id: enrollment_id,
+              teller_institution_name: institution_name,
+              teller_last_synced: new Date().toISOString(),
+            })
+            .eq("id", existing.id);
+
+          // Upsert access token
+          await supabaseAdmin
+            .from("integration_tokens")
+            .upsert(
+              {
+                user_id: user.id,
+                provider: "teller",
+                entity_type: "account",
+                entity_id: existing.id,
+                access_token,
+              },
+              { onConflict: "provider,entity_type,entity_id" }
+            );
+
           created.push({ id: existing.id, name, balance, table: "accounts", updated: true });
         } else {
           const id = uuidv4();
-          db.prepare(
-            `INSERT INTO accounts
-               (id, name, type, balance, icon, color,
-                teller_access_token, teller_account_id, teller_enrollment_id,
-                teller_institution_name, teller_last_synced)
-             VALUES (?, ?, 'bank', ?, NULL, NULL, ?, ?, ?, ?, datetime('now'))`
-          ).run(id, name, balance, access_token, ta.id, enrollment_id, institution_name);
+          await supabaseAdmin
+            .from("accounts")
+            .insert({
+              id,
+              user_id: user.id,
+              name,
+              type: "bank",
+              balance,
+              icon: null,
+              color: null,
+              teller_account_id: ta.id,
+              teller_enrollment_id: enrollment_id,
+              teller_institution_name: institution_name,
+              teller_last_synced: new Date().toISOString(),
+            });
+
+          // Store access token
+          await supabaseAdmin
+            .from("integration_tokens")
+            .insert({
+              user_id: user.id,
+              provider: "teller",
+              entity_type: "account",
+              entity_id: id,
+              access_token,
+            });
+
           created.push({ id, name, balance, table: "accounts" });
         }
       }

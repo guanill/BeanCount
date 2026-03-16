@@ -1,33 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
-import { getDb } from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const { id } = await params;
-    const db = getDb();
 
-    const row = db
-      .prepare("SELECT plaid_access_token FROM accounts WHERE id = ?")
-      .get(id) as { plaid_access_token: string } | undefined;
+    // Get access token from integration_tokens
+    const { data: tokenRow } = await supabaseAdmin
+      .from("integration_tokens")
+      .select("access_token")
+      .eq("entity_id", id)
+      .eq("provider", "plaid")
+      .eq("entity_type", "account")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
-    if (row?.plaid_access_token) {
+    if (tokenRow?.access_token) {
       // Notify Plaid to revoke access
       try {
-        await plaidClient.itemRemove({ access_token: row.plaid_access_token });
+        await plaidClient.itemRemove({ access_token: tokenRow.access_token });
       } catch {
         // Non-critical — continue even if Plaid call fails
       }
     }
 
-    db.prepare(
-      `UPDATE accounts SET plaid_access_token = NULL, plaid_account_id = NULL,
-       plaid_item_id = NULL, plaid_institution_name = NULL, plaid_last_synced = NULL,
-       updated_at = datetime('now') WHERE id = ?`
-    ).run(id);
+    // Delete token from integration_tokens
+    await supabaseAdmin
+      .from("integration_tokens")
+      .delete()
+      .eq("entity_id", id)
+      .eq("provider", "plaid")
+      .eq("user_id", user.id);
+
+    // Clear plaid fields on account
+    await supabaseAdmin
+      .from("accounts")
+      .update({
+        plaid_account_id: null,
+        plaid_item_id: null,
+        plaid_institution_name: null,
+        plaid_last_synced: null,
+      })
+      .eq("id", id)
+      .eq("user_id", user.id);
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

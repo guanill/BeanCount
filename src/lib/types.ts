@@ -2,6 +2,7 @@ export type AccountType = "bank" | "stock" | "crypto";
 
 export interface Account {
   id: string;
+  user_id: string;
   name: string;
   type: AccountType;
   balance: number;
@@ -14,6 +15,7 @@ export interface Account {
   plaid_last_synced: string | null;
   // Teller
   teller_account_id: string | null;
+  teller_enrollment_id: string | null;
   teller_institution_name: string | null;
   teller_last_synced: string | null;
   created_at: string;
@@ -22,6 +24,7 @@ export interface Account {
 
 export interface CreditCard {
   id: string;
+  user_id: string;
   name: string;
   balance_owed: number;
   credit_limit: number;
@@ -31,6 +34,7 @@ export interface CreditCard {
   min_payment: number;
   color: string | null;
   teller_account_id: string | null;
+  teller_enrollment_id: string | null;
   teller_institution_name: string | null;
   teller_last_synced: string | null;
   created_at: string;
@@ -39,6 +43,7 @@ export interface CreditCard {
 
 export interface DebtOwed {
   id: string;
+  user_id: string;
   person_name: string;
   amount: number;
   reason: string | null;
@@ -50,6 +55,7 @@ export interface DebtOwed {
 
 export interface Transaction {
   id: string;
+  user_id: string;
   account_id: string | null;
   plaid_transaction_id: string | null;
   teller_transaction_id: string | null;
@@ -60,13 +66,16 @@ export interface Transaction {
   category: string;
   subcategory: string | null;
   transaction_type: "income" | "expense" | "transfer";
-  is_manual: number;        // 0 or 1
+  is_manual: boolean;
+  is_ignored: boolean;
   notes: string | null;
+  account_name?: string | null;
   created_at: string;
 }
 
 export interface Loan {
   id: string;
+  user_id: string;
   name: string;
   type: string;
   balance: number;
@@ -82,6 +91,7 @@ export interface Loan {
 
 export interface Liability {
   id: string;
+  user_id: string;
   name: string;
   amount: number;
   category: string;
