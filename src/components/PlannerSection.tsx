@@ -436,18 +436,18 @@ function MonthCard({
       <div className={`h-0.75 w-full rounded-t-2xl ${positive ? "bg-green/50" : "bg-red/50"}`} />
 
       {/* Header row */}
-      <div className="flex items-center justify-between px-3 sm:px-4 pt-3 sm:pt-4 pb-2">
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <span className={`font-bold text-sm tracking-wide ${isToday ? "text-accent" : "text-foreground"}`}>
+      <div className="flex items-center justify-between px-2.5 sm:px-4 pt-2.5 sm:pt-4 pb-1.5 sm:pb-2">
+        <div className="flex items-center gap-1.5">
+          <span className={`font-bold text-xs sm:text-sm tracking-wide ${isToday ? "text-accent" : "text-foreground"}`}>
             {MONTHS_SHORT[month - 1]}
           </span>
           {isToday && (
-            <span className="text-[9px] bg-accent/20 text-accent px-1.5 py-0.5 rounded-full font-bold tracking-widest">
+            <span className="text-[8px] sm:text-[9px] bg-accent/20 text-accent px-1 sm:px-1.5 py-0.5 rounded-full font-bold tracking-widest">
               NOW
             </span>
           )}
         </div>
-        <span className={`text-[11px] sm:text-xs font-bold tabular-nums px-1.5 sm:px-2 py-0.5 rounded-lg ${
+        <span className={`text-[10px] sm:text-xs font-bold tabular-nums px-1 sm:px-2 py-0.5 rounded-lg ${
           positive ? "bg-green/10 text-green" : "bg-red/10 text-red"
         }`}>
           {positive ? "+" : ""}{formatCurrency(net)}
@@ -455,30 +455,27 @@ function MonthCard({
       </div>
 
       {/* Big balance */}
-      <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-0.5 overflow-hidden">
-        <div className={`text-lg sm:text-[22px] font-bold tabular-nums leading-tight truncate ${balance >= 0 ? "text-foreground" : "text-red"}`}>
+      <div className="px-2.5 sm:px-4 pb-2 sm:pb-4 pt-0.5 overflow-hidden">
+        <div className={`text-base sm:text-[22px] font-bold tabular-nums leading-tight truncate ${balance >= 0 ? "text-foreground" : "text-red"}`}>
           {formatCurrency(balance)}
         </div>
-        <div className="text-[10px] text-foreground/25 mt-1">projected balance</div>
+        <div className="text-[9px] sm:text-[10px] text-foreground/25 mt-0.5 sm:mt-1">projected</div>
       </div>
 
       {/* Income / Spending / Loans mini row */}
-      <div className="flex gap-0 border-t border-border/20 divide-x divide-border/20">
-        <div className="flex-1 px-2 sm:px-3 py-2">
-          <div className="text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
-          <div className="text-[11px] sm:text-xs font-semibold text-green/80 tabular-nums truncate">+{formatCurrency(netSalary)}</div>
-          {netSalary !== salary && salary > 0 && (
-            <div className="text-[9px] text-foreground/20 tabular-nums">{formatCurrency(salary)} gross</div>
-          )}
+      <div className="flex border-t border-border/20 divide-x divide-border/20 overflow-hidden">
+        <div className="flex-1 min-w-0 px-1.5 sm:px-3 py-1.5 sm:py-2">
+          <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
+          <div className="text-[10px] sm:text-xs font-semibold text-green/80 tabular-nums truncate">+{formatCurrency(netSalary)}</div>
         </div>
-        <div className="flex-1 px-2 sm:px-3 py-2">
-          <div className="text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Spending</div>
-          <div className="text-[11px] sm:text-xs font-semibold text-red/70 tabular-nums truncate">−{formatCurrency(monthlyExpenses + scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0))}</div>
+        <div className="flex-1 min-w-0 px-1.5 sm:px-3 py-1.5 sm:py-2">
+          <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Spend</div>
+          <div className="text-[10px] sm:text-xs font-semibold text-red/70 tabular-nums truncate">−{formatCurrency(monthlyExpenses + scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0))}</div>
         </div>
         {loanPaymentsTotal > 0 && (
-          <div className="flex-1 px-2 sm:px-3 py-2">
-            <div className="text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Loans</div>
-            <div className="text-[11px] sm:text-xs font-semibold text-accent/70 tabular-nums truncate">−{formatCurrency(loanPaymentsTotal)}</div>
+          <div className="flex-1 min-w-0 px-1.5 sm:px-3 py-1.5 sm:py-2">
+            <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Loans</div>
+            <div className="text-[10px] sm:text-xs font-semibold text-accent/70 tabular-nums truncate">−{formatCurrency(loanPaymentsTotal)}</div>
           </div>
         )}
       </div>
@@ -546,7 +543,7 @@ function MonthCard({
       )}
 
       {/* Add event section */}
-      <div className={`mt-auto border-t border-border/15 ${adding ? "px-4 pt-4 pb-5" : "px-4 py-3"}`}>
+      <div className={`mt-auto border-t border-border/15 ${adding ? "px-2 sm:px-4 pt-3 sm:pt-4 pb-4 sm:pb-5" : "px-2 sm:px-4 py-2 sm:py-3"}`}>
         {adding ? (
           <div className="space-y-2">
             <select

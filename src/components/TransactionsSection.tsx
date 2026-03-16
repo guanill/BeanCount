@@ -47,7 +47,7 @@ function formatDate(d: string) {
   return `${MONTHS[parseInt(m) - 1].slice(0, 3)} ${parseInt(day)}, ${y}`;
 }
 
-/* â”€â”€â”€ Donut chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â"€â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 interface DonutSegment { category: string; label: string; color: string; emoji: string; amount: number; }
 
 function SpendingDonut({
@@ -77,7 +77,7 @@ function SpendingDonut({
     );
   }
 
-  // Build arc segments (pure – no mutation)
+  // Build arc segments (pure - no mutation)
   const rawArcs = segments.map(seg => (seg.amount / total) * C);
   const cumulatives = rawArcs.reduce<number[]>((acc, val, i) => {
     acc.push(i === 0 ? 0 : acc[i - 1] + rawArcs[i - 1]);
@@ -466,7 +466,7 @@ function TransactionDetailPanel({
   );
 }
 
-/* â”€â”€â”€ Add form interface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â"€â"€â"€ Add form interface â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 interface AddForm {
   name: string; amount: string; date: string;
   category: string; transaction_type: "income" | "expense" | "transfer"; notes: string;
@@ -476,7 +476,7 @@ const emptyForm: AddForm = {
   category: "other", transaction_type: "expense", notes: "",
 };
 
-/* â”€â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* â"€â"€â"€ Main component â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 export default function TransactionsSection() {
   const now = new Date();
   const [year,     setYear]    = useState(now.getFullYear());
@@ -504,7 +504,7 @@ export default function TransactionsSection() {
   // Detail panel
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
 
-  /* â”€â”€ Data fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* â"€â"€ Data fetching â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   const fetchTransactions = useCallback(async () => {
     setLoading(true);
     try {
@@ -521,7 +521,7 @@ export default function TransactionsSection() {
 
   useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
 
-  /* â”€â”€ Group transactions by category (client-side) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* â"€â"€ Group transactions by category (client-side) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   // Client-side filtered list: search + type + category filters
   const filtered = useMemo(() => {
     let list = transactions;
@@ -537,7 +537,7 @@ export default function TransactionsSection() {
     return [...list].sort((a, b) => b.date.localeCompare(a.date));
   }, [transactions, typeFilter, catFilter, query]);
 
-  // Grouped by category (from filtered — used in accordion)
+  // Grouped by category (from filtered - used in accordion)
   const grouped = useMemo(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of filtered) {
@@ -554,8 +554,8 @@ export default function TransactionsSection() {
       .sort((a, b) => b.total - a.total);
   }, [filtered]);
 
-  /* â”€â”€ Donut segments â€” expenses only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-  // Donut always uses the full period — stays stable while searching/filtering
+  /* â"€â"€ Donut segments â€" expenses only â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
+  // Donut always uses the full period - stays stable while searching/filtering
   const allExpenseGroups = useMemo(() => {
     const map = new Map<string, number>();
     for (const tx of transactions) {
@@ -577,12 +577,12 @@ export default function TransactionsSection() {
 
   const donutTotal = donutSegments.reduce((s, d) => s + d.amount, 0);
 
-  /* â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* â"€â"€ Actions â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   async function handleSyncTransactions() {
     setSyncing(true); setSyncMsg(null);
     try {
       const data = await callEdgeFunction<{ added: number }>("teller-sync-transactions");
-      setSyncMsg(`âœ“ ${data.added} new transactions`);
+      setSyncMsg(`âœ" ${data.added} new transactions`);
       fetchTransactions();
       setTimeout(() => setSyncMsg(null), 4000);
     } catch (e) {
@@ -672,15 +672,15 @@ export default function TransactionsSection() {
   }
   const periodLabel = viewMode === "year" ? String(year) : `${MONTHS[month - 1]} ${year}`;
 
-  /* â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /* â"€â"€ Render â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   return (
     <div className="rounded-2xl border border-border/50 bg-card p-6 animate-slide-up">
 
-      {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* â"€â"€ Header â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h2 className="text-xl font-bold text-foreground">Transactions</h2>
-          <p className="text-sm text-foreground/40 mt-0.5">Spending &amp; income â€” auto-categorized</p>
+          <p className="text-sm text-foreground/40 mt-0.5">Spending and income - auto-categorized</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
@@ -712,7 +712,7 @@ export default function TransactionsSection() {
         </div>
       </div>
 
-      {/* â”€â”€ Add form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* â"€â"€ Add form â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
       {showAdd && (
         <div className="mb-5 p-4 rounded-xl bg-background border border-accent/20">
           <p className="text-sm font-semibold text-foreground mb-3">Add transaction</p>
@@ -767,7 +767,7 @@ export default function TransactionsSection() {
         </div>
       )}
 
-      {/* â”€â”€ Summary cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* â"€â"€ Summary cards â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
       {summary && (
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="rounded-xl p-4 bg-green-500/10 border border-green-500/20">
@@ -807,7 +807,7 @@ export default function TransactionsSection() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6">
 
-          {/* â”€â”€ Donut chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
           <div className="flex flex-col items-center gap-4">
             <div className="w-44 h-44">
               <SpendingDonut
@@ -817,7 +817,7 @@ export default function TransactionsSection() {
                 onHover={setHoveredCat}
               />
             </div>
-            {/* Donut legend — click to filter list */}
+            {/* Donut legend - click to filter list */}
             <div className="w-full space-y-1">
               {donutSegments.map(seg => {
                 const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
@@ -845,7 +845,7 @@ export default function TransactionsSection() {
             </div>
           </div>
 
-          {/* â”€â”€ Category accordion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* â"€â"€ Category accordion â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
           {/* Right: type tabs + search + list */}
           <div className="min-w-0 space-y-3">
 
