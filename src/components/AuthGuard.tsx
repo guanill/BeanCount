@@ -13,9 +13,25 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const supabase = createClient();
 
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user);
-    });
+    // Handle OAuth code exchange (e.g. after Google sign-in redirect)
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+        if (error) {
+          console.error("Code exchange failed:", error.message);
+          setUser(null);
+        } else {
+          setUser(data.session?.user ?? null);
+        }
+        // Clean up the URL
+        window.history.replaceState({}, "", window.location.pathname);
+      });
+    } else {
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        setUser(user);
+      });
+    }
 
     const {
       data: { subscription },
