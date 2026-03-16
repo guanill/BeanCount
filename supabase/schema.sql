@@ -149,6 +149,23 @@ CREATE TABLE loans (
 CREATE INDEX idx_loans_user_id ON loans(user_id);
 
 -- ============================================================
+-- PLANNER CONFIGS
+-- ============================================================
+CREATE TABLE planner_configs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
+  config jsonb NOT NULL DEFAULT '{}',
+  paid_loan_ids jsonb NOT NULL DEFAULT '[]',
+  paid_loan_month text NOT NULL DEFAULT '',
+  dismissed_suggestions jsonb NOT NULL DEFAULT '[]',
+  tax_filing_status text NOT NULL DEFAULT 'single',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_planner_configs_user_id ON planner_configs(user_id);
+
+-- ============================================================
 -- PLAID SYNC CURSORS
 -- ============================================================
 CREATE TABLE plaid_sync_cursors (
@@ -186,7 +203,7 @@ DECLARE
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
     'accounts', 'credit_cards', 'debts_owed', 'transactions',
-    'liabilities', 'loans', 'plaid_sync_cursors'
+    'liabilities', 'loans', 'plaid_sync_cursors', 'planner_configs'
   ])
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
@@ -221,7 +238,7 @@ DECLARE
   tbl text;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'accounts', 'credit_cards', 'debts_owed', 'liabilities', 'loans'
+    'accounts', 'credit_cards', 'debts_owed', 'liabilities', 'loans', 'planner_configs'
   ])
   LOOP
     EXECUTE format(

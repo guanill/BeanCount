@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus, Trash2, ChevronLeft, ChevronRight, ChevronDown,
   TrendingUp, Zap, DollarSign, Edit2, Check, X, Calendar, ScanSearch, BarChart2, Sparkles,
@@ -623,15 +623,8 @@ function Accordion({ title, icon, subtitle, defaultOpen = false, gradient = "", 
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth: number; stockTotal?: number }) {
-  const [config,       setConfig]       = useState<PlannerConfig>(() => {
-    if (typeof window === "undefined") return DEFAULT_CONFIG;
-    try {
-      const saved = localStorage.getItem("wp_planner");
-      return saved ? (JSON.parse(saved) as PlannerConfig) : DEFAULT_CONFIG;
-    } catch {
-      return DEFAULT_CONFIG;
-    }
-  });
+  const [config,       setConfig]       = useState<PlannerConfig>(DEFAULT_CONFIG);
+  const [dbLoaded,     setDbLoaded]     = useState(false);
   const [viewYear,     setViewYear]     = useState(CUR_YEAR);
   const [editingId,    setEditingId]    = useState<string | null>(null);
   const [salaryDraft,  setSalaryDraft]  = useState<Partial<SalaryPeriod>>({});
@@ -651,26 +644,74 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [addingCharge,     setAddingCharge]     = useState(false);
   const [newCharge,        setNewCharge]        = useState<Omit<RecurringCharge, "id">>({ label: "", amount: 0, category: "other" });
   const [suggestions,      setSuggestions]      = useState<RecurringSuggestion[]>([]);
-  const [dismissedKeys,    setDismissedKeys]    = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem("wp_dismissed_suggestions") ?? "[]") as string[]); } catch { return new Set(); }
-  });
+  const [dismissedKeys,    setDismissedKeys]    = useState<Set<string>>(new Set());
   const [scanning,         setScanning]         = useState(false);
   const [scanned,          setScanned]          = useState(false);
   const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string; deferral_months: number | null; created_at: string | null }>>([]);
-  const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem(`wp_paid_loans_${THIS_MONTH_KEY}`) ?? "[]") as string[]); } catch { return new Set(); }
-  });
+  const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(new Set());
   const [thisMonthTxKeys, setThisMonthTxKeys] = useState<Set<string>>(new Set());
 
-  // Load loans once on mount
+  // Load planner config + loans on mount
   useEffect(() => {
-    const supabase = (async () => {
+    (async () => {
       const { createClient } = await import("@/lib/supabase/client");
-      return createClient();
-    })();
-    supabase.then(sb => sb.from("loans").select("id, name, monthly_payment, type, deferral_months, created_at"))
-      .then(({ data }) => setLoans(data ?? []))
-      .catch(() => {});
+      const sb = createClient();
+      const [{ data: loansData }, { data: plannerRow }] = await Promise.all([
+        sb.from("loans").select("id, name, monthly_payment, type, deferral_months, created_at"),
+        sb.from("planner_configs").select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status").maybeSingle(),
+      ]);
+      setLoans(loansData ?? []);
+      if (plannerRow) {
+        const saved = plannerRow.config as unknown;
+        if (saved && typeof saved === "object") setConfig({ ...DEFAULT_CONFIG, ...(saved as PlannerConfig) });
+        if (plannerRow.paid_loan_month === THIS_MONTH_KEY && Array.isArray(plannerRow.paid_loan_ids)) {
+          setPaidLoanIds(new Set(plannerRow.paid_loan_ids as string[]));
+        }
+        if (Array.isArray(plannerRow.dismissed_suggestions)) {
+          setDismissedKeys(new Set(plannerRow.dismissed_suggestions as string[]));
+        }
+        if (plannerRow.tax_filing_status) {
+          setTaxFilingStatus(plannerRow.tax_filing_status as FilingStatus);
+        }
+      } else if (typeof window !== "undefined") {
+        // Migrate from localStorage on first load
+        const migrate: Record<string, unknown> = {};
+        try {
+          const lsConfig = localStorage.getItem("wp_planner");
+          if (lsConfig) {
+            const parsed = JSON.parse(lsConfig) as PlannerConfig;
+            setConfig({ ...DEFAULT_CONFIG, ...parsed });
+            migrate.config = parsed;
+          }
+        } catch { /* ignore */ }
+        try {
+          const lsPaid = localStorage.getItem(`wp_paid_loans_${THIS_MONTH_KEY}`);
+          if (lsPaid) {
+            const ids = JSON.parse(lsPaid) as string[];
+            setPaidLoanIds(new Set(ids));
+            migrate.paid_loan_ids = ids;
+            migrate.paid_loan_month = THIS_MONTH_KEY;
+          }
+        } catch { /* ignore */ }
+        try {
+          const lsDismissed = localStorage.getItem("wp_dismissed_suggestions");
+          if (lsDismissed) {
+            const keys = JSON.parse(lsDismissed) as string[];
+            setDismissedKeys(new Set(keys));
+            migrate.dismissed_suggestions = keys;
+          }
+        } catch { /* ignore */ }
+        if (Object.keys(migrate).length > 0) {
+          const { upsertPlannerConfig } = await import("@/lib/supabase/queries");
+          await upsertPlannerConfig(sb, migrate).catch(() => {});
+          // Clean up localStorage after successful migration
+          localStorage.removeItem("wp_planner");
+          localStorage.removeItem(`wp_paid_loans_${THIS_MONTH_KEY}`);
+          localStorage.removeItem("wp_dismissed_suggestions");
+        }
+      }
+      setDbLoaded(true);
+    })().catch(() => setDbLoaded(true));
   }, []);
 
   // Load this month's transactions on mount to auto-detect paid charges
@@ -697,7 +738,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     setPaidLoanIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) { next.delete(id); } else { next.add(id); }
-      try { localStorage.setItem(`wp_paid_loans_${THIS_MONTH_KEY}`, JSON.stringify([...next])); } catch { /* ignore */ }
+      savePlanner({ paid_loan_ids: [...next], paid_loan_month: THIS_MONTH_KEY });
       return next;
     });
   }
@@ -709,9 +750,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [newItemDrafts,      setNewItemDrafts]       = useState<Record<string, { label: string; amount: string }>>({})
 
   // ── Tax estimator state ──
-  type FilingStatus = "single" | "mfj" | "mfs" | "hoh";
   const [taxFilingStatus,   setTaxFilingStatus]   = useState<FilingStatus>("single");
-  const [taxIncomeOverride, setTaxIncomeOverride] = useState<string>("");;
+  const [taxIncomeOverride, setTaxIncomeOverride] = useState<string>("");
 
   const SCENARIO_EMOJIS = ["✈️","💍","🏠","🚗","🎓","🎉","🏖️","🛠️","💻","🌍","🎸","🏋️","🍽️","🎁","⛵"];
 
@@ -774,7 +814,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   function dismissSuggestion(key: string) {
     setDismissedKeys(prev => {
       const next = new Set(prev); next.add(key);
-      try { localStorage.setItem("wp_dismissed_suggestions", JSON.stringify([...next])); } catch { /* ignore */ }
+      savePlanner({ dismissed_suggestions: [...next] });
       return next;
     });
   }
@@ -790,24 +830,38 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     [config, netWorth],
   );
 
-  // Persist to localStorage
+  // Persist to Supabase (debounced)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function savePlanner(partial: Record<string, unknown>) {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const sb = createClient();
+        const { upsertPlannerConfig } = await import("@/lib/supabase/queries");
+        await upsertPlannerConfig(sb, partial);
+      } catch { /* ignore */ }
+    }, 500);
+  }
+
   useEffect(() => {
-    try { localStorage.setItem("wp_planner", JSON.stringify(config)); } catch { /* ignore */ }
-  }, [config]);
+    if (!dbLoaded) return;
+    savePlanner({ config });
+  }, [config, dbLoaded]);
 
   const totalLoanPayments = useMemo(
     () => loans.reduce((s, l) => s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH), 0),
     [loans],
   );
 
-  const unpaidLoanPaymentsTotal = useMemo(
-    () => loans.filter(l => !paidLoanIds.has(l.id)).reduce((s, l) => s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH), 0),
-    [loans, paidLoanIds],
-  );
-
   const getLoanPaymentsForMonth = useCallback(
-    (y: number, m: number) => loans.reduce((s, l) => s + loanPaymentForMonth(l, y, m), 0),
-    [loans],
+    (y: number, m: number) => {
+      const applicable = (y === CUR_YEAR && m === CUR_MONTH)
+        ? loans.filter(l => !paidLoanIds.has(l.id))
+        : loans;
+      return applicable.reduce((s, l) => s + loanPaymentForMonth(l, y, m), 0);
+    },
+    [loans, paidLoanIds],
   );
 
   const totalRecurringCharges = useMemo(
@@ -827,8 +881,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   // Amounts already paid this month — baked into the starting balance so every
   // downstream month's balance cascades correctly (rather than a display-only hack).
   const paidAdjust = useMemo(
-    () => paidChargesTotal + (totalLoanPayments - unpaidLoanPaymentsTotal),
-    [paidChargesTotal, totalLoanPayments, unpaidLoanPaymentsTotal],
+    () => paidChargesTotal,
+    [paidChargesTotal],
   );
 
   // Compute projections for the viewed year — always start from the current month so
@@ -1183,7 +1237,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   : (totalRecurringCharges > 0 ? totalRecurringCharges : config.monthlyExpenses)}
                 events={eventsM} vestEvents={vestEventsM} recurBonuses={recurBonusM}
                 scenarioEvents={scenarioEventsM}
-                loanPaymentsTotal={isToday ? unpaidLoanPaymentsTotal : getLoanPaymentsForMonth(d.year, d.month)}
+                loanPaymentsTotal={getLoanPaymentsForMonth(d.year, d.month)}
                 balance={d.balance} net={d.net}
                 isPast={isPast} isToday={isToday}
                 onAddEvent={addEvent} onRemoveEvent={removeEvent}
@@ -1214,7 +1268,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Filing status</label>
               <div className="flex gap-1">
                 {(["single","mfj","mfs","hoh"] as const).map(s => (
-                  <button key={s} onClick={() => setTaxFilingStatus(s)}
+                  <button key={s} onClick={() => { setTaxFilingStatus(s); savePlanner({ tax_filing_status: s }); }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
                       taxFilingStatus === s ? "bg-accent text-white" : "bg-card border border-border/40 text-foreground/50 hover:text-foreground"
                     }`}>
