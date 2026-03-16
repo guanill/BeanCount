@@ -161,15 +161,15 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   return (
     <div className="space-y-6 animate-slide-up">
       {/* Credit Card Debt */}
-      <div className="rounded-2xl bg-linear-to-br from-red-500/15 to-orange-500/10 border border-border/50 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-red-500/20">
+      <div className="rounded-2xl bg-linear-to-br from-red-500/15 to-orange-500/10 border border-border/50 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2.5 rounded-xl bg-red-500/20 shrink-0">
               <CreditCardIcon className="w-5 h-5 text-red" />
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-foreground">Credit Card Debt</h2>
-              <p className="text-sm text-foreground/50">
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-lg font-bold text-foreground">Credit Card Debt</h2>
+              <p className="text-xs sm:text-sm text-foreground/50">
                 {cards.length} card{cards.length !== 1 ? "s" : ""}
                 {hasLinked && (
                   <span className="ml-1.5 inline-flex items-center gap-1 text-accent/80">
@@ -179,11 +179,11 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
               </p>
             </div>
           </div>
-          <div className="text-right">
-            <p className={`text-2xl font-bold ${totalDebt <= 0 ? "text-green" : "text-red"}`}>
+          <div className="flex items-center justify-between sm:justify-end gap-2">
+            <p className={`text-xl sm:text-2xl font-bold ${totalDebt <= 0 ? "text-green" : "text-red"}`}>
               {totalDebt <= 0 ? formatCurrency(Math.abs(totalDebt)) : `-${formatCurrency(totalDebt)}`}
             </p>
-            <div className="flex items-center gap-2 justify-end mt-1">
+            <div className="flex items-center gap-2">
               {hasLinked && (
                 <button
                   type="button"
@@ -512,13 +512,13 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between text-sm py-1">
-                    <span className="text-foreground/60">{card.name}</span>
-                    <div className="flex items-center gap-3">
-                      <span className="text-foreground/40">
-                        {formatNumber(card.points_balance)} pts × {card.points_value_cents}¢
+                  <div className="flex items-center justify-between text-sm py-1 gap-2">
+                    <span className="text-foreground/60 truncate min-w-0">{card.name}</span>
+                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                      <span className="text-foreground/40 text-xs sm:text-sm whitespace-nowrap">
+                        {formatNumber(card.points_balance)} × {card.points_value_cents}¢
                       </span>
-                      <span className="text-yellow font-semibold">{formatCurrency(val)}</span>
+                      <span className="text-yellow font-semibold whitespace-nowrap">{formatCurrency(val)}</span>
                       <button
                         onClick={() => startEditPoints(card)}
                         className="opacity-0 group-hover:opacity-100 p-1 text-foreground/30 hover:text-accent transition-all"

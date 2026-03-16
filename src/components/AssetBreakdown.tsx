@@ -28,7 +28,7 @@ export default function AssetBreakdown({ bankTotal, stockTotal, cryptoTotal, ass
   const conicGradient = `conic-gradient(${gradientParts.join(", ")})`;
 
   return (
-    <div className="rounded-2xl bg-card border border-border/50 p-6 animate-slide-up">
+    <div className="rounded-2xl bg-card border border-border/50 p-4 sm:p-6 animate-slide-up">
       <div className="flex items-center gap-3 mb-6">
         <div className="p-2.5 rounded-xl bg-accent/20">
           <PieChart className="w-5 h-5 text-accent-light" />
@@ -36,34 +36,34 @@ export default function AssetBreakdown({ bankTotal, stockTotal, cryptoTotal, ass
         <h2 className="text-lg font-bold text-foreground">Asset Breakdown</h2>
       </div>
 
-      <div className="flex items-center gap-8">
+      <div className="flex flex-col sm:flex-row items-center gap-6 sm:gap-8">
         {/* Donut chart */}
-        <div className="relative w-36 h-36 shrink-0">
+        <div className="relative w-32 h-32 sm:w-36 sm:h-36 shrink-0">
           <div
             className="w-full h-full rounded-full"
             style={{ background: conicGradient }}
           />
           <div className="absolute inset-4 rounded-full bg-card flex items-center justify-center">
             <div className="text-center">
-              <p className="text-xs text-foreground/50">Total</p>
-              <p className="text-sm font-bold text-foreground">{formatCurrency(assetsTotal)}</p>
+              <p className="text-[10px] sm:text-xs text-foreground/50">Total</p>
+              <p className="text-xs sm:text-sm font-bold text-foreground">{formatCurrency(assetsTotal)}</p>
             </div>
           </div>
         </div>
 
         {/* Legend */}
-        <div className="flex-1 space-y-4">
+        <div className="flex-1 w-full space-y-4">
           {segments.map((s) => {
             const pct = getPercentage(s.value, assetsTotal);
             return (
               <div key={s.label} className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />
-                    <s.Icon className="w-3.5 h-3.5 text-foreground/50" />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                    <s.Icon className="w-3.5 h-3.5 text-foreground/50 shrink-0" />
                     <span className="text-sm text-foreground/70">{s.label}</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className="text-sm font-semibold text-foreground">{formatCurrency(s.value)}</span>
                     <span className="text-xs text-foreground/40 w-10 text-right">{pct}%</span>
                   </div>

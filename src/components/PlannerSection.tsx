@@ -427,7 +427,7 @@ function MonthCard({
   const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0;
 
   return (
-    <div className={`relative rounded-2xl border flex flex-col transition-all ${
+    <div className={`relative rounded-2xl border flex flex-col transition-all overflow-hidden ${
       isToday   ? "border-accent/60 bg-accent/5 shadow-lg shadow-accent/10 ring-1 ring-accent/20"
       : isPast  ? "border-border/15 bg-card/15 opacity-50"
       : "border-border/40 bg-card hover:border-border/70 hover:shadow-md hover:shadow-black/20"
@@ -455,8 +455,8 @@ function MonthCard({
       </div>
 
       {/* Big balance */}
-      <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-0.5">
-        <div className={`text-xl sm:text-[22px] font-bold tabular-nums leading-tight ${balance >= 0 ? "text-foreground" : "text-red"}`}>
+      <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-0.5 overflow-hidden">
+        <div className={`text-lg sm:text-[22px] font-bold tabular-nums leading-tight truncate ${balance >= 0 ? "text-foreground" : "text-red"}`}>
           {formatCurrency(balance)}
         </div>
         <div className="text-[10px] text-foreground/25 mt-1">projected balance</div>
@@ -485,16 +485,16 @@ function MonthCard({
 
       {/* Events */}
       {hasExtras && (
-        <div className="px-4 py-4 space-y-2 border-t border-border/15">
+        <div className="px-2 sm:px-4 py-3 sm:py-4 space-y-2 border-t border-border/15">
           {events.map(ev => {
             const meta = EVENT_META[ev.type];
             return (
-              <div key={ev.id} className={`flex items-center justify-between rounded-xl px-4 py-2.5 text-xs gap-2 ${meta.bg}`}>
-                <span className={`flex items-center gap-2.5 min-w-0 ${meta.color}`}>
-                  <span className="shrink-0 text-[13px]">{meta.emoji}</span>
+              <div key={ev.id} className={`flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 ${meta.bg}`}>
+                <span className={`flex items-center gap-1.5 sm:gap-2.5 min-w-0 ${meta.color}`}>
+                  <span className="shrink-0 text-[11px] sm:text-[13px]">{meta.emoji}</span>
                   <span className="truncate font-medium">{ev.label}</span>
                 </span>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                   <span className={`font-semibold tabular-nums ${ev.amount >= 0 ? "text-green" : "text-red"}`}>
                     {ev.amount >= 0 ? "+" : ""}{formatCurrency(ev.amount)}
                   </span>
@@ -506,9 +506,9 @@ function MonthCard({
             );
           })}
           {vestEvents.map((ev, i) => (
-            <div key={i} className="flex items-center justify-between rounded-xl px-4 py-2.5 text-xs gap-2 bg-indigo-500/10">
-              <span className="flex items-center gap-2.5 min-w-0 text-indigo-400">
-                <span className="shrink-0 text-[13px]">📊</span>
+            <div key={i} className="flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 bg-indigo-500/10">
+              <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 text-indigo-400">
+                <span className="shrink-0 text-[11px] sm:text-[13px]">📊</span>
                 <span className="truncate font-medium">{ev.label}</span>
               </span>
               <span className="font-semibold text-green shrink-0 tabular-nums">+{formatCurrency(ev.amount)}</span>
@@ -518,9 +518,9 @@ function MonthCard({
             const toAmt = (v: number) => b.amountType === "pct_salary" ? salary * v / 100 : v;
             const min = toAmt(b.amountMin), max = toAmt(b.amountMax);
             return (
-              <div key={b.id} className="flex items-center justify-between rounded-xl px-4 py-2.5 text-xs gap-2 bg-pink-500/10">
-                <span className="flex items-center gap-2.5 min-w-0 text-pink-400">
-                  <span className="shrink-0 text-[13px]">🎯</span>
+              <div key={b.id} className="flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 bg-pink-500/10">
+                <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 text-pink-400">
+                  <span className="shrink-0 text-[11px] sm:text-[13px]">🎯</span>
                   <span className="truncate font-medium">{b.label}</span>
                 </span>
                 <span className="font-semibold text-green shrink-0 tabular-nums">
@@ -532,9 +532,9 @@ function MonthCard({
           {scenarioEvents.map(s => {
             const total = s.items.reduce((sum, it) => sum + it.amount, 0);
             return (
-              <div key={s.id} className="flex items-center justify-between rounded-xl px-4 py-2.5 text-xs gap-2 bg-purple-500/10">
-                <span className="flex items-center gap-2.5 min-w-0 text-purple-400">
-                  <span className="shrink-0 text-[13px]">{s.emoji}</span>
+              <div key={s.id} className="flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 bg-purple-500/10">
+                <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 text-purple-400">
+                  <span className="shrink-0 text-[11px] sm:text-[13px]">{s.emoji}</span>
                   <span className="truncate font-medium">{s.label}</span>
                 </span>
                 <span className="font-semibold text-orange-400 shrink-0 tabular-nums">−{formatCurrency(total)}</span>
@@ -1009,9 +1009,9 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       </div>
 
       {/* ── Quick config bar ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
         {/* Starting balance */}
-        <div className="bg-card border border-border/40 rounded-2xl p-4 flex items-center gap-4">
+        <div className="bg-card border border-border/40 rounded-2xl p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
           <div className="p-2 bg-accent/10 rounded-xl shrink-0"><DollarSign className="w-4 h-4 text-accent" /></div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1">
@@ -1042,7 +1042,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         </div>
 
         {/* Monthly expenses */}
-        <div className="bg-card border border-border/40 rounded-2xl p-4 flex items-center gap-4">
+        <div className="bg-card border border-border/40 rounded-2xl p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
           <div className="p-2 bg-red/10 rounded-xl shrink-0"><Zap className="w-4 h-4 text-red" /></div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1">
@@ -1069,7 +1069,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         </div>
 
         {/* Loan payments */}
-        <div className="bg-card border border-border/40 rounded-2xl p-4 flex items-center gap-4">
+        <div className="bg-card border border-border/40 rounded-2xl p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
           <div className="p-2 bg-accent/10 rounded-xl shrink-0"><Building className="w-4 h-4 text-accent" /></div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1">
