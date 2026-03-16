@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Link2, Loader2, RefreshCw } from "lucide-react";
+import { callEdgeFunction } from "@/lib/supabase/functions";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -46,8 +47,7 @@ export default function TellerConnectButton({
         await loadScript("https://cdn.teller.io/connect/connect.js");
         if (cancelled) return;
 
-        const cfgRes = await fetch("/api/teller/config");
-        const { appId, environment } = await cfgRes.json() as { appId: string; environment: string };
+        const { appId, environment } = await callEdgeFunction<{ appId: string; environment: string }>("teller-config", { method: "POST" });
         if (cancelled) return;
 
         if (!window.TellerConnect) {
@@ -66,17 +66,13 @@ export default function TellerConnectButton({
           onSuccess: async (enrollment: { accessToken: string; enrollment: { id: string; institution: { name: string } } }) => {
             setLoading(true);
             try {
-              const res = await fetch("/api/teller/enroll", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+              await callEdgeFunction("teller-enroll", {
+                body: {
                   access_token: enrollment.accessToken,
                   enrollment_id: enrollment.enrollment.id,
                   institution_name: enrollment.enrollment.institution.name,
-                }),
+                },
               });
-              const data = await res.json() as { error?: string };
-              if (data.error) throw new Error(data.error);
               onConnectedRef.current();
             } catch (e) {
               setError(e instanceof Error ? e.message : "Connection failed");

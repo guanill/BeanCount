@@ -35,6 +35,7 @@ import {
   deleteTransaction,
   splitTransaction,
 } from "@/lib/supabase/queries";
+import { callEdgeFunction } from "@/lib/supabase/functions";
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -580,9 +581,7 @@ export default function TransactionsSection() {
   async function handleSyncTransactions() {
     setSyncing(true); setSyncMsg(null);
     try {
-      const res  = await fetch("/api/teller/sync-transactions", { method: "POST" });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await callEdgeFunction<{ added: number }>("teller-sync-transactions");
       setSyncMsg(`âœ“ ${data.added} new transactions`);
       fetchTransactions();
       setTimeout(() => setSyncMsg(null), 4000);

@@ -1,5 +1,7 @@
 "use client";
 
+import AuthGuard from "@/components/AuthGuard";
+
 export default function Providers({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return <AuthGuard>{children}</AuthGuard>;
 }

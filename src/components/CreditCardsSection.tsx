@@ -7,6 +7,7 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import { createCreditCard, updateCreditCard, deleteCreditCard } from "@/lib/supabase/queries";
+import { callEdgeFunction } from "@/lib/supabase/functions";
 
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
 
@@ -48,9 +49,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   async function handleSync() {
     setSyncing(true); setSyncMsg(null);
     try {
-      const res = await fetch("/api/teller/sync", { method: "POST" });
-      const data = await res.json() as { synced?: number; errors?: SyncError[]; error?: string };
-      if (data.error) throw new Error(data.error);
+      const data = await callEdgeFunction<{ synced?: number; errors?: SyncError[] }>("teller-sync");
 
       // Track per-card errors so we can show warnings on each card
       const errMap: Record<string, SyncError> = {};
@@ -74,7 +73,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
 
   async function handleDisconnectCard(id: string) {
     if (!confirm("Disconnect from Teller? The card stays but won't auto-sync.")) return;
-    await fetch(`/api/teller/disconnect/${id}`, { method: "DELETE" });
+    await callEdgeFunction("teller-disconnect", { method: "POST", body: { id } });
     onRefresh();
   }
 
