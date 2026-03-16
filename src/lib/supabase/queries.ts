@@ -606,3 +606,33 @@ export async function splitTransaction(
   ]);
   if (insertError) throw insertError;
 }
+
+// ─── Planner Config ──────────────────────────────────────────────────────────
+
+export interface PlannerRow {
+  config: Record<string, unknown>;
+  paid_loan_ids: string[];
+  paid_loan_month: string;
+  dismissed_suggestions: string[];
+  tax_filing_status: string;
+}
+
+export async function getPlannerConfig(supabase: SupabaseClient): Promise<PlannerRow | null> {
+  const { data } = await supabase
+    .from("planner_configs")
+    .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status")
+    .maybeSingle();
+  return data as PlannerRow | null;
+}
+
+export async function upsertPlannerConfig(
+  supabase: SupabaseClient,
+  row: Partial<PlannerRow>,
+) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  const { error } = await supabase
+    .from("planner_configs")
+    .upsert({ user_id: user.id, ...row }, { onConflict: "user_id" });
+  if (error) throw error;
+}
