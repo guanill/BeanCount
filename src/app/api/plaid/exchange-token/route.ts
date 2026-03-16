@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { plaidClient } from "@/lib/plaid";
-import { getDb } from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const { public_token, institution_name } = await req.json();
 
     // Exchange public token for access token
@@ -15,8 +20,6 @@ export async function POST(req: NextRequest) {
     // Fetch accounts + balances from Plaid
     const balanceRes = await plaidClient.accountsBalanceGet({ access_token: accessToken });
     const plaidAccounts = balanceRes.data.accounts;
-
-    const db = getDb();
 
     const created: object[] = [];
 
@@ -36,30 +39,72 @@ export async function POST(req: NextRequest) {
 
       const balance = pa.balances.current ?? pa.balances.available ?? 0;
       const name = `${institution_name} – ${pa.name}`;
-      const id = uuidv4();
 
       // Check if this plaid_account_id is already tracked
-      const existing = db
-        .prepare("SELECT id FROM accounts WHERE plaid_account_id = ?")
-        .get(pa.account_id) as { id: string } | undefined;
+      const { data: existing } = await supabaseAdmin
+        .from("accounts")
+        .select("id")
+        .eq("plaid_account_id", pa.account_id)
+        .eq("user_id", user.id)
+        .maybeSingle();
 
       if (existing) {
         // Update balance
-        db.prepare(
-          `UPDATE accounts SET balance = ?, plaid_access_token = ?, plaid_item_id = ?,
-           plaid_institution_name = ?, plaid_last_synced = datetime('now'),
-           updated_at = datetime('now') WHERE id = ?`
-        ).run(balance, accessToken, itemId, institution_name, existing.id);
+        await supabaseAdmin
+          .from("accounts")
+          .update({
+            balance,
+            plaid_item_id: itemId,
+            plaid_institution_name: institution_name,
+            plaid_last_synced: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+
+        // Upsert access token in integration_tokens
+        await supabaseAdmin
+          .from("integration_tokens")
+          .upsert(
+            {
+              user_id: user.id,
+              provider: "plaid",
+              entity_type: "account",
+              entity_id: existing.id,
+              access_token: accessToken,
+            },
+            { onConflict: "provider,entity_type,entity_id" }
+          );
+
         created.push({ id: existing.id, name, balance, updated: true });
       } else {
         // Insert new account
-        db.prepare(
-          `INSERT INTO accounts
-             (id, name, type, balance, icon, color,
-              plaid_access_token, plaid_account_id, plaid_item_id,
-              plaid_institution_name, plaid_last_synced)
-           VALUES (?, ?, ?, ?, 'landmark', '#4a9eed', ?, ?, ?, ?, datetime('now'))`
-        ).run(id, name, accountType, balance, accessToken, pa.account_id, itemId, institution_name);
+        const id = uuidv4();
+        await supabaseAdmin
+          .from("accounts")
+          .insert({
+            id,
+            user_id: user.id,
+            name,
+            type: accountType,
+            balance,
+            icon: "landmark",
+            color: "#4a9eed",
+            plaid_account_id: pa.account_id,
+            plaid_item_id: itemId,
+            plaid_institution_name: institution_name,
+            plaid_last_synced: new Date().toISOString(),
+          });
+
+        // Store access token in integration_tokens
+        await supabaseAdmin
+          .from("integration_tokens")
+          .insert({
+            user_id: user.id,
+            provider: "plaid",
+            entity_type: "account",
+            entity_id: id,
+            access_token: accessToken,
+          });
+
         created.push({ id, name, balance, updated: false });
       }
     }

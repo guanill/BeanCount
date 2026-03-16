@@ -2,8 +2,21 @@
 
 import { CreditCard } from "@/lib/types";
 import { formatCurrency, formatNumber, formatDate, daysUntil } from "@/lib/format";
-import { CreditCard as CreditCardIcon, AlertTriangle, Plus, Pencil, Trash2, RefreshCw, Unlink, CheckCircle2 } from "lucide-react";
+import { CreditCard as CreditCardIcon, AlertTriangle, Plus, Pencil, Trash2, RefreshCw, Unlink, CheckCircle2, WifiOff } from "lucide-react";
 import { useState } from "react";
+import dynamic from "next/dynamic";
+import { createClient } from "@/lib/supabase/client";
+import { createCreditCard, updateCreditCard, deleteCreditCard } from "@/lib/supabase/queries";
+
+const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
+
+interface SyncError {
+  id: string;
+  name: string;
+  kind: "account" | "credit_card";
+  code: string;
+  message: string;
+}
 
 interface Props {
   cards: CreditCard[];
@@ -25,6 +38,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   });
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [syncErrors, setSyncErrors] = useState<Record<string, SyncError>>({});
   const [editingPointsId, setEditingPointsId] = useState<string | null>(null);
   const [pointsForm, setPointsForm] = useState({ points_balance: "", points_value_cents: "" });
 
@@ -35,11 +49,22 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
     setSyncing(true); setSyncMsg(null);
     try {
       const res = await fetch("/api/teller/sync", { method: "POST" });
-      const data = await res.json() as { synced?: number; error?: string };
+      const data = await res.json() as { synced?: number; errors?: SyncError[]; error?: string };
       if (data.error) throw new Error(data.error);
-      setSyncMsg(`✓ ${data.synced} updated`);
+
+      // Track per-card errors so we can show warnings on each card
+      const errMap: Record<string, SyncError> = {};
+      for (const err of data.errors ?? []) errMap[err.id] = err;
+      setSyncErrors(errMap);
+
+      const failCount = (data.errors ?? []).length;
+      if (failCount > 0) {
+        setSyncMsg(`✓ ${data.synced} updated · ⚠ ${failCount} failed`);
+      } else {
+        setSyncMsg(`✓ ${data.synced} updated`);
+      }
       onRefresh();
-      setTimeout(() => setSyncMsg(null), 3000);
+      setTimeout(() => setSyncMsg(null), 4000);
     } catch (e) {
       setSyncMsg(e instanceof Error ? e.message : "Sync failed");
     } finally {
@@ -64,19 +89,15 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-
-    await fetch("/api/credit-cards", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: addForm.name,
-        balance_owed: parseFloat(addForm.balance_owed) || 0,
-        credit_limit: parseFloat(addForm.credit_limit) || 0,
-        points_balance: parseFloat(addForm.points_balance) || 0,
-        points_value_cents: parseFloat(addForm.points_value_cents) || 1,
-        due_date: addForm.due_date || null,
-        min_payment: parseFloat(addForm.min_payment) || 0,
-      }),
+    const supabase = createClient();
+    await createCreditCard(supabase, {
+      name: addForm.name,
+      balance_owed: parseFloat(addForm.balance_owed) || 0,
+      credit_limit: parseFloat(addForm.credit_limit) || 0,
+      points_balance: parseFloat(addForm.points_balance) || 0,
+      points_value_cents: parseFloat(addForm.points_value_cents) || 1,
+      due_date: addForm.due_date || undefined,
+      min_payment: parseFloat(addForm.min_payment) || 0,
     });
 
     setAddForm({ name: "", balance_owed: "", credit_limit: "", points_balance: "", points_value_cents: "1", due_date: "", min_payment: "" });
@@ -85,19 +106,16 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   }
 
   async function handleUpdate(id: string) {
-    await fetch(`/api/credit-cards/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: editForm.name,
-        balance_owed: parseFloat(editForm.balance_owed) || 0,
-        credit_limit: parseFloat(editForm.credit_limit) || 0,
-        points_balance: parseFloat(editForm.points_balance) || 0,
-        points_value_cents: parseFloat(editForm.points_value_cents) || 1,
-        due_date: editForm.due_date || null,
-        min_payment: parseFloat(editForm.min_payment) || 0,
-      }),
-    });
+    const supabase = createClient();
+    await updateCreditCard(supabase, id, {
+      name: editForm.name,
+      balance_owed: parseFloat(editForm.balance_owed) || 0,
+      credit_limit: parseFloat(editForm.credit_limit) || 0,
+      points_balance: parseFloat(editForm.points_balance) || 0,
+      points_value_cents: parseFloat(editForm.points_value_cents) || 1,
+      due_date: editForm.due_date || null,
+      min_payment: parseFloat(editForm.min_payment) || 0,
+    } as any);
 
     setEditingId(null);
     onRefresh();
@@ -105,7 +123,8 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this credit card?")) return;
-    await fetch(`/api/credit-cards/${id}`, { method: "DELETE" });
+    const supabase = createClient();
+    await deleteCreditCard(supabase, id);
     onRefresh();
   }
 
@@ -131,14 +150,11 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   }
 
   async function handleUpdatePoints(id: string) {
-    await fetch(`/api/credit-cards/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        points_balance: parseFloat(pointsForm.points_balance) || 0,
-        points_value_cents: parseFloat(pointsForm.points_value_cents) || 1,
-      }),
-    });
+    const supabase = createClient();
+    await updateCreditCard(supabase, id, {
+      points_balance: parseFloat(pointsForm.points_balance) || 0,
+      points_value_cents: parseFloat(pointsForm.points_value_cents) || 1,
+    } as any);
     setEditingPointsId(null);
     onRefresh();
   }
@@ -174,7 +190,11 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                   type="button"
                   onClick={handleSync}
                   disabled={syncing}
-                  className="flex items-center gap-1 text-xs text-foreground/50 hover:text-accent transition-colors disabled:opacity-40"
+                  className={`flex items-center gap-1 text-xs transition-colors disabled:opacity-40 ${
+                    syncMsg?.includes("failed")
+                      ? "text-yellow-400 hover:text-yellow-300"
+                      : "text-foreground/50 hover:text-accent"
+                  }`}
                 >
                   <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} />
                   {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
@@ -246,9 +266,11 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
             const days = daysUntil(card.due_date);
             const isUrgent = days !== null && days <= 7 && days >= 0;
             const pointsVal = (card.points_balance * card.points_value_cents) / 100;
+            const syncErr = syncErrors[card.id];
+            const needsReconnect = syncErr?.code?.startsWith("enrollment.disconnected");
 
             return (
-              <div key={card.id} className="group p-4 rounded-xl bg-card/60 hover:bg-card-hover border border-transparent hover:border-border/30 transition-all overflow-hidden">
+              <div key={card.id} className={`group p-4 rounded-xl bg-card/60 hover:bg-card-hover border transition-all overflow-hidden ${needsReconnect ? "border-yellow-500/40 hover:border-yellow-500/60" : "border-transparent hover:border-border/30"}`}>
                 {editingId === card.id ? (
                   <div className="space-y-3">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -398,6 +420,32 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                         <span className="text-yellow">★</span>
                         <span>{formatNumber(card.points_balance)} pts</span>
                         <span>≈ {formatCurrency(pointsVal)}</span>
+                      </div>
+                    )}
+                    {syncErr && (
+                      <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs">
+                        <WifiOff className="w-3.5 h-3.5 text-yellow-400 mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-yellow-300 font-medium">
+                            {needsReconnect ? "Re-authentication required" : "Sync failed"}
+                          </p>
+                          {needsReconnect ? (
+                            <TellerConnectButton
+                              variant="ghost"
+                              enrollmentId={card.teller_enrollment_id ?? undefined}
+                              onConnected={() => {
+                                setSyncErrors(prev => {
+                                  const next = { ...prev };
+                                  delete next[card.id];
+                                  return next;
+                                });
+                                onRefresh();
+                              }}
+                            />
+                          ) : (
+                            <p className="text-foreground/40 truncate mt-0.5">{syncErr.message}</p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </>

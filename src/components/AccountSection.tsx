@@ -18,12 +18,23 @@ import {
   RefreshCw,
   Unlink,
   CheckCircle2,
+  WifiOff,
 } from "lucide-react";
 import { useState } from "react";
 import dynamic from "next/dynamic";
+import { createClient } from "@/lib/supabase/client";
+import { createAccount, updateAccount, deleteAccount } from "@/lib/supabase/queries";
 
 // Teller Connect contains browser-only code — load client-side only
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
+
+interface SyncError {
+  id: string;
+  name: string;
+  kind: "account" | "credit_card";
+  code: string;
+  message: string;
+}
 
 const typeConfig: Record<AccountType, { label: string; gradient: string; iconBg: string; Icon: React.ElementType }> = {
   bank: { label: "Bank Accounts", gradient: "from-blue-500/20 to-cyan-500/10", iconBg: "bg-blue-500/20", Icon: Landmark },
@@ -58,13 +69,15 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   const [addValues, setAddValues] = useState<{ name: string; balance: string }>({ name: "", balance: "" });
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [syncErrors, setSyncErrors] = useState<Record<string, SyncError>>({});
 
   const linkedAccounts = accounts.filter((a) => a.teller_account_id);
   const hasLinked = linkedAccounts.length > 0;
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this account?")) return;
-    await fetch(`/api/accounts/${id}`, { method: "DELETE" });
+    const supabase = createClient();
+    await deleteAccount(supabase, id);
     onRefresh();
   }
 
@@ -74,13 +87,10 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   async function saveEdit(id: string) {
-    await fetch(`/api/accounts/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: editingValues.name,
-        balance: parseFloat(editingValues.balance) || 0,
-      }),
+    const supabase = createClient();
+    await updateAccount(supabase, id, {
+      name: editingValues.name,
+      balance: parseFloat(editingValues.balance) || 0,
     });
 
     setEditingId(null);
@@ -88,14 +98,11 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   async function saveNew() {
-    await fetch("/api/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: addValues.name,
-        type,
-        balance: parseFloat(addValues.balance) || 0,
-      }),
+    const supabase = createClient();
+    await createAccount(supabase, {
+      name: addValues.name,
+      type,
+      balance: parseFloat(addValues.balance) || 0,
     });
 
     setAddValues({ name: "", balance: "" });
@@ -108,11 +115,18 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
     setSyncMsg(null);
     try {
       const res = await fetch("/api/teller/sync", { method: "POST" });
-      const data = await res.json();
+      const data = await res.json() as { synced?: number; errors?: SyncError[]; error?: string };
       if (data.error) throw new Error(data.error);
-      setSyncMsg(`✓ ${data.synced} updated`);
+
+      // Track per-account errors so we can show inline reconnect banners
+      const errMap: Record<string, SyncError> = {};
+      for (const err of data.errors ?? []) errMap[err.id] = err;
+      setSyncErrors(errMap);
+
+      const failCount = (data.errors ?? []).length;
+      setSyncMsg(failCount > 0 ? `✓ ${data.synced} updated · ⚠ ${failCount} failed` : `✓ ${data.synced} updated`);
       onRefresh();
-      setTimeout(() => setSyncMsg(null), 3000);
+      setTimeout(() => setSyncMsg(null), 4000);
     } catch (e) {
       setSyncMsg(e instanceof Error ? e.message : "Sync failed");
     } finally {
@@ -167,7 +181,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                          disabled:opacity-40"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-              {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
+              <span className={syncMsg?.includes("failed") ? "text-yellow-400" : ""}>
+                {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
+              </span>
             </button>
           )}
           <div className="text-right">
@@ -237,10 +253,14 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
         {accounts.map((account, i) => {
           const AccIcon = iconMap[account.icon || ""] || Landmark;
           const isLinked = !!account.teller_account_id;
+          const syncErr = syncErrors[account.id];
+          const needsReconnect = syncErr?.code?.startsWith("enrollment.disconnected");
           return (
             <div
               key={account.id}
-              className="group p-3 rounded-xl bg-card/60 hover:bg-card-hover border border-transparent hover:border-border/30 transition-all overflow-hidden"
+              className={`group p-3 rounded-xl bg-card/60 hover:bg-card-hover border transition-all overflow-hidden ${
+                syncErr ? "border-yellow-500/40 hover:border-yellow-500/60" : "border-transparent hover:border-border/30"
+              }`}
               style={{ animationDelay: `${i * 0.05}s` }}
             >
               {editingId === account.id ? (
@@ -284,43 +304,79 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: `${account.color}20` }}
-                    >
-                      <AccIcon className="w-4 h-4" style={{ color: account.color || undefined }} />
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: `${account.color}20` }}
+                      >
+                        <AccIcon className="w-4 h-4" style={{ color: account.color || undefined }} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{account.name}</p>
+                        {isLinked && !syncErr && (
+                          <p className="text-xs text-accent/60 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Teller · {formatSynced(account.teller_last_synced)}
+                          </p>
+                        )}
+                        {syncErr && (
+                          <p className="text-xs text-yellow-400/80 flex items-center gap-1">
+                            <WifiOff className="w-3 h-3" />
+                            {needsReconnect ? "Re-auth required" : "Sync failed"}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{account.name}</p>
-                      {isLinked && (
-                        <p className="text-xs text-accent/60 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Teller · {formatSynced(account.teller_last_synced)}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-bold text-foreground">{formatCurrency(account.balance)}</span>
+                      <div className="hidden group-hover:flex items-center gap-1">
+                        {!isLinked && (
+                          <button onClick={() => startEdit(account)} className="p-1 text-foreground/30 hover:text-accent transition-colors" title="Edit">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {isLinked && (
+                          <button onClick={() => handleDisconnect(account.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
+                            <Unlink className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button onClick={() => handleDelete(account.id)} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Inline reconnect banner */}
+                  {syncErr && (
+                    <div className="mt-2 flex items-start gap-2 p-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs">
+                      <WifiOff className="w-3.5 h-3.5 text-yellow-400 mt-0.5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-yellow-300 font-medium">
+                          {needsReconnect ? "Re-authentication required" : "Sync failed"}
                         </p>
-                      )}
+                        {needsReconnect ? (
+                          <TellerConnectButton
+                            variant="ghost"
+                            enrollmentId={account.teller_enrollment_id ?? undefined}
+                            onConnected={() => {
+                              setSyncErrors(prev => {
+                                const next = { ...prev };
+                                delete next[account.id];
+                                return next;
+                              });
+                              onRefresh();
+                            }}
+                          />
+                        ) : (
+                          <p className="text-foreground/40 truncate mt-0.5">{syncErr.message}</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-sm font-bold text-foreground">{formatCurrency(account.balance)}</span>
-                    <div className="hidden group-hover:flex items-center gap-1">
-                      {!isLinked && (
-                        <button onClick={() => startEdit(account)} className="p-1 text-foreground/30 hover:text-accent transition-colors" title="Edit">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {isLinked && (
-                        <button onClick={() => handleDisconnect(account.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
-                          <Unlink className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      <button onClick={() => handleDelete(account.id)} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                  )}
+                </>
               )}
             </div>
           );

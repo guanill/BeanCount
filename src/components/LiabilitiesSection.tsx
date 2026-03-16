@@ -4,6 +4,8 @@ import { Liability } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
 import { Landmark, Plus, Pencil, Trash2, Clock } from "lucide-react";
 import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { createLiability, updateLiability, deleteLiability } from "@/lib/supabase/queries";
 
 const CATEGORIES = [
   { value: "pending",    label: "Pending Charge",  emoji: "⏳" },
@@ -46,16 +48,13 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    await fetch("/api/liabilities", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name:     addForm.name,
-        amount:   parseFloat(addForm.amount) || 0,
-        category: addForm.category,
-        notes:    addForm.notes || null,
-        due_date: addForm.due_date || null,
-      }),
+    const supabase = createClient();
+    await createLiability(supabase, {
+      name:     addForm.name,
+      amount:   parseFloat(addForm.amount) || 0,
+      category: addForm.category,
+      notes:    addForm.notes || undefined,
+      due_date: addForm.due_date || undefined,
     });
     setAddForm(EMPTY_FORM);
     setAdding(false);
@@ -63,24 +62,22 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
   }
 
   async function handleUpdate(id: string) {
-    await fetch(`/api/liabilities/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name:     editForm.name,
-        amount:   parseFloat(editForm.amount) || 0,
-        category: editForm.category,
-        notes:    editForm.notes || null,
-        due_date: editForm.due_date || null,
-      }),
-    });
+    const supabase = createClient();
+    await updateLiability(supabase, id, {
+      name:     editForm.name,
+      amount:   parseFloat(editForm.amount) || 0,
+      category: editForm.category,
+      notes:    editForm.notes || null,
+      due_date: editForm.due_date || null,
+    } as any);
     setEditingId(null);
     onRefresh();
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Remove this liability?")) return;
-    await fetch(`/api/liabilities/${id}`, { method: "DELETE" });
+    const supabase = createClient();
+    await deleteLiability(supabase, id);
     onRefresh();
   }
 

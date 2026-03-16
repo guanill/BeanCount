@@ -1,70 +1,127 @@
 import { NextResponse } from "next/server";
 import { tellerGet, TellerBalance } from "@/lib/teller";
-import { getDb } from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+
+interface SyncError {
+  id: string;
+  name: string;
+  kind: "account" | "credit_card";
+  code: string;
+  message: string;
+}
+
+function parseTellerError(e: unknown): { code: string; message: string } {
+  const msg = e instanceof Error ? e.message : String(e);
+  // Extract Teller error code from messages like: Error: Teller 404: {"error":{"code":"enrollment.disconnected...","message":"..."}}
+  try {
+    const jsonStart = msg.indexOf("{");
+    if (jsonStart !== -1) {
+      const parsed = JSON.parse(msg.slice(jsonStart)) as { error?: { code?: string; message?: string } };
+      if (parsed.error?.code) {
+        return { code: parsed.error.code, message: parsed.error.message ?? msg };
+      }
+    }
+  } catch { /* ignore */ }
+  return { code: "unknown", message: msg };
+}
 
 export async function POST() {
   try {
-    const db = getDb();
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     let synced = 0;
+    const errors: SyncError[] = [];
 
     // ── Bank accounts ────────────────────────────────────────────────────────
-    const linkedAccounts = db
-      .prepare(
-        `SELECT id, teller_access_token, teller_account_id
-         FROM accounts WHERE teller_access_token IS NOT NULL`
-      )
-      .all() as { id: string; teller_access_token: string; teller_account_id: string }[];
+    const { data: accountTokens } = await supabaseAdmin
+      .from("integration_tokens")
+      .select("entity_id, access_token")
+      .eq("user_id", user.id)
+      .eq("provider", "teller")
+      .eq("entity_type", "account");
 
-    for (const row of linkedAccounts) {
-      try {
-        const bal = await tellerGet<TellerBalance>(
-          `/accounts/${row.teller_account_id}/balances`,
-          row.teller_access_token
-        );
-        const balance = parseFloat(bal.available ?? bal.ledger ?? "0");
-        db.prepare(
-          `UPDATE accounts
-           SET balance = ?, teller_last_synced = datetime('now'), updated_at = datetime('now')
-           WHERE id = ?`
-        ).run(balance, row.id);
-        synced++;
-      } catch (e) {
-        console.error(`Failed to sync account ${row.id}:`, e);
+    if (accountTokens && accountTokens.length > 0) {
+      const accountIds = accountTokens.map((t) => t.entity_id);
+      const { data: accounts } = await supabaseAdmin
+        .from("accounts")
+        .select("id, name, teller_account_id")
+        .in("id", accountIds);
+
+      const tokenByEntityId = new Map(accountTokens.map((t) => [t.entity_id, t.access_token]));
+
+      for (const row of accounts ?? []) {
+        const accessToken = tokenByEntityId.get(row.id);
+        if (!accessToken || !row.teller_account_id) continue;
+
+        try {
+          const bal = await tellerGet<TellerBalance>(
+            `/accounts/${row.teller_account_id}/balances`,
+            accessToken
+          );
+          const balance = parseFloat(bal.available ?? bal.ledger ?? "0");
+          await supabaseAdmin
+            .from("accounts")
+            .update({
+              balance,
+              teller_last_synced: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+          synced++;
+        } catch (e) {
+          console.error(`Failed to sync account ${row.id}:`, e);
+          const { code, message } = parseTellerError(e);
+          errors.push({ id: row.id, name: row.name, kind: "account", code, message });
+        }
       }
     }
 
     // ── Credit cards ─────────────────────────────────────────────────────────
-    const linkedCards = db
-      .prepare(
-        `SELECT id, teller_access_token, teller_account_id
-         FROM credit_cards WHERE teller_access_token IS NOT NULL`
-      )
-      .all() as { id: string; teller_access_token: string; teller_account_id: string }[];
+    const { data: cardTokens } = await supabaseAdmin
+      .from("integration_tokens")
+      .select("entity_id, access_token")
+      .eq("user_id", user.id)
+      .eq("provider", "teller")
+      .eq("entity_type", "credit_card");
 
-    for (const row of linkedCards) {
-      try {
-        const bal = await tellerGet<TellerBalance>(
-          `/accounts/${row.teller_account_id}/balances`,
-          row.teller_access_token
-        );
-        // Credit: ledger = balance owed (negative means card owes you)
-        const balance_owed = parseFloat(bal.ledger ?? "0");
-        db.prepare(
-          `UPDATE credit_cards
-           SET balance_owed = ?, teller_last_synced = datetime('now'), updated_at = datetime('now')
-           WHERE id = ?`
-        ).run(balance_owed, row.id);
-        synced++;
-      } catch (e) {
-        console.error(`Failed to sync credit card ${row.id}:`, e);
+    if (cardTokens && cardTokens.length > 0) {
+      const cardIds = cardTokens.map((t) => t.entity_id);
+      const { data: cards } = await supabaseAdmin
+        .from("credit_cards")
+        .select("id, name, teller_account_id")
+        .in("id", cardIds);
+
+      const tokenByEntityId = new Map(cardTokens.map((t) => [t.entity_id, t.access_token]));
+
+      for (const row of cards ?? []) {
+        const accessToken = tokenByEntityId.get(row.id);
+        if (!accessToken || !row.teller_account_id) continue;
+
+        try {
+          const bal = await tellerGet<TellerBalance>(
+            `/accounts/${row.teller_account_id}/balances`,
+            accessToken
+          );
+          const balance_owed = Math.abs(parseFloat(bal.ledger ?? "0"));
+          await supabaseAdmin
+            .from("credit_cards")
+            .update({
+              balance_owed,
+              teller_last_synced: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+          synced++;
+        } catch (e) {
+          console.error(`Failed to sync credit card ${row.id}:`, e);
+          const { code, message } = parseTellerError(e);
+          errors.push({ id: row.id, name: row.name, kind: "credit_card", code, message });
+        }
       }
     }
 
-    if (synced === 0 && linkedAccounts.length === 0 && linkedCards.length === 0) {
-      return NextResponse.json({ synced: 0 });
-    }
-
-    return NextResponse.json({ synced });
+    return NextResponse.json({ synced, errors });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Teller sync error:", msg);

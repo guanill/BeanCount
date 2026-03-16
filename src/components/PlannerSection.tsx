@@ -174,13 +174,31 @@ function computeMonthlyNet(annualSalary: number, filingStatus: FilingStatus): nu
 
 interface MonthData { year: number; month: number; balance: number; net: number; salary: number; }
 
+// Returns the payment amount for a loan in a given calendar month, respecting deferral.
+function loanPaymentForMonth(
+  loan: { monthly_payment: number; deferral_months: number | null; created_at: string | null },
+  year: number,
+  month: number,
+): number {
+  const defMonths = loan.deferral_months ?? 0;
+  if (!defMonths) return loan.monthly_payment;
+  const created = loan.created_at ? new Date(loan.created_at) : null;
+  if (!created || isNaN(created.getTime())) return loan.monthly_payment;
+  // First payment month = created date + deferral_months calendar months
+  const firstPayYear  = created.getFullYear() + Math.floor((created.getMonth() + defMonths) / 12);
+  const firstPayMonth = ((created.getMonth() + defMonths) % 12) + 1; // 1-indexed
+  return (year > firstPayYear || (year === firstPayYear && month >= firstPayMonth))
+    ? loan.monthly_payment
+    : 0;
+}
+
 function projectBalances(
   config: PlannerConfig,
   fromYear: number,
   fromMonth: number,
   numMonths: number,
   scenario: "low" | "mid" | "high" = "mid",
-  loanPaymentsTotal: number = 0,
+  loanPaymentsTotal: number | ((y: number, m: number) => number) = 0,
 ): MonthData[] {
   let balance = config.startingBalance;
   const vestEvs = getVestEvents(config.vestingGrants ?? []);
@@ -195,7 +213,8 @@ function projectBalances(
       .filter(b => b.month === m && b.startYear <= y && (b.endYear === null || b.endYear >= y))
       .reduce((s, b) => s + getBonusAmount(b, salary, scenario), 0);
     const chargesTotal = (config.recurringCharges ?? []).reduce((s, c) => s + c.amount, 0);
-    const expenseTotal = (chargesTotal > 0 ? chargesTotal : config.monthlyExpenses) + loanPaymentsTotal;
+    const loanAmt = typeof loanPaymentsTotal === "function" ? loanPaymentsTotal(y, m) : loanPaymentsTotal;
+    const expenseTotal = (chargesTotal > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
     const net = salary - expenseTotal - scenarioSum + evtSum + vestSum + bonusSum;
@@ -274,7 +293,7 @@ function detectRecurring(transactions: Array<{ name: string; merchant_name: stri
 }
 
 // ─── Projection Chart (SVG, 3 years) ─────────────────────────────────────────
-function ProjectionChart({ config, loanPaymentsTotal = 0 }: { config: PlannerConfig; loanPaymentsTotal?: number }) {
+function ProjectionChart({ config, loanPaymentsTotal = 0 }: { config: PlannerConfig; loanPaymentsTotal?: number | ((y: number, m: number) => number) }) {
   const NUM = 36;
   const W = 900, H = 220;
   const PAD = { t: 20, r: 20, b: 40, l: 72 };
@@ -640,7 +659,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   });
   const [scanning,         setScanning]         = useState(false);
   const [scanned,          setScanned]          = useState(false);
-  const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string }>>([]);
+  const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string; deferral_months: number | null; created_at: string | null }>>([]);
   const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem(`wp_paid_loans_${THIS_MONTH_KEY}`) ?? "[]") as string[]); } catch { return new Set(); }
   });
@@ -648,9 +667,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
   // Load loans once on mount
   useEffect(() => {
-    fetch("/api/loans")
-      .then(r => r.json())
-      .then((rows: Array<{ id: string; name: string; monthly_payment: number; type: string }>) => setLoans(rows ?? []))
+    const supabase = (async () => {
+      const { createClient } = await import("@/lib/supabase/client");
+      return createClient();
+    })();
+    supabase.then(sb => sb.from("loans").select("id, name, monthly_payment, type, deferral_months, created_at"))
+      .then(({ data }) => setLoans(data ?? []))
       .catch(() => {});
   }, []);
 
@@ -658,15 +680,20 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   useEffect(() => {
     const pad = (n: number) => String(n).padStart(2, "0");
     const prefix = `${CUR_YEAR}-${pad(CUR_MONTH)}`;
-    fetch("/api/transactions?type=expense")
-      .then(r => r.json())
-      .then((json: { transactions?: Array<{ name: string; merchant_name?: string | null; date: string }> }) => {
-        const txs = (json.transactions ?? []).filter(t => t.date?.startsWith(prefix));
-        const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-        const keys = new Set(txs.flatMap(t => [norm(t.name), t.merchant_name ? norm(t.merchant_name) : ""]).filter(Boolean));
-        setThisMonthTxKeys(keys);
-      })
-      .catch(() => {});
+    (async () => {
+      const { createClient } = await import("@/lib/supabase/client");
+      const sb = createClient();
+      const { data } = await sb
+        .from("transactions")
+        .select("name, merchant_name, date")
+        .eq("transaction_type", "expense")
+        .gte("date", `${prefix}-01`)
+        .lt("date", `${CUR_YEAR}-${pad(CUR_MONTH + 1 > 12 ? 1 : CUR_MONTH + 1)}-01`);
+      const txs = data ?? [];
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const keys = new Set(txs.flatMap(t => [norm(t.name), t.merchant_name ? norm(t.merchant_name) : ""]).filter(Boolean));
+      setThisMonthTxKeys(keys);
+    })().catch(() => {});
   }, []);
 
   function toggleLoanPaid(id: string) {
@@ -728,9 +755,15 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const scanTransactions = useCallback(async () => {
     setScanning(true);
     try {
-      const res = await fetch("/api/transactions?type=expense");
-      const json = await res.json();
-      const txs = (json.transactions ?? []) as Array<{ name: string; merchant_name: string | null; amount: number; date: string; transaction_type: string }>;
+      const { createClient } = await import("@/lib/supabase/client");
+      const sb = createClient();
+      const { data } = await sb
+        .from("transactions")
+        .select("name, merchant_name, amount, date, transaction_type")
+        .eq("transaction_type", "expense")
+        .order("date", { ascending: false })
+        .limit(500);
+      const txs = (data ?? []) as Array<{ name: string; merchant_name: string | null; amount: number; date: string; transaction_type: string }>;
       const found = detectRecurring(txs);
       // filter out ones already added as charges
       const existing = new Set((config.recurringCharges ?? []).map(c => c.label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()));
@@ -766,13 +799,18 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   }, [config]);
 
   const totalLoanPayments = useMemo(
-    () => loans.reduce((s, l) => s + (l.monthly_payment ?? 0), 0),
+    () => loans.reduce((s, l) => s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH), 0),
     [loans],
   );
 
   const unpaidLoanPaymentsTotal = useMemo(
-    () => loans.filter(l => !paidLoanIds.has(l.id)).reduce((s, l) => s + (l.monthly_payment ?? 0), 0),
+    () => loans.filter(l => !paidLoanIds.has(l.id)).reduce((s, l) => s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH), 0),
     [loans, paidLoanIds],
+  );
+
+  const getLoanPaymentsForMonth = useCallback(
+    (y: number, m: number) => loans.reduce((s, l) => s + loanPaymentForMonth(l, y, m), 0),
+    [loans],
   );
 
   const totalRecurringCharges = useMemo(
@@ -805,9 +843,9 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     // already reflected in assetsTotal but projectBalances would subtract them
     // again unless we compensate here.
     const adjustedConfig = { ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust };
-    const all = projectBalances(adjustedConfig, CUR_YEAR, CUR_MONTH, totalMonths, "mid", totalLoanPayments);
+    const all = projectBalances(adjustedConfig, CUR_YEAR, CUR_MONTH, totalMonths, "mid", getLoanPaymentsForMonth);
     return all.filter(d => d.year === viewYear);
-  }, [effectiveConfig, viewYear, totalLoanPayments, paidAdjust]);
+  }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, paidAdjust]);
 
   // ── summary stats for the viewed year
   const yearStats = useMemo(() => {
@@ -1071,7 +1109,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             )}
           </div>
         </div>
-        <ProjectionChart config={{ ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust }} loanPaymentsTotal={totalLoanPayments} />
+        <ProjectionChart config={{ ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust }} loanPaymentsTotal={getLoanPaymentsForMonth} />
       </div>
 
       {/* ── Year navigator + month grid ── */}
@@ -1148,7 +1186,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   : (totalRecurringCharges > 0 ? totalRecurringCharges : config.monthlyExpenses)}
                 events={eventsM} vestEvents={vestEventsM} recurBonuses={recurBonusM}
                 scenarioEvents={scenarioEventsM}
-                loanPaymentsTotal={isToday ? unpaidLoanPaymentsTotal : totalLoanPayments}
+                loanPaymentsTotal={isToday ? unpaidLoanPaymentsTotal : getLoanPaymentsForMonth(d.year, d.month)}
                 balance={d.balance} net={d.net}
                 isPast={isPast} isToday={isToday}
                 onAddEvent={addEvent} onRemoveEvent={removeEvent}

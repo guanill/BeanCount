@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
-import { Link2, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link2, Loader2, RefreshCw } from "lucide-react";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -14,21 +14,35 @@ declare global {
 
 interface Props {
   onConnected: () => void;
+  /** When set, opens Teller Connect in re-authentication mode for that enrollment */
+  enrollmentId?: string;
+  /** ghost = small inline link style (for per-row reconnect banners) */
+  variant?: "default" | "ghost";
 }
 
-export default function TellerConnectButton({ onConnected }: Props) {
+export default function TellerConnectButton({
+  onConnected,
+  enrollmentId,
+  variant = "default",
+}: Props) {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tellerRef = useRef<{ open: () => void } | null>(null);
 
-  // Fetch Teller config from server (app ID + env)
+  // Keep latest callback in a ref so the Teller SDK instance doesn't need to
+  // be recreated every time the parent re-renders with a new inline function.
+  const onConnectedRef = useRef(onConnected);
+  useEffect(() => { onConnectedRef.current = onConnected; });
+
+  // Re-initialize Teller if enrollmentId changes (different card reconnect)
   useEffect(() => {
     let cancelled = false;
+    setReady(false);
+    setError(null);
 
     async function initTeller() {
       try {
-        // Ensure CDN script is loaded
         await loadScript("https://cdn.teller.io/connect/connect.js");
         if (cancelled) return;
 
@@ -44,8 +58,10 @@ export default function TellerConnectButton({ onConnected }: Props) {
         tellerRef.current = window.TellerConnect.setup({
           applicationId: appId,
           environment,
+          // Reconnect mode: pass enrollmentId so Teller skips account selection
+          // and just asks the user to re-authenticate the existing enrollment.
+          ...(enrollmentId ? { enrollmentId } : { selectAccount: "multiple" }),
           products: ["transactions", "balance"],
-          selectAccount: "multiple",
           onInit: () => setReady(true),
           onSuccess: async (enrollment: { accessToken: string; enrollment: { id: string; institution: { name: string } } }) => {
             setLoading(true);
@@ -61,19 +77,16 @@ export default function TellerConnectButton({ onConnected }: Props) {
               });
               const data = await res.json() as { error?: string };
               if (data.error) throw new Error(data.error);
-              onConnected();
+              onConnectedRef.current();
             } catch (e) {
               setError(e instanceof Error ? e.message : "Connection failed");
             } finally {
               setLoading(false);
             }
           },
-          onExit: () => {
-            /* user dismissed */
-          },
+          onExit: () => { /* user dismissed */ },
         });
 
-        // onInit may not fire in all versions — fallback
         setReady(true);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Init failed");
@@ -82,24 +95,41 @@ export default function TellerConnectButton({ onConnected }: Props) {
 
     initTeller();
     return () => { cancelled = true; };
-  }, [onConnected]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enrollmentId]);
 
-  const handleClick = useCallback(() => {
-    tellerRef.current?.open();
-  }, []);
+  const isReconnect = !!enrollmentId;
 
   if (error) {
+    if (variant === "ghost") {
+      return (
+        <span className="text-xs text-red-400/60" title={error}>Unavailable</span>
+      );
+    }
     return (
-      <span className="text-xs text-red-400/70" title={error}>
-        Teller unavailable
-      </span>
+      <span className="text-xs text-red-400/70" title={error}>Teller unavailable</span>
+    );
+  }
+
+  if (variant === "ghost") {
+    return (
+      <button
+        type="button"
+        onClick={() => tellerRef.current?.open()}
+        disabled={!ready || loading}
+        className="mt-1 text-yellow-400 hover:text-yellow-300 underline underline-offset-2 transition-colors disabled:opacity-40 text-xs flex items-center gap-1"
+      >
+        {loading
+          ? <><Loader2 className="w-3 h-3 animate-spin" /> Reconnecting…</>
+          : <>{isReconnect ? "Re-authenticate →" : "Connect"}</>}
+      </button>
     );
   }
 
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={() => tellerRef.current?.open()}
       disabled={!ready || loading}
       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
                  bg-accent/15 text-accent hover:bg-accent/25 border border-accent/20
@@ -107,10 +137,12 @@ export default function TellerConnectButton({ onConnected }: Props) {
     >
       {loading ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      ) : isReconnect ? (
+        <RefreshCw className="w-3.5 h-3.5" />
       ) : (
         <Link2 className="w-3.5 h-3.5" />
       )}
-      Connect bank
+      {isReconnect ? "Reconnect" : "Connect bank"}
     </button>
   );
 }
