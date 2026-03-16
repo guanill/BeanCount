@@ -83,73 +83,48 @@ export default function Dashboard() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border/50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-accent rounded-xl glow-pulse">
               <Bean className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground tracking-tight">BeanCount</h1>
-              <p className="text-xs text-foreground/40">Personal Finance Dashboard</p>
+              <h1 className="text-lg sm:text-xl font-bold text-foreground tracking-tight">BeanCount</h1>
+              <p className="text-xs text-foreground/40 hidden sm:block">Personal Finance Dashboard</p>
             </div>
           </div>
 
-          {/* Tab switcher */}
-          <div className="flex items-center gap-1 bg-card border border-border/50 rounded-xl p-1">
-            <button
-              onClick={() => setView("overview")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                view === "overview"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/50 hover:text-foreground"
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4" />
-              Overview
-            </button>
-            <button
-              onClick={() => setView("spending")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                view === "spending"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/50 hover:text-foreground"
-              }`}
-            >
-              <Receipt className="w-4 h-4" />
-              Spending
-            </button>
-            <button
-              onClick={() => setView("planner")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                view === "planner"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/50 hover:text-foreground"
-              }`}
-            >
-              <Sparkles className="w-4 h-4" />
-              Planner
-            </button>
-            <button
-              onClick={() => setView("loans")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                view === "loans"
-                  ? "bg-accent text-white shadow-sm"
-                  : "text-foreground/50 hover:text-foreground"
-              }`}
-            >
-              <Landmark className="w-4 h-4" />
-              Loans
-            </button>
+          {/* Desktop tab switcher */}
+          <div className="hidden md:flex items-center gap-1 bg-card border border-border/50 rounded-xl p-1">
+            {([
+              { key: "overview", icon: LayoutDashboard, label: "Overview" },
+              { key: "spending", icon: Receipt, label: "Spending" },
+              { key: "planner", icon: Sparkles, label: "Planner" },
+              { key: "loans", icon: Landmark, label: "Loans" },
+            ] as const).map(({ key, icon: Icon, label }) => (
+              <button
+                key={key}
+                onClick={() => setView(key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  view === key
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-foreground/50 hover:text-foreground"
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="flex items-center gap-2 px-4 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/70 hover:text-foreground transition-all disabled:opacity-50"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/70 hover:text-foreground transition-all disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh
+              <span className="hidden sm:inline">Refresh</span>
             </button>
             <button
               onClick={async () => {
@@ -166,7 +141,32 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      {/* Mobile bottom navigation */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/90 border-t border-border/50">
+        <div className="flex items-center justify-around px-2 py-2">
+          {([
+            { key: "overview", icon: LayoutDashboard, label: "Overview" },
+            { key: "spending", icon: Receipt, label: "Spending" },
+            { key: "planner", icon: Sparkles, label: "Planner" },
+            { key: "loans", icon: Landmark, label: "Loans" },
+          ] as const).map(({ key, icon: Icon, label }) => (
+            <button
+              key={key}
+              onClick={() => setView(key)}
+              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                view === key
+                  ? "text-accent"
+                  : "text-foreground/40 hover:text-foreground/60"
+              }`}
+            >
+              <Icon className="w-5 h-5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8 space-y-6 sm:space-y-8">
         {view === "overview" ? (
           <>
             {/* Hero - Net Worth */}
