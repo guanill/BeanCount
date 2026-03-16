@@ -111,10 +111,31 @@ serve(async (req) => {
 
     let totalAdded = 0;
 
+    // Fetch all existing teller_transaction_ids in one query to skip duplicates
+    const { data: existingTxs } = await admin.from("transactions")
+      .select("teller_transaction_id")
+      .eq("user_id", user.id)
+      .not("teller_transaction_id", "is", null);
+    const existingIds = new Set((existingTxs ?? []).map((t) => t.teller_transaction_id));
+    console.log("[sync-tx] Existing teller transactions in DB:", existingIds.size);
+
+    // Verify which account_ids actually exist in DB (avoid FK errors)
+    const allEntityIds = linked.map(l => l.id);
+    const { data: validAccounts } = await admin.from("accounts").select("id").in("id", allEntityIds);
+    const { data: validCards } = await admin.from("credit_cards").select("id").in("id", allEntityIds);
+    const validIds = new Set([
+      ...(validAccounts ?? []).map(a => a.id),
+      ...(validCards ?? []).map(c => c.id),
+    ]);
+
     for (const row of linked) {
       const accessToken = tokenMap.get(row.id);
       if (!accessToken || !row.teller_account_id) {
         console.log("[sync-tx] Skipping row - no token or teller_account_id:", row.id);
+        continue;
+      }
+      if (!validIds.has(row.id)) {
+        console.log("[sync-tx] Skipping row - account_id not in DB:", row.id);
         continue;
       }
 
@@ -128,21 +149,18 @@ serve(async (req) => {
           continue;
         }
 
-        console.log("[sync-tx] Got", transactions.length, "transactions from Teller for", row.teller_account_id);
+        // Filter to only new, posted transactions
+        const newTxs = transactions.filter(tx => tx.status !== "pending" && !existingIds.has(tx.id));
+        console.log("[sync-tx] Got", transactions.length, "from Teller,", newTxs.length, "are new for", row.teller_account_id);
 
-        let added = 0;
-        for (const tx of transactions) {
-          if (tx.status === "pending") continue;
+        if (newTxs.length === 0) continue;
+
+        // Build rows and batch insert (chunks of 50)
+        const rows = newTxs.map(tx => {
           const amount = parseFloat(tx.amount);
           const merchantName = tx.details?.counterparty?.name ?? null;
           const { category: catKey, txType } = classifyTellerTransaction(tx, merchantName);
-
-          // Check if this teller transaction already exists
-          const { data: existing } = await admin.from("transactions")
-            .select("id").eq("teller_transaction_id", tx.id).maybeSingle();
-          if (existing) continue;
-
-          const { error: insertErr } = await admin.from("transactions").insert({
+          return {
             id: crypto.randomUUID(),
             user_id: user.id,
             account_id: row.id,
@@ -150,12 +168,19 @@ serve(async (req) => {
             amount, date: tx.date, name: tx.description,
             merchant_name: merchantName, category: catKey,
             subcategory: null, transaction_type: txType, is_manual: false,
-          });
-          if (insertErr) console.error("[sync-tx] Insert error:", insertErr.message, "tx:", tx.id);
-          else added++;
+          };
+        });
+
+        for (let i = 0; i < rows.length; i += 50) {
+          const batch = rows.slice(i, i + 50);
+          const { error: insertErr } = await admin.from("transactions").insert(batch);
+          if (insertErr) {
+            console.error("[sync-tx] Batch insert error:", insertErr.message, "batch size:", batch.length);
+          } else {
+            totalAdded += batch.length;
+          }
         }
-        console.log("[sync-tx] Upserted", added, "transactions for", row.teller_account_id);
-        totalAdded += added;
+        console.log("[sync-tx] Inserted for", row.teller_account_id);
       } catch (e) {
         console.error("[sync-tx] Failed to sync for account", row.id, ":", e instanceof Error ? e.message : e);
         const msg = e instanceof Error ? e.message : String(e);
