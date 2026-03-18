@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, Pencil, Trash2, TrendingDown,
   Zap, ChevronDown, ChevronUp,
-  CheckCircle2, SlidersHorizontal, Flame, Target,
+  SlidersHorizontal, Flame, Target,
 } from "lucide-react";
 import { Loan } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
@@ -102,36 +102,6 @@ function payoffDate(months: number): string {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth() + months);
   return `${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-// ─── Progress ring (donut arc) ─────────────────────────────────────────────────
-function ProgressRing({
-  pct,
-  color,
-  size = 72,
-  stroke = 6,
-}: {
-  pct: number;
-  color: string;
-  size?: number;
-  stroke?: number;
-}) {
-  const r   = (size - stroke) / 2;
-  const c   = 2 * Math.PI * r;
-  const off = c * (1 - Math.max(0, Math.min(1, pct / 100)));
-  const cx  = size / 2;
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={cx} cy={cx} r={r} fill="none" stroke="currentColor" strokeWidth={stroke}
-        className="text-border/20" />
-      <circle cx={cx} cy={cx} r={r} fill="none"
-        stroke={color} strokeWidth={stroke}
-        strokeDasharray={c} strokeDashoffset={off}
-        strokeLinecap="round"
-        style={{ transition: "stroke-dashoffset 0.6s ease" }}
-      />
-    </svg>
-  );
 }
 
 // ─── Sparkline chart for individual loan ──────────────────────────────────────
@@ -477,10 +447,10 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
     : baseRows.slice(0, 6);
 
   return (
-    <div className="rounded-2xl bg-card border border-border/30 overflow-hidden transition-all shadow-md">
-      <div className="h-1 w-full" style={{ background: colors.ring, opacity: 0.6 }} />
+    <div className="rounded-2xl bg-card border border-border/30 overflow-hidden transition-all">
+      <div className="h-0.5 w-full" style={{ background: colors.ring, opacity: 0.5 }} />
 
-      <div className="p-4 sm:p-5">
+      <div className="p-3 sm:p-4">
         {editing ? (
           <>
             <div className="flex items-center gap-2 mb-4">
@@ -496,175 +466,131 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
             />
           </>
         ) : (
-          <div className="space-y-4">
-            {/* Header row */}
-            <div className="flex items-start gap-2 sm:gap-3">
-              <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl ${colors.bg} ${colors.border} border flex items-center justify-center text-base sm:text-xl shrink-0`}>
+          <div className="space-y-2.5">
+            {/* Header: emoji + name + balance */}
+            <div className="flex items-start gap-2.5">
+              <div className={`w-8 h-8 rounded-lg ${colors.bg} ${colors.border} border flex items-center justify-center text-sm shrink-0`}>
                 {meta.emoji}
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-foreground leading-tight text-sm sm:text-base truncate">{loan.name}</h3>
-                <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 flex-wrap">
-                  <span className={`text-[10px] sm:text-[11px] font-semibold px-1.5 sm:px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>
+                <h3 className="font-bold text-foreground leading-tight text-sm truncate">{loan.name}</h3>
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>
                     {meta.label}
                   </span>
-                  <span className="text-[10px] sm:text-[11px] text-foreground/40 font-medium">
-                    {loan.interest_rate}% APR
-                  </span>
+                  <span className="text-[10px] text-foreground/40 font-medium">{loan.interest_rate}% APR</span>
                   {deferralMonths > 0 && (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 text-[10px] font-bold border border-yellow-500/20">
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 text-[10px] font-bold border border-yellow-500/20">
                       ⏸ {deferralMonths}mo
                     </span>
                   )}
                 </div>
               </div>
-              {progress !== null && (
-                <div className="relative shrink-0 items-center justify-center hidden sm:flex" style={{ width: 52, height: 52 }}>
-                  <ProgressRing pct={progress} color={colors.ring} size={52} stroke={5} />
-                  <span className="absolute text-[10px] font-bold text-foreground/70">
-                    {Math.round(progress)}%
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div className="text-right shrink-0">
+                <p className="text-base font-bold text-red-400 tabular-nums">{formatCurrency(loan.balance)}</p>
+                <p className="text-[10px] text-foreground/30 tabular-nums">{formatCurrency(loan.monthly_payment)}/mo</p>
+              </div>
+              <div className="flex items-center gap-0.5 shrink-0 ml-1">
                 <button onClick={startEdit}
-                  className="p-1.5 rounded-lg text-foreground/30 hover:text-accent hover:bg-accent/10 transition-all">
-                  <Pencil className="w-3.5 h-3.5" />
+                  className="p-1 rounded-lg text-foreground/25 hover:text-accent hover:bg-accent/10 transition-all">
+                  <Pencil className="w-3 h-3" />
                 </button>
                 <button onClick={handleDelete}
-                  className="p-1.5 rounded-lg text-foreground/30 hover:text-red-400 hover:bg-red-400/10 transition-all">
-                  <Trash2 className="w-3.5 h-3.5" />
+                  className="p-1 rounded-lg text-foreground/25 hover:text-red-400 hover:bg-red-400/10 transition-all">
+                  <Trash2 className="w-3 h-3" />
                 </button>
               </div>
             </div>
 
-            {/* Key stats */}
-            <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
-              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
-                <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Balance</p>
-                <p className="text-base sm:text-lg font-bold text-red-400 tabular-nums">{formatCurrency(loan.balance)}</p>
-                {loan.original_amount && (
-                  <p className="text-[10px] text-foreground/30">of {formatCurrency(loan.original_amount)}</p>
-                )}
-              </div>
-              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
-                <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Monthly</p>
-                <p className="text-base sm:text-lg font-bold text-foreground tabular-nums">{formatCurrency(loan.monthly_payment)}</p>
-                <p className="text-[10px] text-foreground/30">per month</p>
-              </div>
-              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
-                <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Payoff Date</p>
-                <p className="text-xs sm:text-sm font-bold text-accent-light">{payoffDate(repaymentRows.length)}</p>
-                <p className="text-[10px] text-foreground/30">{payoffLabel(repaymentRows.length)}</p>
-              </div>
-              <div className="rounded-xl bg-background/70 p-2.5 sm:p-3 space-y-0.5">
-                <p className="text-[10px] text-foreground/40 uppercase tracking-wider">Total Interest</p>
-                <p className="text-xs sm:text-sm font-bold text-orange-400 tabular-nums">{formatCurrency(lifetimeInterest)}</p>
-                <p className="text-[10px] text-foreground/30">over loan life</p>
-              </div>
-            </div>
-
-            {/* Planner badge */}
-            <div className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-violet-500/8 border border-violet-500/15">
-              <CheckCircle2 className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-              <p className="text-[10px] sm:text-[11px] text-violet-300/70">
-                <span className="font-semibold text-violet-300">{formatCurrency(loan.monthly_payment)}/mo</span> <span className="hidden sm:inline">counted in your</span><span className="sm:hidden">in</span> Planner
-              </p>
-            </div>
-
-            {/* Progress bar */}
+            {/* Progress bar (compact) */}
             {progress !== null && (
               <div>
-                <div className="flex items-center justify-between text-[10px] text-foreground/40 mb-1.5">
-                  <span>Payoff Progress</span>
-                  <span className="font-semibold">{progress.toFixed(1)}% paid</span>
+                <div className="flex items-center justify-between text-[10px] text-foreground/35 mb-1">
+                  <span>{loan.original_amount ? `${formatCurrency(loan.original_amount - loan.balance)} paid` : "Progress"}</span>
+                  <span className="font-semibold">{progress.toFixed(0)}%</span>
                 </div>
-                <div className="h-1.5 bg-background rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${progress}%`, background: colors.ring }}
-                  />
+                <div className="h-1 bg-background rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: colors.ring }} />
                 </div>
               </div>
             )}
 
-            {/* BNPL Progress */}
+            {/* Compact stats strip */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1 bg-background/60 rounded-lg px-2 py-1">
+                <span className="text-[10px] text-foreground/35">Payoff</span>
+                <span className="text-[11px] font-semibold text-accent-light">{payoffDate(repaymentRows.length)}</span>
+              </div>
+              <div className="flex items-center gap-1 bg-background/60 rounded-lg px-2 py-1">
+                <span className="text-[10px] text-foreground/35">Interest</span>
+                <span className="text-[11px] font-semibold text-orange-400 tabular-nums">{formatCurrency(lifetimeInterest)}</span>
+              </div>
+              <div className="flex items-center gap-1 bg-background/60 rounded-lg px-2 py-1">
+                <span className="text-[10px] text-foreground/35">Time left</span>
+                <span className="text-[11px] font-semibold text-foreground/70">{payoffLabel(repaymentRows.length)}</span>
+              </div>
+            </div>
+
+            {/* BNPL Progress (compact) */}
             {loan.type === "short_term" && (() => {
               const dots = Array.from({ length: Math.min(totalInstallments, 14) });
               return (
-                <div className="p-3 rounded-xl bg-cyan-500/8 border border-cyan-500/20 space-y-2">
+                <div className="px-2 py-1.5 rounded-lg bg-cyan-500/8 border border-cyan-500/20 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-cyan-400">Buy Now Pay Later</span>
+                    <span className="text-[11px] font-semibold text-cyan-400">BNPL</span>
                     {loan.interest_rate === 0 && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">
-                        0% interest
-                      </span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">0% APR</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1 flex-wrap">
+                  <div className="flex items-center gap-0.5 flex-wrap">
                     {dots.map((_, i) => (
-                      <div key={i} className={"h-2 flex-1 min-w-4 rounded-full " + (i < paidInstallments ? "bg-cyan-400/80" : "bg-cyan-500/20 border border-cyan-500/30")} />
+                      <div key={i} className={"h-1.5 flex-1 min-w-3 rounded-full " + (i < paidInstallments ? "bg-cyan-400/80" : "bg-cyan-500/20")} />
                     ))}
-                    {totalInstallments > 14 && (
-                      <span className="text-[10px] text-foreground/30">+{totalInstallments - 14}</span>
-                    )}
+                    {totalInstallments > 14 && <span className="text-[9px] text-foreground/30">+{totalInstallments - 14}</span>}
                   </div>
-                  <p className="text-[11px] text-foreground/50">
-                    {paidInstallments} of {totalInstallments} payments made · {repaymentRows.length} remaining · {formatCurrency(loan.monthly_payment)}/ea
-                  </p>
+                  <p className="text-[10px] text-foreground/40">{paidInstallments}/{totalInstallments} paid · {repaymentRows.length} left</p>
                 </div>
               );
             })()}
 
-            {/* Deferral info */}
+            {/* Deferral info (compact) */}
             {deferralMonths > 0 && (
-              <div className="p-3 rounded-xl bg-yellow-500/8 border border-yellow-500/20 flex items-start gap-3">
-                <span className="text-lg shrink-0">⏸</span>
-                <div className="text-xs space-y-1">
-                  <p className="font-semibold text-yellow-400">
-                    {subsidized ? "Subsidized" : "Unsubsidized"} deferment — {deferralMonths} month{deferralMonths !== 1 ? "s" : ""} remaining
-                  </p>
-                  <p className="text-foreground/50">
-                    {subsidized
-                      ? ("No payments or interest for " + deferralMonths + " months. Balance stays at " + formatCurrency(loan.balance) + ".")
-                      : ("No payments for " + deferralMonths + " months, but interest accrues. Balance will grow to " + formatCurrency(baseRows[deferralMonths - 1]?.balance ?? loan.balance) + ".")}
-                  </p>
-                </div>
+              <div className="px-2.5 py-2 rounded-lg bg-yellow-500/8 border border-yellow-500/20 flex items-center gap-2">
+                <span className="text-sm shrink-0">⏸</span>
+                <p className="text-[10px] text-yellow-400">
+                  <span className="font-semibold">{subsidized ? "Subsidized" : "Unsubsidized"}</span> · {deferralMonths}mo left
+                  {!subsidized && baseRows[deferralMonths - 1] && <span className="text-foreground/40"> · balance grows to {formatCurrency(baseRows[deferralMonths - 1].balance)}</span>}
+                </p>
               </div>
             )}
 
             {/* Notes */}
             {loan.notes && (
-              <p className="text-xs text-foreground/40 px-1 italic">"{loan.notes}"</p>
+              <p className="text-[10px] text-foreground/35 px-0.5 italic truncate">"{loan.notes}"</p>
             )}
 
-            {/* Extra payment simulator toggle */}
-            <div>
+            {/* Action toggles (compact row) */}
+            <div className="flex items-center gap-1.5 pt-0.5">
               <button
                 onClick={() => setSimOpen(v => !v)}
-                className={"w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border transition-all " + (simOpen ? "bg-yellow-500/10 border-yellow-500/25 text-yellow-400" : "bg-background/60 border-border/30 text-foreground/40 hover:text-foreground/70 hover:border-border/60")}
+                className={"flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-all " + (simOpen ? "bg-yellow-500/10 border-yellow-500/25 text-yellow-400" : "bg-background/50 border-border/25 text-foreground/35 hover:text-foreground/60 hover:border-border/50")}
               >
-                <span className="flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5" />
-                  Extra payment simulator
-                </span>
-                {simOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                <Zap className="w-3 h-3" />
+                Extra pay sim
               </button>
-              {simOpen && (
-                <div className="mt-2">
-                  <ExtraPaymentSim loan={loan} baseRows={baseRows} />
-                </div>
-              )}
+              <button
+                onClick={() => setExpanded(v => !v)}
+                className={"flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-all " + (expanded ? "bg-accent/10 border-accent/25 text-accent" : "bg-background/50 border-border/25 text-foreground/35 hover:text-foreground/60 hover:border-border/50")}
+              >
+                {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                Amortization
+              </button>
             </div>
 
-            {/* Amortization table toggle */}
-            <button
-              onClick={() => setExpanded(v => !v)}
-              className="w-full flex items-center justify-center gap-1.5 text-xs text-foreground/35 hover:text-foreground/70 transition-colors py-1"
-            >
-              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              {expanded ? "Hide" : "Show"} amortization schedule
-            </button>
+            {/* Extra payment simulator */}
+            {simOpen && <ExtraPaymentSim loan={loan} baseRows={baseRows} />}
+
+            {/* Amortization table */}
 
             {expanded && (
               <div className="rounded-xl overflow-hidden border border-border/20">
@@ -963,7 +889,7 @@ export default function LoansSection() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
           {sorted.map(loan => (
             <LoanCard key={loan.id} loan={loan} onRefresh={fetchLoans} />
           ))}
