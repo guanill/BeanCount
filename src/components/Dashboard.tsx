@@ -12,7 +12,7 @@ import TransactionsSection from "./TransactionsSection";
 import PlannerSection from "./PlannerSection";
 import LoansSection from "./LoansSection";
 import LiabilitiesSection from "./LiabilitiesSection";
-import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, LogOut } from "lucide-react";
+import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, LogOut, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getDashboardData } from "@/lib/supabase/queries";
 
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState<View>("overview");
+  const [showSignOut, setShowSignOut] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -64,7 +65,7 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-accent/30 border-t-accent rounded-full animate-spin" />
+          <span className="text-4xl animate-bounce">🫘</span>
           <p className="text-foreground/50 text-sm">Counting your beans...</p>
         </div>
       </div>
@@ -127,13 +128,7 @@ export default function Dashboard() {
               <span className="hidden sm:inline">Refresh</span>
             </button>
             <button
-              onClick={async () => {
-                if (!confirm("Are you sure you want to sign out?")) return;
-                const supabase = createClient();
-                await supabase.auth.signOut();
-                const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-                window.location.href = `${basePath}/login`;
-              }}
+              onClick={() => setShowSignOut(true)}
               className="flex items-center gap-2 px-3 py-2 bg-card hover:bg-card-hover border border-border/50 rounded-xl text-sm text-foreground/40 hover:text-red transition-all"
               title="Sign out"
             >
@@ -253,6 +248,40 @@ export default function Dashboard() {
           BeanCount · Every bean, accounted for.
         </footer>
       </main>
+
+      {/* Sign-out confirmation modal */}
+      {showSignOut && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowSignOut(false)}>
+          <div className="bg-card border border-border/50 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-foreground">Sign Out</h3>
+              <button onClick={() => setShowSignOut(false)} className="p-1 rounded-lg hover:bg-background/60 text-foreground/40 hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-foreground/60 mb-6">Are you sure you want to sign out of BeanCount?</p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSignOut(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-border/50 text-sm font-medium text-foreground/70 hover:bg-background/60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const supabase = createClient();
+                  await supabase.auth.signOut();
+                  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+                  window.location.href = `${basePath}/login`;
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red/20 border border-red/30 text-sm font-medium text-red hover:bg-red/30 transition-colors"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

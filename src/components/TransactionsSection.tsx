@@ -869,7 +869,7 @@ export default function TransactionsSection() {
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-foreground/30 text-sm">Loading…</div>
+        <div className="text-center py-16 space-y-2"><span className="text-2xl animate-bounce inline-block">🫘</span><p className="text-foreground/30 text-sm">Loading transactions...</p></div>
       ) : transactions.length === 0 ? (
         <div className="rounded-2xl border border-border/30 p-16 text-center space-y-2">
           <div className="text-4xl mb-3">🫘</div>
