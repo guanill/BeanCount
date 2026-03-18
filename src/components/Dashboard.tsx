@@ -169,7 +169,7 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8 space-y-6 sm:space-y-8">
-        {view === "overview" ? (
+        {view === "overview" && (
           <>
             {/* Hero - Net Worth */}
             <NetWorthHero
@@ -238,13 +238,15 @@ export default function Dashboard() {
               netWorth={data.totals.netWorth}
             />
           </>
-        ) : view === "spending" ? (
-          <TransactionsSection />
-        ) : view === "loans" ? (
-          <LoansSection />
-        ) : (
-          <PlannerSection netWorth={data.totals.netWorth} stockTotal={data.totals.stockTotal} />
         )}
+
+        {/* Keep TransactionsSection mounted to preserve state across tab switches */}
+        <div className={view === "spending" ? "" : "hidden"}>
+          <TransactionsSection />
+        </div>
+
+        {view === "loans" && <LoansSection />}
+        {view === "planner" && <PlannerSection netWorth={data.totals.netWorth} stockTotal={data.totals.stockTotal} />}
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">
