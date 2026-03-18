@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { createCreditCard, updateCreditCard, deleteCreditCard } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
 
-const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
+const PlaidConnectButton = dynamic(() => import("./PlaidConnectButton"), { ssr: false });
 
 interface SyncError {
   id: string;
@@ -43,13 +43,13 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   const [editingPointsId, setEditingPointsId] = useState<string | null>(null);
   const [pointsForm, setPointsForm] = useState({ points_balance: "", points_value_cents: "" });
 
-  const linkedCards = cards.filter((c) => c.teller_account_id);
+  const linkedCards = cards.filter((c) => c.plaid_account_id);
   const hasLinked = linkedCards.length > 0;
 
   async function handleSync() {
     setSyncing(true); setSyncMsg(null);
     try {
-      const data = await callEdgeFunction<{ synced?: number; errors?: SyncError[] }>("teller-sync");
+      const data = await callEdgeFunction<{ synced?: number; errors?: SyncError[] }>("plaid-sync");
 
       // Track per-card errors so we can show warnings on each card
       const errMap: Record<string, SyncError> = {};
@@ -72,8 +72,8 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   }
 
   async function handleDisconnectCard(id: string) {
-    if (!confirm("Disconnect from Teller? The card stays but won't auto-sync.")) return;
-    await callEdgeFunction("teller-disconnect", { method: "POST", body: { id } });
+    if (!confirm("Disconnect from Plaid? The card stays but won't auto-sync.")) return;
+    await callEdgeFunction("plaid-disconnect", { method: "POST", body: { id } });
     onRefresh();
   }
 
@@ -209,6 +209,15 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
           </div>
         </div>
 
+        {/* Connect credit cards via Plaid */}
+        <div className="mb-4 flex items-center gap-3 p-3 rounded-xl bg-card/50 border border-red-500/10">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-foreground/80">Connect your credit cards</p>
+            <p className="text-xs text-foreground/40 mt-0.5">Securely link via Plaid — balances update with one tap</p>
+          </div>
+          <PlaidConnectButton onConnected={onRefresh} />
+        </div>
+
         {adding && (
           <form onSubmit={handleCreate} className="mb-4 p-4 bg-card rounded-xl border border-border/50 space-y-3">
             <div className="grid grid-cols-2 gap-3">
@@ -266,10 +275,9 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
             const isUrgent = days !== null && days <= 7 && days >= 0;
             const pointsVal = (card.points_balance * card.points_value_cents) / 100;
             const syncErr = syncErrors[card.id];
-            const needsReconnect = syncErr?.code?.startsWith("enrollment.disconnected");
 
             return (
-              <div key={card.id} className={`group p-4 rounded-xl bg-card/60 hover:bg-card-hover border transition-all overflow-hidden ${needsReconnect ? "border-yellow-500/40 hover:border-yellow-500/60" : "border-transparent hover:border-border/30"}`}>
+              <div key={card.id} className={`group p-4 rounded-xl bg-card/60 hover:bg-card-hover border transition-all overflow-hidden ${syncErr ? "border-yellow-500/40 hover:border-yellow-500/60" : "border-transparent hover:border-border/30"}`}>
                 {editingId === card.id ? (
                   <div className="space-y-3">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -412,13 +420,13 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                           <p className="text-xs text-foreground/40">Min: {formatCurrency(card.min_payment)}</p>
                         </div>
                         <div className="hidden group-hover:flex items-center gap-1">
-                          {!card.teller_account_id && (
+                          {!card.plaid_account_id && (
                             <button onClick={() => startEdit(card)} className="p-1 text-foreground/30 hover:text-accent transition-colors">
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {card.teller_account_id && (
-                            <button onClick={() => handleDisconnectCard(card.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
+                          {card.plaid_account_id && (
+                            <button onClick={() => handleDisconnectCard(card.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Plaid">
                               <Unlink className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -448,25 +456,8 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                       <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs">
                         <WifiOff className="w-3.5 h-3.5 text-yellow-400 mt-0.5 shrink-0" />
                         <div className="min-w-0">
-                          <p className="text-yellow-300 font-medium">
-                            {needsReconnect ? "Re-authentication required" : "Sync failed"}
-                          </p>
-                          {needsReconnect ? (
-                            <TellerConnectButton
-                              variant="ghost"
-                              enrollmentId={card.teller_enrollment_id ?? undefined}
-                              onConnected={() => {
-                                setSyncErrors(prev => {
-                                  const next = { ...prev };
-                                  delete next[card.id];
-                                  return next;
-                                });
-                                onRefresh();
-                              }}
-                            />
-                          ) : (
-                            <p className="text-foreground/40 truncate mt-0.5">{syncErr.message}</p>
-                          )}
+                          <p className="text-yellow-300 font-medium">Sync failed</p>
+                          <p className="text-foreground/40 truncate mt-0.5">{syncErr.message}</p>
                         </div>
                       </div>
                     )}

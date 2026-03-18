@@ -26,8 +26,8 @@ import { createClient } from "@/lib/supabase/client";
 import { createAccount, updateAccount, deleteAccount } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
 
-// Teller Connect contains browser-only code — load client-side only
-const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
+// Plaid Link contains browser-only code — load client-side only
+const PlaidConnectButton = dynamic(() => import("./PlaidConnectButton"), { ssr: false });
 
 interface SyncError {
   id: string;
@@ -72,7 +72,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [syncErrors, setSyncErrors] = useState<Record<string, SyncError>>({});
 
-  const linkedAccounts = accounts.filter((a) => a.teller_account_id);
+  const linkedAccounts = accounts.filter((a) => a.plaid_account_id);
   const hasLinked = linkedAccounts.length > 0;
 
   async function handleDelete(id: string) {
@@ -115,7 +115,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const data = await callEdgeFunction<{ synced?: number; errors?: SyncError[] }>("teller-sync");
+      const data = await callEdgeFunction<{ synced?: number; errors?: SyncError[] }>("plaid-sync");
 
       // Track per-account errors so we can show inline reconnect banners
       const errMap: Record<string, SyncError> = {};
@@ -134,8 +134,8 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   async function handleDisconnect(id: string) {
-    if (!confirm("Disconnect from Teller? The account stays but won't auto-sync.")) return;
-    await callEdgeFunction("teller-disconnect", { method: "POST", body: { id } });
+    if (!confirm("Disconnect from Plaid? The account stays but won't auto-sync.")) return;
+    await callEdgeFunction("plaid-disconnect", { method: "POST", body: { id } });
     onRefresh();
   }
 
@@ -204,9 +204,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
         <div className="mb-4 flex items-center gap-3 p-3 rounded-xl bg-card/50 border border-accent/10">
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-foreground/80">Connect your real bank</p>
-            <p className="text-xs text-foreground/40 mt-0.5">Securely link via Teller — balances update with one tap</p>
+            <p className="text-xs text-foreground/40 mt-0.5">Securely link via Plaid — balances update with one tap</p>
           </div>
-          <TellerConnectButton onConnected={onRefresh} />
+          <PlaidConnectButton onConnected={onRefresh} />
         </div>
       )}
 
@@ -253,9 +253,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
         )}
         {accounts.map((account, i) => {
           const AccIcon = iconMap[account.icon || ""] || Landmark;
-          const isLinked = !!account.teller_account_id;
+          const isLinked = !!account.plaid_account_id;
           const syncErr = syncErrors[account.id];
-          const needsReconnect = syncErr?.code?.startsWith("enrollment.disconnected");
+          const needsReconnect = !!syncErr;
           return (
             <div
               key={account.id}
@@ -319,7 +319,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                         {isLinked && !syncErr && (
                           <p className="text-xs text-accent/60 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
-                            Teller · {formatSynced(account.teller_last_synced)}
+                            Plaid · {formatSynced(account.plaid_last_synced)}
                           </p>
                         )}
                         {syncErr && (
@@ -339,7 +339,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                           </button>
                         )}
                         {isLinked && (
-                          <button onClick={() => handleDisconnect(account.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
+                          <button onClick={() => handleDisconnect(account.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Plaid">
                             <Unlink className="w-3.5 h-3.5" />
                           </button>
                         )}
@@ -358,22 +358,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                         <p className="text-yellow-300 font-medium">
                           {needsReconnect ? "Re-authentication required" : "Sync failed"}
                         </p>
-                        {needsReconnect ? (
-                          <TellerConnectButton
-                            variant="ghost"
-                            enrollmentId={account.teller_enrollment_id ?? undefined}
-                            onConnected={() => {
-                              setSyncErrors(prev => {
-                                const next = { ...prev };
-                                delete next[account.id];
-                                return next;
-                              });
-                              onRefresh();
-                            }}
-                          />
-                        ) : (
-                          <p className="text-foreground/40 truncate mt-0.5">{syncErr.message}</p>
-                        )}
+                        <p className="text-foreground/40 truncate mt-0.5">{syncErr.message}</p>
                       </div>
                     </div>
                   )}
