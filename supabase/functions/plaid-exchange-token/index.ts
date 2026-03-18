@@ -39,47 +39,91 @@ serve(async (req) => {
     const created: object[] = [];
 
     for (const pa of plaidAccounts) {
-      const subtypeMap: Record<string, string> = {
-        checking: "bank", savings: "bank", "money market": "bank",
-        brokerage: "stock", "401k": "stock", ira: "stock",
-      };
-      const accountType = subtypeMap[pa.subtype as string] ?? (pa.type === "investment" ? "stock" : "bank");
-      const balance = pa.balances.current ?? pa.balances.available ?? 0;
+      const isCredit = pa.type === "credit";
       const name = `${institution_name} – ${pa.name}`;
+      const now = new Date().toISOString();
 
-      const { data: existing } = await admin
-        .from("accounts").select("id")
-        .eq("plaid_account_id", pa.account_id).eq("user_id", user.id).maybeSingle();
+      if (isCredit) {
+        // Credit card → credit_cards table
+        const balanceOwed = pa.balances.current ?? 0;
+        const creditLimit = pa.balances.limit ?? 0;
 
-      if (existing) {
-        await admin.from("accounts").update({
-          balance, plaid_item_id: itemId,
-          plaid_institution_name: institution_name,
-          plaid_last_synced: new Date().toISOString(),
-        }).eq("id", existing.id);
+        const { data: existing } = await admin
+          .from("credit_cards").select("id")
+          .eq("plaid_account_id", pa.account_id).eq("user_id", user.id).maybeSingle();
 
-        await admin.from("integration_tokens").upsert({
-          user_id: user.id, provider: "plaid", entity_type: "account",
-          entity_id: existing.id, access_token: accessToken,
-        }, { onConflict: "provider,entity_type,entity_id" });
+        if (existing) {
+          await admin.from("credit_cards").update({
+            balance_owed: balanceOwed, credit_limit: creditLimit,
+            plaid_item_id: itemId, plaid_institution_name: institution_name,
+            plaid_last_synced: now,
+          }).eq("id", existing.id);
 
-        created.push({ id: existing.id, name, balance, updated: true });
+          await admin.from("integration_tokens").upsert({
+            user_id: user.id, provider: "plaid", entity_type: "credit_card",
+            entity_id: existing.id, access_token: accessToken,
+          }, { onConflict: "provider,entity_type,entity_id" });
+
+          created.push({ id: existing.id, name, balance_owed: balanceOwed, table: "credit_cards", updated: true });
+        } else {
+          const id = crypto.randomUUID();
+          await admin.from("credit_cards").insert({
+            id, user_id: user.id, name, balance_owed: balanceOwed,
+            credit_limit: creditLimit, points_balance: 0, points_value_cents: 1,
+            min_payment: 0, color: "#e17055",
+            plaid_account_id: pa.account_id, plaid_item_id: itemId,
+            plaid_institution_name: institution_name, plaid_last_synced: now,
+          });
+
+          await admin.from("integration_tokens").insert({
+            user_id: user.id, provider: "plaid", entity_type: "credit_card",
+            entity_id: id, access_token: accessToken,
+          });
+
+          created.push({ id, name, balance_owed: balanceOwed, table: "credit_cards", updated: false });
+        }
       } else {
-        const id = crypto.randomUUID();
-        await admin.from("accounts").insert({
-          id, user_id: user.id, name, type: accountType, balance,
-          icon: "landmark", color: "#4a9eed",
-          plaid_account_id: pa.account_id, plaid_item_id: itemId,
-          plaid_institution_name: institution_name,
-          plaid_last_synced: new Date().toISOString(),
-        });
+        // Depository / investment → accounts table
+        const subtypeMap: Record<string, string> = {
+          checking: "bank", savings: "bank", "money market": "bank",
+          brokerage: "stock", "401k": "stock", ira: "stock",
+        };
+        const accountType = subtypeMap[pa.subtype as string] ?? (pa.type === "investment" ? "stock" : "bank");
+        const balance = pa.balances.current ?? pa.balances.available ?? 0;
 
-        await admin.from("integration_tokens").insert({
-          user_id: user.id, provider: "plaid", entity_type: "account",
-          entity_id: id, access_token: accessToken,
-        });
+        const { data: existing } = await admin
+          .from("accounts").select("id")
+          .eq("plaid_account_id", pa.account_id).eq("user_id", user.id).maybeSingle();
 
-        created.push({ id, name, balance, updated: false });
+        if (existing) {
+          await admin.from("accounts").update({
+            balance, plaid_item_id: itemId,
+            plaid_institution_name: institution_name,
+            plaid_last_synced: now,
+          }).eq("id", existing.id);
+
+          await admin.from("integration_tokens").upsert({
+            user_id: user.id, provider: "plaid", entity_type: "account",
+            entity_id: existing.id, access_token: accessToken,
+          }, { onConflict: "provider,entity_type,entity_id" });
+
+          created.push({ id: existing.id, name, balance, table: "accounts", updated: true });
+        } else {
+          const id = crypto.randomUUID();
+          await admin.from("accounts").insert({
+            id, user_id: user.id, name, type: accountType, balance,
+            icon: "landmark", color: "#4a9eed",
+            plaid_account_id: pa.account_id, plaid_item_id: itemId,
+            plaid_institution_name: institution_name, plaid_last_synced: now,
+          });
+
+          await admin.from("integration_tokens").insert({
+            user_id: user.id, provider: "plaid", entity_type: "account",
+            entity_id: id, access_token: accessToken,
+          });
+
+          created.push({ id, name, balance, table: "accounts", updated: false });
+        }
       }
     }
 
