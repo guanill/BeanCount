@@ -98,8 +98,8 @@ serve(async (req) => {
     for (const t of cardTokens ?? []) tokenMap.set(t.entity_id, t.access_token);
 
     const linked = [
-      ...(accounts ?? []).map((a) => ({ id: a.id, teller_account_id: a.teller_account_id })),
-      ...(cards ?? []).map((c) => ({ id: c.id, teller_account_id: c.teller_account_id })),
+      ...(accounts ?? []).map((a) => ({ id: a.id, teller_account_id: a.teller_account_id, isCard: false })),
+      ...(cards ?? []).map((c) => ({ id: c.id, teller_account_id: c.teller_account_id, isCard: true })),
     ];
 
     console.log("[sync-tx] Linked accounts to sync:", linked.length, linked.map(l => l.teller_account_id));
@@ -154,7 +154,8 @@ serve(async (req) => {
           return {
             id: crypto.randomUUID(),
             user_id: user.id,
-            account_id: row.id,
+            account_id: row.isCard ? null : row.id,
+            credit_card_id: row.isCard ? row.id : null,
             teller_transaction_id: tx.id,
             amount, date: tx.date, name: tx.description,
             merchant_name: merchantName, category: catKey,
