@@ -177,7 +177,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
               onClick={handleSync}
               disabled={syncing}
               title="Sync balances from your bank"
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-foreground/60
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-foreground/60
                          hover:text-accent border border-border/40 hover:border-accent/30 transition-colors
                          disabled:opacity-40 max-w-48 whitespace-nowrap"
             >

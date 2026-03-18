@@ -189,7 +189,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                   type="button"
                   onClick={handleSync}
                   disabled={syncing}
-                  className={`hidden sm:flex items-center gap-1 text-xs transition-colors disabled:opacity-40 ${
+                  className={`flex items-center gap-1 text-[10px] sm:text-xs transition-colors disabled:opacity-40 ${
                     syncMsg?.includes("failed")
                       ? "text-yellow-400 hover:text-yellow-300"
                       : "text-foreground/50 hover:text-accent"
@@ -275,9 +275,15 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div
-                          className="w-10 h-6 rounded-md shrink-0"
-                          style={{ backgroundColor: card.color || "#666" }}
-                        />
+                          className="w-12 h-8 sm:w-14 sm:h-9 rounded-md shrink-0 relative overflow-hidden shadow-sm"
+                          style={{ background: `linear-gradient(135deg, ${card.color || "#666"}, ${card.color ? card.color + "cc" : "#444"})` }}
+                        >
+                          <div className="absolute top-1.5 left-1.5 w-3 h-2.5 sm:w-3.5 sm:h-2.5 rounded-sm bg-yellow-300/70 border border-yellow-400/40" />
+                          <div className="absolute bottom-1 right-1.5 flex -space-x-1">
+                            <div className="w-2 h-2 rounded-full bg-white/20" />
+                            <div className="w-2 h-2 rounded-full bg-white/15" />
+                          </div>
+                        </div>
                         <input
                           type="text"
                           value={editForm.name}
@@ -368,9 +374,26 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-3">
                         <div
-                          className="w-10 h-6 rounded-md"
-                          style={{ backgroundColor: card.color || "#666" }}
-                        />
+                          className="w-12 h-8 sm:w-14 sm:h-9 rounded-md shrink-0 relative overflow-hidden shadow-sm"
+                          style={{ background: `linear-gradient(135deg, ${card.color || "#666"}, ${card.color ? card.color + "cc" : "#444"})` }}
+                        >
+                          {/* Chip */}
+                          <div className="absolute top-1.5 left-1.5 w-3 h-2.5 sm:w-3.5 sm:h-2.5 rounded-sm bg-yellow-300/70 border border-yellow-400/40" />
+                          {/* Contactless arc */}
+                          <div className="absolute top-1 left-5 sm:left-6 w-2 h-2 border-r border-t border-white/25 rounded-tr-full rotate-45" />
+                          {/* Card number dots */}
+                          <div className="absolute bottom-1.5 left-1.5 flex gap-0.5">
+                            <div className="w-0.75 h-0.75 rounded-full bg-white/30" />
+                            <div className="w-0.75 h-0.75 rounded-full bg-white/30" />
+                            <div className="w-0.75 h-0.75 rounded-full bg-white/30" />
+                            <div className="w-0.75 h-0.75 rounded-full bg-white/30" />
+                          </div>
+                          {/* Network circles */}
+                          <div className="absolute bottom-1 right-1.5 flex -space-x-1">
+                            <div className="w-2 h-2 rounded-full bg-white/20" />
+                            <div className="w-2 h-2 rounded-full bg-white/15" />
+                          </div>
+                        </div>
                         <div>
                           <p className="text-sm font-semibold text-foreground">{card.name}</p>
                           {card.due_date && (
