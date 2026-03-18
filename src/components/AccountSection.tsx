@@ -170,28 +170,28 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {hasLinked && (
-            <button
-              type="button"
-              onClick={handleSync}
-              disabled={syncing}
-              title="Sync balances from your bank"
-              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-foreground/60
-                         hover:text-accent border border-border/40 hover:border-accent/30 transition-colors
-                         disabled:opacity-40 max-w-48 whitespace-nowrap"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${syncing ? "animate-spin" : ""}`} />
-              <span className={`truncate ${syncMsg?.includes("failed") ? "text-yellow-400" : ""}`}>
+        <div className="text-right shrink-0">
+          <p className="text-lg sm:text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
+          <div className="flex items-center gap-2 justify-end mt-1">
+            {hasLinked && (
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={syncing}
+                title="Sync balances from your bank"
+                className={`flex items-center gap-1 text-[10px] sm:text-xs transition-colors disabled:opacity-40 ${
+                  syncMsg?.includes("failed")
+                    ? "text-yellow-400 hover:text-yellow-300"
+                    : "text-foreground/50 hover:text-accent"
+                }`}
+              >
+                <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} />
                 {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
-              </span>
-            </button>
-          )}
-          <div className="text-right">
-            <p className="text-lg sm:text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
+              </button>
+            )}
             <button
               onClick={() => { setAdding(!adding); setEditingId(null); setAddValues({ name: "", balance: "" }); }}
-              className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1 mt-1 ml-auto"
+              className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1"
             >
               <Plus className="w-3 h-3" /> Add
             </button>
