@@ -159,7 +159,7 @@ export default function LoginPage() {
                          text-gray-800 font-medium rounded-xl py-3 transition-all mb-6"
             >
               {googleLoading ? (
-                <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                <span className="text-lg animate-bounce">🫘</span>
               ) : (
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
@@ -233,7 +233,7 @@ export default function LoginPage() {
                 className="w-full bg-accent hover:bg-accent/80 disabled:opacity-50 text-white font-medium
                            rounded-xl py-3 transition-all flex items-center justify-center gap-2 group">
                 {loading ? (
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className="text-lg animate-bounce">🫘</span>
                 ) : (
                   <>
                     {mode === "login" ? "Sign in" : "Create account"}

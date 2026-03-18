@@ -874,7 +874,7 @@ export default function LoansSection() {
       {/* Loan cards */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-4 border-accent/30 border-t-accent rounded-full animate-spin" />
+          <span className="text-3xl animate-bounce">🫘</span>
         </div>
       ) : loans.length === 0 ? (
         <div className="rounded-2xl bg-card border border-border/40 p-14 text-center space-y-3">
