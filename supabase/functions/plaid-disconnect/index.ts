@@ -30,10 +30,9 @@ serve(async (req) => {
     const plaid = getPlaidClient();
     const { id } = await req.json();
 
-    // Try both entity types (account or credit_card)
     const { data: tokenRow } = await admin.from("integration_tokens")
-      .select("access_token, entity_type")
-      .eq("entity_id", id).eq("provider", "plaid").eq("user_id", user.id)
+      .select("access_token")
+      .eq("entity_id", id).eq("provider", "plaid").eq("entity_type", "account").eq("user_id", user.id)
       .maybeSingle();
 
     if (tokenRow?.access_token) {
@@ -43,17 +42,10 @@ serve(async (req) => {
     await admin.from("integration_tokens").delete()
       .eq("entity_id", id).eq("provider", "plaid").eq("user_id", user.id);
 
-    const plaidNullFields = {
+    await admin.from("accounts").update({
       plaid_account_id: null, plaid_item_id: null,
       plaid_institution_name: null, plaid_last_synced: null,
-    };
-
-    // Clear plaid fields from whichever table the entity belongs to
-    if (tokenRow?.entity_type === "credit_card") {
-      await admin.from("credit_cards").update(plaidNullFields).eq("id", id).eq("user_id", user.id);
-    } else {
-      await admin.from("accounts").update(plaidNullFields).eq("id", id).eq("user_id", user.id);
-    }
+    }).eq("id", id).eq("user_id", user.id);
 
     return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {

@@ -9,12 +9,11 @@ export interface Account {
   currency: string;
   icon: string | null;
   color: string | null;
-  // Plaid
+  // Plaid (legacy)
   plaid_account_id: string | null;
-  plaid_item_id: string | null;
   plaid_institution_name: string | null;
   plaid_last_synced: string | null;
-  // Teller (disabled)
+  // Teller
   teller_account_id: string | null;
   teller_enrollment_id: string | null;
   teller_institution_name: string | null;
@@ -34,12 +33,6 @@ export interface CreditCard {
   due_date: string | null;
   min_payment: number;
   color: string | null;
-  // Plaid
-  plaid_account_id: string | null;
-  plaid_item_id: string | null;
-  plaid_institution_name: string | null;
-  plaid_last_synced: string | null;
-  // Teller (disabled)
   teller_account_id: string | null;
   teller_enrollment_id: string | null;
   teller_institution_name: string | null;
