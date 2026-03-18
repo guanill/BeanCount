@@ -299,7 +299,7 @@ function TransactionDetailPanel({
               <div className="mx-4 mb-3 px-3 py-2 rounded-xl bg-background/60 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-foreground/50">
                 <span className="capitalize">{tx.transaction_type}</span>
                 <span className="text-foreground/30">·</span>
-                <span>{tx.plaid_transaction_id ? "Plaid" : tx.teller_transaction_id ? "Teller" : "Manual"}</span>
+                <span>{tx.teller_transaction_id ? "Teller" : tx.plaid_transaction_id ? "Plaid" : "Manual"}</span>
                 {tx.account_name && <><span className="text-foreground/30">·</span><span className="font-medium text-foreground/60 truncate">{tx.account_name}</span></>}
                 {tx.notes && <><span className="text-foreground/30">·</span><span className="truncate max-w-24 italic">{tx.notes}</span></>}
               </div>
@@ -584,7 +584,7 @@ export default function TransactionsSection() {
   async function handleSyncTransactions() {
     setSyncing(true); setSyncMsg(null);
     try {
-      const data = await callEdgeFunction<{ added: number; message?: string }>("plaid-sync-transactions");
+      const data = await callEdgeFunction<{ added: number; message?: string }>("teller-sync-transactions");
       if (data.added === 0 && data.message) {
         setSyncMsg(data.message);
       } else {

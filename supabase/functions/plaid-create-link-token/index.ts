@@ -29,7 +29,7 @@ serve(async (req) => {
     const plaid = getPlaidClient();
     const response = await plaid.linkTokenCreate({
       user: { client_user_id: user.id },
-      client_name: "BeanCount",
+      client_name: "Budget Tracker",
       products: [Products.Transactions],
       country_codes: [CountryCode.Us],
       language: "en",

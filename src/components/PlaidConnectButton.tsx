@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { usePlaidLink, PlaidLinkOnSuccess } from "react-plaid-link";
 import { Link2, Loader2 } from "lucide-react";
 import { callEdgeFunction } from "@/lib/supabase/functions";
-import { createClient } from "@/lib/supabase/client";
 
 interface Props {
   onConnected: () => void;
@@ -15,36 +14,11 @@ export default function PlaidConnectButton({ onConnected }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Wait for auth session before fetching link token
+  // Fetch link token when component mounts
   useEffect(() => {
-    let cancelled = false;
-    async function fetchToken() {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        // Wait for auth state change
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, sess) => {
-          if (sess && !cancelled) {
-            subscription.unsubscribe();
-            try {
-              const data = await callEdgeFunction<{ link_token: string }>("plaid-create-link-token");
-              if (!cancelled) setLinkToken(data.link_token);
-            } catch (e) {
-              if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load Plaid");
-            }
-          }
-        });
-        return;
-      }
-      try {
-        const data = await callEdgeFunction<{ link_token: string }>("plaid-create-link-token");
-        if (!cancelled) setLinkToken(data.link_token);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load Plaid");
-      }
-    }
-    fetchToken();
-    return () => { cancelled = true; };
+    callEdgeFunction<{ link_token: string }>("plaid-create-link-token")
+      .then((data) => setLinkToken(data.link_token))
+      .catch((e) => setError(e.message));
   }, []);
 
   const onSuccess = useCallback<PlaidLinkOnSuccess>(
