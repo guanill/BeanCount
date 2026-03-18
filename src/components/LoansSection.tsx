@@ -879,8 +879,8 @@ export default function LoansSection() {
       ) : loans.length === 0 ? (
         <div className="rounded-2xl bg-card border border-border/40 p-14 text-center space-y-3">
           <div className="text-5xl mb-2">💼</div>
-          <p className="text-foreground/60 font-medium">No loans tracked yet</p>
-          <p className="text-foreground/30 text-sm max-w-xs mx-auto">Add your first loan to track your payoff journey and see it reflected in your Planner.</p>
+          <p className="text-foreground/60 font-medium">No loans on the books</p>
+          <p className="text-foreground/30 text-sm max-w-xs mx-auto">Add your first loan to track your payoff journey and keep every bean accounted for.</p>
           <button
             onClick={() => setAdding(true)}
             className="mt-2 inline-flex items-center gap-2 px-5 py-2.5 bg-accent hover:bg-accent/90 text-white rounded-xl text-sm font-semibold transition-colors"

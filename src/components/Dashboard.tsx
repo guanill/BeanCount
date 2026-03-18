@@ -65,7 +65,7 @@ export default function Dashboard() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-accent/30 border-t-accent rounded-full animate-spin" />
-          <p className="text-foreground/50 text-sm">Loading your finances...</p>
+          <p className="text-foreground/50 text-sm">Counting your beans...</p>
         </div>
       </div>
     );
@@ -74,7 +74,7 @@ export default function Dashboard() {
   if (!data) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-red text-lg">Failed to load dashboard data</p>
+        <p className="text-red text-lg">Oops — couldn&apos;t load your beans</p>
       </div>
     );
   }
@@ -250,7 +250,7 @@ export default function Dashboard() {
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">
-          BeanCount — Built with Next.js · Updated in real-time
+          BeanCount · Every bean, accounted for.
         </footer>
       </main>
     </div>

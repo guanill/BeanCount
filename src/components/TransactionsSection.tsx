@@ -23,6 +23,9 @@ import {
   AlertCircle,
   Pencil,
   ArrowLeft,
+  Repeat,
+  MessageSquare,
+  Filter,
 } from "lucide-react";
 import { Transaction, TransactionSummary } from "@/lib/types";
 import { CATEGORIES, getCategoryMeta } from "@/lib/categories";
@@ -127,17 +130,54 @@ function SpendingDonut({
   );
 }
 
+/* ─── Recurring / subscription detection ───────────────────────────────────── */
+function detectRecurringIds(txs: Transaction[]): Set<string> {
+  // Group by normalized merchant/name
+  const groups = new Map<string, Transaction[]>();
+  for (const tx of txs) {
+    if (tx.transaction_type !== "expense" || tx.is_ignored) continue;
+    const key = (tx.merchant_name || tx.name).toLowerCase().trim();
+    if (!key) continue;
+    const list = groups.get(key) ?? [];
+    list.push(tx);
+    groups.set(key, list);
+  }
+  const recurringIds = new Set<string>();
+  for (const [, group] of groups) {
+    if (group.length < 2) continue;
+    // Check if amounts are similar (within 20% of median)
+    const amounts = group.map(t => Math.abs(t.amount)).sort((a, b) => a - b);
+    const median = amounts[Math.floor(amounts.length / 2)];
+    if (median === 0) continue;
+    const similar = group.filter(t => Math.abs(Math.abs(t.amount) - median) / median < 0.2);
+    if (similar.length < 2) continue;
+    // Check for roughly monthly pattern (25-35 day gaps between at least 2 consecutive)
+    const dates = similar.map(t => new Date(t.date).getTime()).sort((a, b) => a - b);
+    let hasMonthlyGap = false;
+    for (let i = 1; i < dates.length; i++) {
+      const dayGap = (dates[i] - dates[i - 1]) / (1000 * 60 * 60 * 24);
+      if (dayGap >= 25 && dayGap <= 40) { hasMonthlyGap = true; break; }
+    }
+    if (hasMonthlyGap) {
+      for (const t of similar) recurringIds.add(t.id);
+    }
+  }
+  return recurringIds;
+}
+
 /* ─── Transaction row ──────────────────────────────────────────────────────── */
 function TxRow({
   tx,
   onDelete,
   onReclassify,
   onClick,
+  isRecurring,
 }: {
   tx: Transaction;
   onDelete: (id: string) => void;
   onReclassify: (id: string, newCat: string) => void;
   onClick: () => void;
+  isRecurring?: boolean;
 }) {
   const meta      = getCategoryMeta(tx.category);
   const isIncome  = tx.transaction_type === "income";
@@ -166,8 +206,10 @@ function TxRow({
             {meta.label}
           </span>
           {tx.account_name && <span className="text-[10px] sm:text-xs text-foreground/30 truncate max-w-24 sm:max-w-40">{tx.account_name}</span>}
+          {isRecurring && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-purple-400/70"><Repeat className="w-2.5 h-2.5" /> recurring</span>}
           {isIgnored && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>}
           {tx.is_manual && <span className="text-[10px] sm:text-xs text-foreground/25">manual</span>}
+          {tx.notes && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/25 italic truncate max-w-20 sm:max-w-32"><MessageSquare className="w-2.5 h-2.5 shrink-0" />{tx.notes}</span>}
         </div>
       </div>
 
@@ -500,6 +542,13 @@ export default function TransactionsSection() {
   // Client-side filters
   const [typeFilter, setTypeFilter] = useState<"all" | "expense" | "income" | "transfer">("all");
   const [catFilter,  setCatFilter]  = useState<string | null>(null);
+  // Advanced filters
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [recurringOnly, setRecurringOnly] = useState(false);
   // Detail panel
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
 
@@ -523,20 +572,33 @@ export default function TransactionsSection() {
   useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
 
   /* â"€â"€ Group transactions by category (client-side) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
-  // Client-side filtered list: search + type + category filters
+  // Recurring detection (memoized on full transaction list)
+  const recurringIds = useMemo(() => detectRecurringIds(transactions), [transactions]);
+
+  // Client-side filtered list: search + type + category + amount + date + recurring
   const filtered = useMemo(() => {
     let list = transactions;
     if (typeFilter !== "all") list = list.filter(t => t.transaction_type === typeFilter);
     if (catFilter) list = list.filter(t => t.category === catFilter);
+    if (recurringOnly) list = list.filter(t => recurringIds.has(t.id));
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(t =>
         t.name.toLowerCase().includes(q) ||
-        (t.merchant_name?.toLowerCase() ?? "").includes(q)
+        (t.merchant_name?.toLowerCase() ?? "").includes(q) ||
+        (t.notes?.toLowerCase() ?? "").includes(q) ||
+        (t.account_name?.toLowerCase() ?? "").includes(q) ||
+        getCategoryMeta(t.category).label.toLowerCase().includes(q)
       );
     }
+    const minAmt = parseFloat(minAmount);
+    const maxAmt = parseFloat(maxAmount);
+    if (!isNaN(minAmt)) list = list.filter(t => Math.abs(t.amount) >= minAmt);
+    if (!isNaN(maxAmt)) list = list.filter(t => Math.abs(t.amount) <= maxAmt);
+    if (dateFrom) list = list.filter(t => t.date >= dateFrom);
+    if (dateTo) list = list.filter(t => t.date <= dateTo);
     return [...list].sort((a, b) => b.date.localeCompare(a.date));
-  }, [transactions, typeFilter, catFilter, query]);
+  }, [transactions, typeFilter, catFilter, query, minAmount, maxAmount, dateFrom, dateTo, recurringOnly, recurringIds]);
 
   // Grouped by category (from filtered - used in accordion)
   const grouped = useMemo(() => {
@@ -810,9 +872,9 @@ export default function TransactionsSection() {
         <div className="text-center py-16 text-foreground/30 text-sm">Loading…</div>
       ) : transactions.length === 0 ? (
         <div className="rounded-2xl border border-border/30 p-16 text-center space-y-2">
-          <div className="text-4xl mb-3">🏦</div>
-          <p className="text-foreground/50 font-medium">No transactions yet</p>
-          <p className="text-foreground/30 text-sm">Sync your bank via Teller or add one manually</p>
+          <div className="text-4xl mb-3">🫘</div>
+          <p className="text-foreground/50 font-medium">No beans to count yet</p>
+          <p className="text-foreground/30 text-sm">Sync your bank via Teller or plant your first bean manually</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -880,20 +942,71 @@ export default function TransactionsSection() {
               })}
             </div>
 
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/30" />
-              <input
-                type="text"
-                placeholder="Search by name or merchant..."
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                className="w-full bg-background border border-border/50 rounded-xl pl-10 pr-9 py-2 text-sm text-foreground placeholder:text-foreground/30 focus:outline-none focus:border-accent/50"
-              />
-              {query && (
-                <button onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground/30 hover:text-foreground/70 transition-colors">
-                  <X className="w-3.5 h-3.5" />
+            {/* Search + Advanced filters */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/30" />
+                  <input
+                    type="text"
+                    placeholder="Search name, merchant, notes, account, category..."
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    className="w-full bg-background border border-border/50 rounded-xl pl-10 pr-9 py-2 text-sm text-foreground placeholder:text-foreground/30 focus:outline-none focus:border-accent/50"
+                  />
+                  {query && (
+                    <button onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground/30 hover:text-foreground/70 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowAdvanced(v => !v)}
+                  className={"p-2 rounded-xl border transition-all " + (showAdvanced || minAmount || maxAmount || dateFrom || dateTo || recurringOnly ? "bg-accent/10 border-accent/30 text-accent" : "border-border/40 text-foreground/40 hover:text-foreground/60")}
+                  title="Advanced filters"
+                >
+                  <Filter className="w-4 h-4" />
                 </button>
+              </div>
+
+              {/* Advanced filter panel */}
+              {showAdvanced && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-xl bg-background/80 border border-border/30">
+                  <div>
+                    <label className="text-[10px] text-foreground/40 block mb-1">Min amount</label>
+                    <input type="number" step="0.01" value={minAmount} onChange={e => setMinAmount(e.target.value)} placeholder="0.00"
+                      className="w-full bg-card border border-border/40 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-accent/50" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-foreground/40 block mb-1">Max amount</label>
+                    <input type="number" step="0.01" value={maxAmount} onChange={e => setMaxAmount(e.target.value)} placeholder="0.00"
+                      className="w-full bg-card border border-border/40 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-accent/50" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-foreground/40 block mb-1">From date</label>
+                    <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                      className="w-full bg-card border border-border/40 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-accent/50" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-foreground/40 block mb-1">To date</label>
+                    <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                      className="w-full bg-card border border-border/40 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-accent/50" />
+                  </div>
+                  <div className="col-span-2 sm:col-span-4 flex items-center justify-between pt-1">
+                    <button
+                      onClick={() => setRecurringOnly(v => !v)}
+                      className={"flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-all border " + (recurringOnly ? "bg-purple-500/15 text-purple-400 border-purple-500/30" : "bg-background border-border/30 text-foreground/40 hover:text-foreground/60")}
+                    >
+                      <Repeat className="w-3 h-3" /> Recurring only
+                    </button>
+                    {(minAmount || maxAmount || dateFrom || dateTo || recurringOnly) && (
+                      <button onClick={() => { setMinAmount(""); setMaxAmount(""); setDateFrom(""); setDateTo(""); setRecurringOnly(false); }}
+                        className="text-xs text-accent/60 hover:text-accent transition-colors">
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -916,11 +1029,11 @@ export default function TransactionsSection() {
               <div className="py-10 text-center space-y-2">
                 <p className="text-foreground/30 text-sm">No transactions match your filters</p>
                 <button
-                  onClick={() => { setQuery(""); setTypeFilter("all"); setCatFilter(null); }}
+                  onClick={() => { setQuery(""); setTypeFilter("all"); setCatFilter(null); setMinAmount(""); setMaxAmount(""); setDateFrom(""); setDateTo(""); setRecurringOnly(false); }}
                   className="text-xs text-accent hover:underline transition-colors"
                 >Clear all filters</button>
               </div>
-            ) : (query.trim() || catFilter) ? (
+            ) : (query.trim() || catFilter || minAmount || maxAmount || dateFrom || dateTo || recurringOnly) ? (
               /* Flat list when searching or category-filtered */
               <div className="rounded-xl border border-border/30 bg-card/40 overflow-hidden">
                 <div className="px-4 py-2 border-b border-border/20 flex items-center justify-between">
@@ -931,7 +1044,7 @@ export default function TransactionsSection() {
                 </div>
                 <div className="divide-y-0">
                   {filtered.map(tx => (
-                    <TxRow key={tx.id} tx={tx} onDelete={handleDelete} onReclassify={handleReclassify} onClick={() => setSelectedTx(tx)} />
+                    <TxRow key={tx.id} tx={tx} onDelete={handleDelete} onReclassify={handleReclassify} onClick={() => setSelectedTx(tx)} isRecurring={recurringIds.has(tx.id)} />
                   ))}
                 </div>
               </div>
@@ -984,7 +1097,7 @@ export default function TransactionsSection() {
                       {isOpen && (
                         <div className="bg-background/40 pb-1">
                           {txs.map(tx => (
-                            <TxRow key={tx.id} tx={tx} onDelete={handleDelete} onReclassify={handleReclassify} onClick={() => setSelectedTx(tx)} />
+                            <TxRow key={tx.id} tx={tx} onDelete={handleDelete} onReclassify={handleReclassify} onClick={() => setSelectedTx(tx)} isRecurring={recurringIds.has(tx.id)} />
                           ))}
                         </div>
                       )}
