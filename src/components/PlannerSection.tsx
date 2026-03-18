@@ -463,21 +463,21 @@ function MonthCard({
       </div>
 
       {/* Income / Spending / Loans mini row */}
-      <div className="flex border-t border-border/20 divide-x divide-border/20 overflow-hidden">
-        <div className="flex-1 min-w-0 px-1.5 sm:px-3 py-1.5 sm:py-2">
+      <div className="grid grid-cols-3 border-t border-border/20 divide-x divide-border/20">
+        <div className="px-1.5 sm:px-3 py-1.5 sm:py-2">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
-          <div className="text-[10px] sm:text-xs font-semibold text-green/80 tabular-nums truncate">+{formatCurrency(netSalary)}</div>
+          <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(netSalary)}</div>
         </div>
-        <div className="flex-1 min-w-0 px-1.5 sm:px-3 py-1.5 sm:py-2">
+        <div className="px-1.5 sm:px-3 py-1.5 sm:py-2">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Spend</div>
-          <div className="text-[10px] sm:text-xs font-semibold text-red/70 tabular-nums truncate">−{formatCurrency(monthlyExpenses + scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0))}</div>
+          <div className="text-[9px] sm:text-xs font-semibold text-red/70 tabular-nums break-all leading-tight">−{formatCurrency(monthlyExpenses + scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0))}</div>
         </div>
-        {loanPaymentsTotal > 0 && (
-          <div className="flex-1 min-w-0 px-1.5 sm:px-3 py-1.5 sm:py-2">
+        {loanPaymentsTotal > 0 ? (
+          <div className="px-1.5 sm:px-3 py-1.5 sm:py-2">
             <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Loans</div>
-            <div className="text-[10px] sm:text-xs font-semibold text-accent/70 tabular-nums truncate">−{formatCurrency(loanPaymentsTotal)}</div>
+            <div className="text-[9px] sm:text-xs font-semibold text-accent/70 tabular-nums break-all leading-tight">−{formatCurrency(loanPaymentsTotal)}</div>
           </div>
-        )}
+        ) : <div />}
       </div>
 
       {/* Events */}
@@ -1059,92 +1059,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         </div>
       </div>
 
-      {/* ── Quick config bar ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
-        {/* Starting balance */}
-        <div className="bg-card border border-border/40 rounded-2xl p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
-          <div className="p-2 bg-accent/10 rounded-xl shrink-0"><DollarSign className="w-4 h-4 text-accent" /></div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-foreground/60">Starting Balance</span>
-              {config.balanceOverride !== null ? (
-                <button onClick={() => setConfig(c => ({ ...c, balanceOverride: null }))}
-                  className="text-[10px] flex items-center gap-0.5 text-accent/70 hover:text-accent transition-colors">
-                  <X className="w-2.5 h-2.5" /> Live
-                </button>
-              ) : (
-                <button onClick={() => setConfig(c => ({ ...c, balanceOverride: netWorth }))}
-                  className="text-[10px] flex items-center gap-0.5 text-foreground/30 hover:text-foreground/60 transition-colors">
-                  <Edit2 className="w-2.5 h-2.5" /> Override
-                </button>
-              )}
-            </div>
-            {config.balanceOverride !== null ? (
-              <input autoFocus type="number" value={config.balanceOverride}
-                onChange={e => setConfig(c => ({ ...c, balanceOverride: parseFloat(e.target.value) || 0 }))}
-                className="w-full bg-background border border-border/50 rounded-lg px-2.5 py-1.5 text-sm text-foreground font-semibold" />
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <span className="text-lg font-bold text-foreground">{formatCurrency(netWorth)}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green/10 text-green/60">live ↗</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Monthly expenses */}
-        <div className="bg-card border border-border/40 rounded-2xl p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
-          <div className="p-2 bg-red/10 rounded-xl shrink-0"><Zap className="w-4 h-4 text-red" /></div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-foreground/60">Monthly Expenses</span>
-              {totalRecurringCharges > 0 && (
-                <span className="text-[10px] text-foreground/30">{(config.recurringCharges ?? []).length} items · itemized</span>
-              )}
-            </div>
-            {totalRecurringCharges > 0 ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-lg font-bold text-red">{formatCurrency(totalRecurringCharges)}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red/10 text-red/60">/mo</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="text-foreground/40 text-sm font-semibold">$</span>
-                <input type="number" value={config.monthlyExpenses || ""}
-                  onChange={e => setConfig(c => ({ ...c, monthlyExpenses: parseFloat(e.target.value) || 0 }))}
-                  placeholder="3500"
-                  className="flex-1 bg-background border border-border/50 rounded-lg px-2.5 py-1.5 text-sm text-foreground font-semibold" />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Loan payments */}
-        <div className="bg-card border border-border/40 rounded-2xl p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
-          <div className="p-2 bg-accent/10 rounded-xl shrink-0"><Building className="w-4 h-4 text-accent" /></div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-semibold text-foreground/60">Loan Payments</span>
-              {loans.length > 0 && (
-                <span className="text-[10px] text-foreground/30">{loans.length} loan{loans.length !== 1 ? "s" : ""} · /mo</span>
-              )}
-            </div>
-            {loans.length > 0 ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-lg font-bold text-accent">{formatCurrency(totalLoanPayments)}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent/60">/mo</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm text-foreground/30">No loans tracked</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── 3-Year Projection Chart ── */}
-      <div className="bg-card border border-border/40 rounded-2xl p-5 space-y-3 overflow-hidden">
+      {/* ── 3-Year Projection (Hero) ── */}
+      <div className="bg-card border border-border/40 rounded-2xl p-4 sm:p-5 space-y-3 overflow-hidden">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <div className="p-1.5 bg-accent/10 rounded-lg"><Calendar className="w-4 h-4 text-accent" /></div>
@@ -1163,53 +1079,111 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         <ProjectionChart config={{ ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust }} loanPaymentsTotal={getLoanPaymentsForMonth} />
       </div>
 
-      {/* ── Year navigator + month grid ── */}
-      <div className="space-y-4">
-        {/* Nav bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
-          {/* Arrow + year + quick-jump pills */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {viewYear <= CUR_YEAR ? (
-              <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-dashed border-border/30 text-foreground/25 text-[10px] font-semibold uppercase tracking-wider select-none">
-                <ChevronLeft className="w-3 h-3" /> start
+      {/* ── Config + Year Grid (2-col on lg) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 lg:gap-6">
+        {/* Sidebar: config cards (horizontal on mobile, stacked in sidebar on lg) */}
+        <div className="order-2 lg:order-1 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-3">
+            {/* Starting balance */}
+            <div className="bg-card border border-border/40 rounded-2xl p-3 flex items-center gap-3">
+              <div className="p-2 bg-accent/10 rounded-xl shrink-0"><DollarSign className="w-4 h-4 text-accent" /></div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-foreground/60">Starting Balance</span>
+                  {config.balanceOverride !== null ? (
+                    <button onClick={() => setConfig(c => ({ ...c, balanceOverride: null }))}
+                      className="text-[10px] flex items-center gap-0.5 text-accent/70 hover:text-accent transition-colors">
+                      <X className="w-2.5 h-2.5" /> Live
+                    </button>
+                  ) : (
+                    <button onClick={() => setConfig(c => ({ ...c, balanceOverride: netWorth }))}
+                      className="text-[10px] flex items-center gap-0.5 text-foreground/30 hover:text-foreground/60 transition-colors">
+                      <Edit2 className="w-2.5 h-2.5" /> Override
+                    </button>
+                  )}
+                </div>
+                {config.balanceOverride !== null ? (
+                  <input autoFocus type="number" value={config.balanceOverride}
+                    onChange={e => setConfig(c => ({ ...c, balanceOverride: parseFloat(e.target.value) || 0 }))}
+                    className="w-full bg-background border border-border/50 rounded-lg px-2.5 py-1.5 text-sm text-foreground font-semibold" />
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-lg font-bold text-foreground">{formatCurrency(netWorth)}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green/10 text-green/60">live ↗</span>
+                  </div>
+                )}
               </div>
-            ) : (
-              <button onClick={() => setViewYear(y => y - 1)}
-                className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
-                <ChevronLeft className="w-4 h-4 text-foreground/60" />
-              </button>
-            )}
-            <span className="text-lg font-bold text-accent w-12 text-center tabular-nums">{viewYear}</span>
-            <button onClick={() => setViewYear(y => y + 1)} className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
-              <ChevronRight className="w-4 h-4 text-foreground/60" />
-            </button>
-            <div className="flex gap-1 ml-1 overflow-x-auto">
-              {yearsWithData.map(y => (
-                <button key={y} onClick={() => setViewYear(y)}
-                  className={`px-2 py-1 rounded-lg text-[11px] sm:text-xs font-medium transition-colors shrink-0 ${
-                    viewYear === y ? "bg-accent text-white" : "bg-card text-foreground/40 hover:text-foreground border border-border/30"
-                  }`}>{y}</button>
-              ))}
+            </div>
+
+            {/* Monthly expenses */}
+            <div className="bg-card border border-border/40 rounded-2xl p-3 flex items-center gap-3">
+              <div className="p-2 bg-red/10 rounded-xl shrink-0"><Zap className="w-4 h-4 text-red" /></div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-foreground/60">Monthly Expenses</span>
+                  {totalRecurringCharges > 0 && (
+                    <span className="text-[10px] text-foreground/30">{(config.recurringCharges ?? []).length} items</span>
+                  )}
+                </div>
+                {totalRecurringCharges > 0 ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-lg font-bold text-red">{formatCurrency(totalRecurringCharges)}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red/10 text-red/60">/mo</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-foreground/40 text-sm font-semibold">$</span>
+                    <input type="number" value={config.monthlyExpenses || ""}
+                      onChange={e => setConfig(c => ({ ...c, monthlyExpenses: parseFloat(e.target.value) || 0 }))}
+                      placeholder="3500"
+                      className="flex-1 bg-background border border-border/50 rounded-lg px-2.5 py-1.5 text-sm text-foreground font-semibold" />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Loan payments */}
+            <div className="bg-card border border-border/40 rounded-2xl p-3 flex items-center gap-3">
+              <div className="p-2 bg-accent/10 rounded-xl shrink-0"><Building className="w-4 h-4 text-accent" /></div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-foreground/60">Loan Payments</span>
+                  {loans.length > 0 && (
+                    <span className="text-[10px] text-foreground/30">{loans.length} loan{loans.length !== 1 ? "s" : ""}</span>
+                  )}
+                </div>
+                {loans.length > 0 ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-lg font-bold text-accent">{formatCurrency(totalLoanPayments)}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent/60">/mo</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm text-foreground/30">No loans tracked</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Year stats */}
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-xs">
-            <div className="flex items-center gap-1 sm:gap-1.5 bg-green/10 border border-green/20 text-green px-2 sm:px-3 py-1.5 rounded-xl font-medium">
+          {/* Year stats (sidebar, visible on lg) */}
+          <div className="hidden lg:flex flex-col gap-2 bg-card border border-border/40 rounded-2xl p-3">
+            <span className="text-[10px] text-foreground/30 uppercase tracking-wider font-semibold">{viewYear} Summary</span>
+            <div className="flex items-center gap-1.5 bg-green/10 border border-green/20 text-green px-3 py-1.5 rounded-xl text-xs font-medium">
               <TrendingUp className="w-3 h-3 shrink-0" />
               <span className="tabular-nums">+{formatCurrency(yearStats.income + yearStats.eventIncome)}</span>
             </div>
-            <div className="flex items-center gap-1 sm:gap-1.5 bg-red/10 border border-red/20 text-red px-2 sm:px-3 py-1.5 rounded-xl font-medium">
+            <div className="flex items-center gap-1.5 bg-red/10 border border-red/20 text-red px-3 py-1.5 rounded-xl text-xs font-medium">
               <Zap className="w-3 h-3 shrink-0" />
               <span className="tabular-nums">−{formatCurrency(yearStats.expenses + Math.abs(yearStats.eventExpense))}</span>
             </div>
-            <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl font-medium border ${
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border ${
               yearNetChange >= 0 ? "bg-green/10 border-green/20 text-green" : "bg-red/10 border-red/20 text-red"
             }`}>
               <span>{yearNetChange >= 0 ? "▲" : "▼"}</span>
               <span className="tabular-nums">{formatCurrency(Math.abs(yearNetChange))} net</span>
             </div>
-            <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl font-medium border ${
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border ${
               yearStats.endBalance >= 0 ? "bg-accent/10 border-accent/20 text-accent" : "bg-red/10 border-red/20 text-red"
             }`}>
               <DollarSign className="w-3 h-3 shrink-0" />
@@ -1218,8 +1192,63 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           </div>
         </div>
 
-        {/* Month grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
+        {/* Main content: year nav + month grid */}
+        <div className="order-1 lg:order-2 space-y-4">
+          {/* Year nav bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+            {/* Arrow + year + quick-jump pills */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {viewYear <= CUR_YEAR ? (
+                <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl border border-dashed border-border/30 text-foreground/25 text-[10px] font-semibold uppercase tracking-wider select-none">
+                  <ChevronLeft className="w-3 h-3" /> start
+                </div>
+              ) : (
+                <button onClick={() => setViewYear(y => y - 1)}
+                  className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
+                  <ChevronLeft className="w-4 h-4 text-foreground/60" />
+                </button>
+              )}
+              <span className="text-lg font-bold text-accent w-12 text-center tabular-nums">{viewYear}</span>
+              <button onClick={() => setViewYear(y => y + 1)} className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
+                <ChevronRight className="w-4 h-4 text-foreground/60" />
+              </button>
+              <div className="flex gap-1 ml-1 overflow-x-auto">
+                {yearsWithData.map(y => (
+                  <button key={y} onClick={() => setViewYear(y)}
+                    className={`px-2 py-1 rounded-lg text-[11px] sm:text-xs font-medium transition-colors shrink-0 ${
+                      viewYear === y ? "bg-accent text-white" : "bg-card text-foreground/40 hover:text-foreground border border-border/30"
+                    }`}>{y}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Year stats (mobile only — shown inline) */}
+            <div className="flex lg:hidden items-center gap-1.5 sm:gap-2 flex-wrap text-xs">
+              <div className="flex items-center gap-1 sm:gap-1.5 bg-green/10 border border-green/20 text-green px-2 sm:px-3 py-1.5 rounded-xl font-medium">
+                <TrendingUp className="w-3 h-3 shrink-0" />
+                <span className="tabular-nums">+{formatCurrency(yearStats.income + yearStats.eventIncome)}</span>
+              </div>
+              <div className="flex items-center gap-1 sm:gap-1.5 bg-red/10 border border-red/20 text-red px-2 sm:px-3 py-1.5 rounded-xl font-medium">
+                <Zap className="w-3 h-3 shrink-0" />
+                <span className="tabular-nums">−{formatCurrency(yearStats.expenses + Math.abs(yearStats.eventExpense))}</span>
+              </div>
+              <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl font-medium border ${
+                yearNetChange >= 0 ? "bg-green/10 border-green/20 text-green" : "bg-red/10 border-red/20 text-red"
+              }`}>
+                <span>{yearNetChange >= 0 ? "▲" : "▼"}</span>
+                <span className="tabular-nums">{formatCurrency(Math.abs(yearNetChange))} net</span>
+              </div>
+              <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl font-medium border ${
+                yearStats.endBalance >= 0 ? "bg-accent/10 border-accent/20 text-accent" : "bg-red/10 border-red/20 text-red"
+              }`}>
+                <DollarSign className="w-3 h-3 shrink-0" />
+                <span className="tabular-nums">{formatCurrency(yearStats.endBalance)} EOY</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Month grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
           {yearData.map((d, i) => {
             const eventsM     = config.events.filter(e => e.year === d.year && e.month === d.month);
             const vestEventsM     = allVestEvents.filter(e => e.year === d.year && e.month === d.month);
@@ -1244,6 +1273,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               />
             );
           })}
+        </div>
         </div>
       </div>
 
@@ -1409,6 +1439,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           <div className="h-px flex-1 bg-border/30" />
         </div>
 
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Recurring Charges */}
         <Accordion
           title="Recurring Charges"
@@ -2064,6 +2095,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             </button>
           )}
         </Accordion>
+        </div>
       </div>
     </div>
   );
