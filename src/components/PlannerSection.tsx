@@ -295,8 +295,8 @@ function detectRecurring(transactions: Array<{ name: string; merchant_name: stri
 // ─── Projection Chart (SVG, 3 years) ─────────────────────────────────────────
 function ProjectionChart({ config, loanPaymentsTotal = 0 }: { config: PlannerConfig; loanPaymentsTotal?: number | ((y: number, m: number) => number) }) {
   const NUM = 36;
-  const W = 900, H = 220;
-  const PAD = { t: 20, r: 20, b: 40, l: 72 };
+  const W = 900, H = 300;
+  const PAD = { t: 24, r: 20, b: 40, l: 72 };
   const cW = W - PAD.l - PAD.r;
   const cH = H - PAD.t - PAD.b;
 
@@ -336,7 +336,7 @@ function ProjectionChart({ config, loanPaymentsTotal = 0 }: { config: PlannerCon
   const vestEvs = useMemo(() => getVestEvents(config.vestingGrants ?? []), [config.vestingGrants]);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
       <defs>
         <linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"   stopColor="#6366f1" stopOpacity="0.4" />

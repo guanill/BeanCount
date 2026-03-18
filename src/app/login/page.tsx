@@ -84,14 +84,14 @@ export default function LoginPage() {
           </div>
 
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white leading-tight mb-6">
-            Your finances,
+            Every bean,
             <br />
             <span className="bg-linear-to-r from-accent via-purple-400 to-pink-400 bg-clip-text text-transparent">
-              all in one place.
+              accounted for.
             </span>
           </h1>
           <p className="text-lg text-white/50 max-w-md mb-12 leading-relaxed">
-            Track bank accounts, investments, crypto, credit cards, and debts with real-time sync from your financial institutions.
+            Track bank accounts, investments, crypto, credit cards, and debts — all counted in real-time.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4">
@@ -256,7 +256,7 @@ export default function LoginPage() {
       </div>
 
       <footer className="px-6 py-4 text-center text-xs text-white/15 border-t border-white/5">
-        BeanCount &copy; {new Date().getFullYear()}
+        BeanCount · Every bean, accounted for. &copy; {new Date().getFullYear()}
       </footer>
     </div>
   );
