@@ -66,7 +66,7 @@ export async function getDashboardData(
   const cryptoTotal = crypto.reduce((s, a) => s + Number(a.balance), 0);
   const assetsTotal = bankTotal + stockTotal + cryptoTotal;
   const debtsOwedTotal = debts.reduce((s, d) => s + Number(d.amount), 0);
-  const creditCardDebt = cards.reduce((s, c) => s + Number(c.balance_owed), 0);
+  const creditCardDebt = cards.reduce((s, c) => s + Math.max(0, Number(c.balance_owed)), 0);
   const liabilitiesTotal = liabs.reduce((s, l) => s + Number(l.amount), 0);
   const pointsValue = cards.reduce(
     (s, c) => s + (Number(c.points_balance) * Number(c.points_value_cents)) / 100,
@@ -441,17 +441,22 @@ export async function getTransactions(
   const { data, error } = await query;
   if (error) throw error;
 
-  // Map account names from a separate lookup
+  // Map account + credit card names from separate lookups
   const accountIds = [...new Set((data ?? []).map((r: any) => r.account_id).filter(Boolean))];
-  let accountMap = new Map<string, string>();
+  const creditCardIds = [...new Set((data ?? []).map((r: any) => r.credit_card_id).filter(Boolean))];
+  let sourceMap = new Map<string, string>();
   if (accountIds.length > 0) {
     const { data: accts } = await supabase.from("accounts").select("id, name").in("id", accountIds);
-    for (const a of accts ?? []) accountMap.set(a.id, a.name);
+    for (const a of accts ?? []) sourceMap.set(a.id, a.name);
+  }
+  if (creditCardIds.length > 0) {
+    const { data: cards } = await supabase.from("credit_cards").select("id, name").in("id", creditCardIds);
+    for (const c of cards ?? []) sourceMap.set(c.id, c.name);
   }
 
   const transactions: Transaction[] = (data ?? []).map((row: any) => ({
     ...row,
-    account_name: accountMap.get(row.account_id) ?? null,
+    account_name: sourceMap.get(row.account_id) ?? sourceMap.get(row.credit_card_id) ?? null,
   }));
 
   // Calculate summary (excluding ignored)

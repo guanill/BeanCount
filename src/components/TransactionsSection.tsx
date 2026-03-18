@@ -298,8 +298,6 @@ function TransactionDetailPanel({
               {/* Info row */}
               <div className="mx-4 mb-3 px-3 py-2 rounded-xl bg-background/60 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-foreground/50">
                 <span className="capitalize">{tx.transaction_type}</span>
-                <span className="text-foreground/30">·</span>
-                <span>{tx.teller_transaction_id ? "Teller" : tx.plaid_transaction_id ? "Plaid" : "Manual"}</span>
                 {tx.account_name && <><span className="text-foreground/30">·</span><span className="font-medium text-foreground/60 truncate">{tx.account_name}</span></>}
                 {tx.notes && <><span className="text-foreground/30">·</span><span className="truncate max-w-24 italic">{tx.notes}</span></>}
               </div>
@@ -771,7 +769,7 @@ export default function TransactionsSection() {
           <div className="flex gap-2 mt-3">
             <button onClick={handleAdd} disabled={saving || !addForm.name.trim() || !addForm.amount}
               className="px-4 py-1.5 bg-accent text-white rounded-lg text-xs hover:bg-accent-light disabled:opacity-40 transition-colors">
-              {saving ? "Savingâ€¦" : "Save"}
+              {saving ? "Saving…" : "Save"}
             </button>
             <button onClick={() => { setShowAdd(false); setAddForm(emptyForm); }}
               className="px-3 py-1.5 text-foreground/50 hover:text-foreground text-xs transition-colors">Cancel</button>
@@ -809,7 +807,7 @@ export default function TransactionsSection() {
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-foreground/30 text-sm">Loadingâ€¦</div>
+        <div className="text-center py-16 text-foreground/30 text-sm">Loading…</div>
       ) : transactions.length === 0 ? (
         <div className="rounded-2xl border border-border/30 p-16 text-center space-y-2">
           <div className="text-4xl mb-3">🏦</div>
@@ -817,11 +815,11 @@ export default function TransactionsSection() {
           <p className="text-foreground/30 text-sm">Sync your bank via Teller or add one manually</p>
         </div>
       ) : (
-        <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[220px_1fr] lg:gap-6">
+        <div className="space-y-4">
 
-          {/* â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-          <div className="flex flex-row lg:flex-col items-center gap-4 pb-2 lg:pb-0">
-            <div className="w-28 h-28 sm:w-36 sm:h-36 lg:w-44 lg:h-44 shrink-0">
+          {/* â"€â"€ Donut chart (full width) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-44 h-44 sm:w-56 sm:h-56">
               <SpendingDonut
                 segments={donutSegments}
                 total={donutTotal}
@@ -829,8 +827,8 @@ export default function TransactionsSection() {
                 onHover={setHoveredCat}
               />
             </div>
-            {/* Donut legend - click to filter list */}
-            <div className="flex-1 min-w-0 flex flex-row flex-wrap gap-1 lg:flex-col lg:w-full lg:space-y-1 lg:gap-0">
+            {/* Donut legend */}
+            <div className="w-full flex flex-wrap justify-center gap-1">
               {donutSegments.map(seg => {
                 const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
                 const isActive = catFilter === seg.category;
@@ -841,24 +839,23 @@ export default function TransactionsSection() {
                     onMouseEnter={() => setHoveredCat(seg.category)}
                     onMouseLeave={() => setHoveredCat(null)}
                     onClick={() => handleDonutClick(seg.category)}
-                    className={"w-full flex items-center gap-2 text-left rounded-lg px-2 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
+                    className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
                   >
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
-                    <span className="flex-1 truncate text-foreground/70">{seg.emoji} {seg.label}</span>
+                    <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
                     <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
                   </button>
                 );
               })}
               {catFilter && (
-                <button onClick={() => setCatFilter(null)} className="w-full text-xs text-accent/60 hover:text-accent pt-0.5 transition-colors">
+                <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
                   Clear filter ×
                 </button>
               )}
             </div>
           </div>
 
-          {/* â"€â"€ Category accordion â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-          {/* Right: type tabs + search + list */}
+          {/* â"€â"€ Category accordion + transaction list â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
           <div className="min-w-0 space-y-3">
 
             {/* Type filter tabs */}

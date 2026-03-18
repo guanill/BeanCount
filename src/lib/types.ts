@@ -57,6 +57,7 @@ export interface Transaction {
   id: string;
   user_id: string;
   account_id: string | null;
+  credit_card_id: string | null;
   plaid_transaction_id: string | null;
   teller_transaction_id: string | null;
   amount: number;           // positive = expense, negative = income
