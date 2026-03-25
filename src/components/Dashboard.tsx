@@ -174,11 +174,17 @@ export default function Dashboard() {
             />
 
             {/* Asset Breakdown + Accounts Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <AccountSection
                 type="bank"
                 accounts={data.accounts.bank}
                 total={data.totals.bankTotal}
+                onRefresh={handleRefresh}
+              />
+              <AccountSection
+                type="cash"
+                accounts={data.accounts.cash}
+                total={data.totals.cashTotal}
                 onRefresh={handleRefresh}
               />
               <AccountSection
@@ -200,6 +206,7 @@ export default function Dashboard() {
               bankTotal={data.totals.bankTotal}
               stockTotal={data.totals.stockTotal}
               cryptoTotal={data.totals.cryptoTotal}
+              cashTotal={data.totals.cashTotal}
               assetsTotal={data.totals.assetsTotal}
             />
 

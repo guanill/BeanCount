@@ -1,18 +1,20 @@
 "use client";
 
 import { formatCurrency, getPercentage } from "@/lib/format";
-import { PieChart, Landmark, TrendingUp, Bitcoin } from "lucide-react";
+import { PieChart, Landmark, TrendingUp, Bitcoin, Wallet } from "lucide-react";
 
 interface Props {
   bankTotal: number;
   stockTotal: number;
   cryptoTotal: number;
+  cashTotal: number;
   assetsTotal: number;
 }
 
-export default function AssetBreakdown({ bankTotal, stockTotal, cryptoTotal, assetsTotal }: Props) {
+export default function AssetBreakdown({ bankTotal, stockTotal, cryptoTotal, cashTotal, assetsTotal }: Props) {
   const segments = [
     { label: "Bank", value: bankTotal, color: "#74b9ff", Icon: Landmark },
+    { label: "Cash", value: cashTotal, color: "#2ecc71", Icon: Wallet },
     { label: "Stocks", value: stockTotal, color: "#00b894", Icon: TrendingUp },
     { label: "Crypto", value: cryptoTotal, color: "#fdcb6e", Icon: Bitcoin },
   ];

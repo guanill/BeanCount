@@ -1,4 +1,4 @@
-export type AccountType = "bank" | "stock" | "crypto";
+export type AccountType = "bank" | "stock" | "crypto" | "cash";
 
 export interface Account {
   id: string;
@@ -122,6 +122,7 @@ export interface DashboardData {
     bank: Account[];
     stock: Account[];
     crypto: Account[];
+    cash: Account[];
   };
   creditCards: CreditCard[];
   debtsOwed: DebtOwed[];
@@ -130,6 +131,7 @@ export interface DashboardData {
     bankTotal: number;
     stockTotal: number;
     cryptoTotal: number;
+    cashTotal: number;
     assetsTotal: number;
     debtsOwedTotal: number;
     creditCardDebt: number;

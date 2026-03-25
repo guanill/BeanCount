@@ -12,6 +12,7 @@ import {
   Hexagon,
   Zap,
   Building,
+  Wallet,
   Pencil,
   Trash2,
   Plus,
@@ -41,6 +42,7 @@ const typeConfig: Record<AccountType, { label: string; gradient: string; iconBg:
   bank: { label: "Bank Accounts", gradient: "from-blue-500/20 to-cyan-500/10", iconBg: "bg-blue-500/20", Icon: Landmark },
   stock: { label: "Stock & Investments", gradient: "from-green-500/20 to-emerald-500/10", iconBg: "bg-green-500/20", Icon: TrendingUp },
   crypto: { label: "Cryptocurrency", gradient: "from-yellow-500/20 to-orange-500/10", iconBg: "bg-yellow-500/20", Icon: Bitcoin },
+  cash: { label: "Cash", gradient: "from-emerald-500/20 to-teal-500/10", iconBg: "bg-emerald-500/20", Icon: Wallet },
 };
 
 const iconMap: Record<string, React.ElementType> = {
@@ -53,6 +55,7 @@ const iconMap: Record<string, React.ElementType> = {
   "bitcoin": Bitcoin,
   "hexagon": Hexagon,
   "zap": Zap,
+  "wallet": Wallet,
 };
 
 interface Props {
@@ -99,16 +102,22 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   async function saveNew() {
-    const supabase = createClient();
-    await createAccount(supabase, {
-      name: addValues.name,
-      type,
-      balance: parseFloat(addValues.balance) || 0,
-    });
+    if (!addValues.name.trim()) return;
+    try {
+      const supabase = createClient();
+      await createAccount(supabase, {
+        name: addValues.name.trim(),
+        type,
+        balance: parseFloat(addValues.balance) || 0,
+      });
 
-    setAddValues({ name: "", balance: "" });
-    setAdding(false);
-    onRefresh();
+      setAddValues({ name: "", balance: "" });
+      setAdding(false);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to create account:", e);
+      alert("Failed to create account. Please try again.");
+    }
   }
 
   async function handleSync() {
@@ -212,7 +221,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
 
       <div className="space-y-2">
         {adding && (
-          <div className="flex items-center justify-between p-3 rounded-xl bg-card border border-border/60 overflow-hidden">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center p-3 rounded-xl bg-card border border-border/60">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-background/60">
                 <Plus className="w-4 h-4 text-accent" />
@@ -225,7 +234,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                 className="min-w-0 flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-accent"
               />
             </div>
-            <div className="flex items-center gap-2 ml-2 shrink-0">
+            <div className="flex items-center gap-2 sm:ml-2 shrink-0">
               <input
                 type="number"
                 step="0.01"
