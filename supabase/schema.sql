@@ -4,7 +4,7 @@
 -- ============================================================
 
 -- Custom enums
-CREATE TYPE account_type AS ENUM ('bank', 'stock', 'crypto');
+CREATE TYPE account_type AS ENUM ('bank', 'stock', 'crypto', 'cash');
 CREATE TYPE transaction_type AS ENUM ('income', 'expense', 'transfer');
 CREATE TYPE debt_status AS ENUM ('pending', 'partial', 'paid');
 CREATE TYPE deferral_type AS ENUM ('subsidized', 'unsubsidized');

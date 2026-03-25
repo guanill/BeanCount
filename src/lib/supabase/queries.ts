@@ -20,6 +20,7 @@ export async function getDashboardData(
     { data: bankAccounts },
     { data: stockAccounts },
     { data: cryptoAccounts },
+    { data: cashAccounts },
     { data: creditCards },
     { data: debtsOwed },
     { data: liabilities },
@@ -40,6 +41,11 @@ export async function getDashboardData(
       .eq("type", "crypto")
       .order("balance", { ascending: false }),
     supabase
+      .from("accounts")
+      .select("*")
+      .eq("type", "cash")
+      .order("balance", { ascending: false }),
+    supabase
       .from("credit_cards")
       .select("*")
       .order("balance_owed", { ascending: false }),
@@ -57,6 +63,7 @@ export async function getDashboardData(
   const bank = (bankAccounts ?? []) as Account[];
   const stock = (stockAccounts ?? []) as Account[];
   const crypto = (cryptoAccounts ?? []) as Account[];
+  const cash = (cashAccounts ?? []) as Account[];
   const cards = (creditCards ?? []) as CreditCard[];
   const debts = (debtsOwed ?? []) as DebtOwed[];
   const liabs = (liabilities ?? []) as Liability[];
@@ -64,7 +71,8 @@ export async function getDashboardData(
   const bankTotal = bank.reduce((s, a) => s + Number(a.balance), 0);
   const stockTotal = stock.reduce((s, a) => s + Number(a.balance), 0);
   const cryptoTotal = crypto.reduce((s, a) => s + Number(a.balance), 0);
-  const assetsTotal = bankTotal + stockTotal + cryptoTotal;
+  const cashTotal = cash.reduce((s, a) => s + Number(a.balance), 0);
+  const assetsTotal = bankTotal + stockTotal + cryptoTotal + cashTotal;
   const debtsOwedTotal = debts.reduce((s, d) => s + Number(d.amount), 0);
   const creditCardDebt = cards.reduce((s, c) => s + Math.max(0, Number(c.balance_owed)), 0);
   const liabilitiesTotal = liabs.reduce((s, l) => s + Number(l.amount), 0);
@@ -76,7 +84,7 @@ export async function getDashboardData(
     assetsTotal + debtsOwedTotal + pointsValue - creditCardDebt - liabilitiesTotal;
 
   return {
-    accounts: { bank, stock, crypto },
+    accounts: { bank, stock, crypto, cash },
     creditCards: cards,
     debtsOwed: debts,
     liabilities: liabs,
@@ -84,6 +92,7 @@ export async function getDashboardData(
       bankTotal,
       stockTotal,
       cryptoTotal,
+      cashTotal,
       assetsTotal,
       debtsOwedTotal,
       creditCardDebt,

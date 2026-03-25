@@ -14,7 +14,7 @@ interface Props {
 
 export default function FinalTotals({ assetsTotal, debtsOwedTotal, pointsValue, creditCardDebt, liabilitiesTotal, netWorth }: Props) {
   const lines = [
-    { label: "Total Assets (Bank + Stocks + Crypto)", value: assetsTotal, color: "text-blue", icon: Plus, positive: true },
+    { label: "Total Assets (Bank + Cash + Stocks + Crypto)", value: assetsTotal, color: "text-blue", icon: Plus, positive: true },
     { label: "Owed to You", value: debtsOwedTotal, color: "text-green", icon: Plus, positive: true },
     { label: "Credit Card Points Value", value: pointsValue, color: "text-yellow", icon: Plus, positive: true },
     { label: "Credit Card Debt", value: creditCardDebt, color: "text-red", icon: Minus, positive: false },
