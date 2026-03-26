@@ -420,26 +420,36 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
-    const supabase = createClient();
-    await updateLoan(supabase, loan.id, {
-      name: editForm.name, type: editForm.type,
-      balance: parseFloat(editForm.balance) || 0,
-      original_amount: editForm.original_amount ? parseFloat(editForm.original_amount) : null,
-      interest_rate: parseFloat(editForm.interest_rate) || 0,
-      monthly_payment: parseFloat(editForm.monthly_payment) || 0,
-      notes: editForm.notes || null,
-      deferral_months: parseInt(editForm.deferral_months) || 0,
-      deferral_type: editForm.deferral_type as "subsidized" | "unsubsidized",
-    } as any);
-    setEditing(false);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await updateLoan(supabase, loan.id, {
+        name: editForm.name, type: editForm.type,
+        balance: parseFloat(editForm.balance) || 0,
+        original_amount: editForm.original_amount ? parseFloat(editForm.original_amount) : null,
+        interest_rate: parseFloat(editForm.interest_rate) || 0,
+        monthly_payment: parseFloat(editForm.monthly_payment) || 0,
+        notes: editForm.notes || null,
+        deferral_months: parseInt(editForm.deferral_months) || 0,
+        deferral_type: editForm.deferral_type as "subsidized" | "unsubsidized",
+      } as any);
+      setEditing(false);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to update loan:", e);
+      alert("Failed to update loan. Please try again.");
+    }
   }
 
   async function handleDelete() {
     if (!confirm(`Delete "${loan.name}"? This cannot be undone.`)) return;
-    const supabase = createClient();
-    await deleteLoan(supabase, loan.id);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await deleteLoan(supabase, loan.id);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to delete loan:", e);
+      alert("Failed to delete loan. Please try again.");
+    }
   }
 
   const tableRows = expanded
@@ -735,20 +745,25 @@ export default function LoansSection() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const supabase = createClient();
-    await createLoan(supabase, {
-      name: addForm.name, type: addForm.type,
-      balance: parseFloat(addForm.balance) || 0,
-      original_amount: addForm.original_amount ? parseFloat(addForm.original_amount) : undefined,
-      interest_rate: parseFloat(addForm.interest_rate) || 0,
-      monthly_payment: parseFloat(addForm.monthly_payment) || 0,
-      notes: addForm.notes || undefined,
-      deferral_months: parseInt(addForm.deferral_months) || 0,
-      deferral_type: addForm.deferral_type,
-    });
-    setAddForm(EMPTY_FORM);
-    setAdding(false);
-    fetchLoans();
+    try {
+      const supabase = createClient();
+      await createLoan(supabase, {
+        name: addForm.name, type: addForm.type,
+        balance: parseFloat(addForm.balance) || 0,
+        original_amount: addForm.original_amount ? parseFloat(addForm.original_amount) : undefined,
+        interest_rate: parseFloat(addForm.interest_rate) || 0,
+        monthly_payment: parseFloat(addForm.monthly_payment) || 0,
+        notes: addForm.notes || undefined,
+        deferral_months: parseInt(addForm.deferral_months) || 0,
+        deferral_type: addForm.deferral_type,
+      });
+      setAddForm(EMPTY_FORM);
+      setAdding(false);
+      fetchLoans();
+    } catch (e) {
+      console.error("Failed to add loan:", e);
+      alert("Failed to add loan. Please try again.");
+    }
   }
 
   const totalBalance  = loans.reduce((s, l) => s + l.balance, 0);

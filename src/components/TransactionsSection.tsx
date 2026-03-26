@@ -677,43 +677,68 @@ export default function TransactionsSection() {
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this transaction?")) return;
-    const supabase = createClient();
-    await deleteTransaction(supabase, id);
-    fetchTransactions();
+    try {
+      const supabase = createClient();
+      await deleteTransaction(supabase, id);
+      fetchTransactions();
+    } catch (e) {
+      console.error("Failed to delete transaction:", e);
+      alert("Failed to delete transaction. Please try again.");
+    }
   }
 
   async function handleReclassify(id: string, newCategory: string) {
-    const newMeta = getCategoryMeta(newCategory);
-    const newType = newMeta.type;
-    const supabase = createClient();
-    await updateTransaction(supabase, id, { category: newCategory, transaction_type: newType });
-    fetchTransactions();
+    try {
+      const newMeta = getCategoryMeta(newCategory);
+      const newType = newMeta.type;
+      const supabase = createClient();
+      await updateTransaction(supabase, id, { category: newCategory, transaction_type: newType });
+      fetchTransactions();
+    } catch (e) {
+      console.error("Failed to reclassify transaction:", e);
+      alert("Failed to reclassify transaction. Please try again.");
+    }
   }
 
   async function handlePatch(id: string, updates: Record<string, string | number>) {
-    const supabase = createClient();
-    await updateTransaction(supabase, id, updates as any);
-    await fetchTransactions();
-    setSelectedTx(prev => prev?.id === id ? { ...prev, ...updates } as Transaction : prev);
+    try {
+      const supabase = createClient();
+      await updateTransaction(supabase, id, updates as any);
+      await fetchTransactions();
+      setSelectedTx(prev => prev?.id === id ? { ...prev, ...updates } as Transaction : prev);
+    } catch (e) {
+      console.error("Failed to update transaction:", e);
+      alert("Failed to update transaction. Please try again.");
+    }
   }
 
   async function handleIgnore(id: string, ignore: boolean) {
-    const supabase = createClient();
-    await updateTransaction(supabase, id, { is_ignored: ignore });
-    await fetchTransactions();
-    setSelectedTx(prev => prev?.id === id ? { ...prev, is_ignored: ignore } : prev);
+    try {
+      const supabase = createClient();
+      await updateTransaction(supabase, id, { is_ignored: ignore });
+      await fetchTransactions();
+      setSelectedTx(prev => prev?.id === id ? { ...prev, is_ignored: ignore } : prev);
+    } catch (e) {
+      console.error("Failed to update transaction:", e);
+      alert("Failed to update transaction. Please try again.");
+    }
   }
 
   async function handleSplit(id: string, a: SplitPart, b: SplitPart) {
-    const supabase = createClient();
-    await splitTransaction(
-      supabase,
-      id,
-      { ...a, amount: parseFloat(a.amount) || 0 },
-      { ...b, amount: parseFloat(b.amount) || 0 },
-    );
-    setSelectedTx(null);
-    fetchTransactions();
+    try {
+      const supabase = createClient();
+      await splitTransaction(
+        supabase,
+        id,
+        { ...a, amount: parseFloat(a.amount) || 0 },
+        { ...b, amount: parseFloat(b.amount) || 0 },
+      );
+      setSelectedTx(null);
+      fetchTransactions();
+    } catch (e) {
+      console.error("Failed to split transaction:", e);
+      alert("Failed to split transaction. Please try again.");
+    }
   }
 
   function toggleCat(cat: string) {
