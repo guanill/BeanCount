@@ -80,9 +80,14 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this account?")) return;
-    const supabase = createClient();
-    await deleteAccount(supabase, id);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await deleteAccount(supabase, id);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to delete account:", e);
+      alert("Failed to delete account. Please try again.");
+    }
   }
 
   function startEdit(account: Account) {
@@ -91,14 +96,18 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   async function saveEdit(id: string) {
-    const supabase = createClient();
-    await updateAccount(supabase, id, {
-      name: editingValues.name,
-      balance: parseFloat(editingValues.balance) || 0,
-    });
-
-    setEditingId(null);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await updateAccount(supabase, id, {
+        name: editingValues.name,
+        balance: parseFloat(editingValues.balance) || 0,
+      });
+      setEditingId(null);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to update account:", e);
+      alert("Failed to update account. Please try again.");
+    }
   }
 
   async function saveNew() {
