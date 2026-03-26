@@ -26,6 +26,7 @@ import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import { createAccount, updateAccount, deleteAccount } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
+import { useToast } from "./Toast";
 
 // Teller Connect contains browser-only code — load client-side only
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
@@ -67,6 +68,7 @@ interface Props {
 
 export default function AccountSection({ type, accounts, total, onRefresh }: Props) {
   const { label, gradient, iconBg, Icon } = typeConfig[type];
+  const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValues, setEditingValues] = useState<{ name: string; balance: string }>({ name: "", balance: "" });
   const [adding, setAdding] = useState(false);
@@ -83,11 +85,12 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
     try {
       const supabase = createClient();
       await deleteAccount(supabase, id);
+      toast("Account deleted");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete account:", e);
-      alert("Failed to delete account: " + msg);
+      toast("Failed to delete account: " + msg, "error");
     }
   }
 
@@ -104,18 +107,18 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
         balance: parseFloat(editingValues.balance) || 0,
       });
       setEditingId(null);
+      toast("Account updated");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update account:", e);
-      alert("Failed to update account: " + msg);
+      toast("Failed to update account: " + msg, "error");
     }
   }
 
   async function saveNew() {
-    console.log("[saveNew] called, type:", type, "name:", addValues.name, "balance:", addValues.balance);
     if (!addValues.name.trim()) {
-      alert("Please enter an account name.");
+      toast("Please enter an account name", "error");
       return;
     }
     try {
@@ -127,11 +130,12 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
       });
       setAddValues({ name: "", balance: "" });
       setAdding(false);
+      toast("Account created");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to create account:", e);
-      alert("Failed to create account: " + msg);
+      toast("Failed to create account: " + msg, "error");
     }
   }
 
@@ -236,9 +240,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
 
       <div className="space-y-2">
         {adding && (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center p-3 rounded-xl bg-card border border-border/60">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-background/60">
+          <div className="p-3 rounded-xl bg-card border border-border/60 space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-background/60 shrink-0">
                 <Plus className="w-4 h-4 text-accent" />
               </div>
               <input
@@ -247,16 +251,17 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                 value={addValues.name}
                 onChange={(e) => setAddValues({ ...addValues, name: e.target.value })}
                 className="min-w-0 flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-accent"
+                autoFocus
               />
             </div>
-            <div className="flex items-center gap-2 sm:ml-2 shrink-0">
+            <div className="flex items-center gap-2">
               <input
                 type="number"
                 step="0.01"
                 placeholder="Balance"
                 value={addValues.balance}
                 onChange={(e) => setAddValues({ ...addValues, balance: e.target.value })}
-                className="w-24 bg-background border border-border rounded-lg px-2 py-1.5 text-sm text-foreground text-right focus:outline-none focus:border-accent"
+                className="flex-1 min-w-0 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-accent"
               />
               <button
                 type="button"
@@ -289,10 +294,10 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
               style={{ animationDelay: `${i * 0.05}s` }}
             >
               {editingId === account.id ? (
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
                     <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center"
+                      className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
                       style={{ backgroundColor: `${account.color || "#444"}20` }}
                     >
                       <AccIcon className="w-4 h-4" style={{ color: account.color || undefined }} />
@@ -304,13 +309,13 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
                       className="min-w-0 flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-accent"
                     />
                   </div>
-                  <div className="flex items-center gap-2 sm:ml-2 shrink-0">
+                  <div className="flex items-center gap-2">
                     <input
                       type="number"
                       step="0.01"
                       value={editingValues.balance}
                       onChange={(e) => setEditingValues({ ...editingValues, balance: e.target.value })}
-                      className="w-24 bg-background border border-border rounded-lg px-2 py-1.5 text-sm text-foreground text-right focus:outline-none focus:border-accent"
+                      className="flex-1 min-w-0 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-accent"
                     />
                     <button
                       type="button"

@@ -6,6 +6,7 @@ import { Landmark, Plus, Pencil, Trash2, Clock } from "lucide-react";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createLiability, updateLiability, deleteLiability } from "@/lib/supabase/queries";
+import { useToast } from "./Toast";
 
 const CATEGORIES = [
   { value: "pending",    label: "Pending Charge",  emoji: "⏳" },
@@ -41,6 +42,7 @@ interface Props {
 }
 
 export default function LiabilitiesSection({ liabilities, total, onRefresh }: Props) {
+  const { toast } = useToast();
   const [adding, setAdding]   = useState(false);
   const [addForm, setAddForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId]   = useState<string | null>(null);
@@ -59,11 +61,12 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
       });
       setAddForm(EMPTY_FORM);
       setAdding(false);
+      toast("Liability added");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add liability:", e);
-      alert("Failed to add liability: " + msg);
+      toast("Failed to add liability: " + msg, "error");
     }
   }
 
@@ -78,11 +81,12 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
         due_date: editForm.due_date || null,
       } as any);
       setEditingId(null);
+      toast("Liability updated");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update liability:", e);
-      alert("Failed to update liability: " + msg);
+      toast("Failed to update liability: " + msg, "error");
     }
   }
 
@@ -91,11 +95,12 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
     try {
       const supabase = createClient();
       await deleteLiability(supabase, id);
+      toast("Liability removed");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete liability:", e);
-      alert("Failed to delete liability: " + msg);
+      toast("Failed to delete liability: " + msg, "error");
     }
   }
 

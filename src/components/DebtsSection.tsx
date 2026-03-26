@@ -6,6 +6,7 @@ import { Users, Plus, Pencil, Trash2, Check, Clock } from "lucide-react";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createDebt, updateDebt, deleteDebt } from "@/lib/supabase/queries";
+import { useToast } from "./Toast";
 
 interface Props {
   debts: DebtOwed[];
@@ -22,6 +23,7 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
   const [editForm, setEditForm] = useState({
     person_name: "", amount: "", reason: "", due_date: "",
   });
+  const { toast } = useToast();
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -35,11 +37,12 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
       });
       setAddForm({ person_name: "", amount: "", reason: "", due_date: "" });
       setAdding(false);
+      toast("Debt added");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add debt:", e);
-      alert("Failed to add debt: " + msg);
+      toast("Failed to add debt: " + msg, "error");
     }
   }
 
@@ -53,11 +56,12 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
         due_date: editForm.due_date || null,
       } as any);
       setEditingId(null);
+      toast("Debt updated");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update debt:", e);
-      alert("Failed to update debt: " + msg);
+      toast("Failed to update debt: " + msg, "error");
     }
   }
 
@@ -66,11 +70,12 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
     try {
       const supabase = createClient();
       await deleteDebt(supabase, id);
+      toast("Debt removed");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete debt:", e);
-      alert("Failed to delete debt: " + msg);
+      toast("Failed to delete debt: " + msg, "error");
     }
   }
 
@@ -78,11 +83,12 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
     try {
       const supabase = createClient();
       await updateDebt(supabase, id, { status: "paid" } as any);
+      toast("Marked as paid");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to mark as paid:", e);
-      alert("Failed to mark as paid: " + msg);
+      toast("Failed to mark as paid: " + msg, "error");
     }
   }
 
