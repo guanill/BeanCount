@@ -48,37 +48,52 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const supabase = createClient();
-    await createLiability(supabase, {
-      name:     addForm.name,
-      amount:   parseFloat(addForm.amount) || 0,
-      category: addForm.category,
-      notes:    addForm.notes || undefined,
-      due_date: addForm.due_date || undefined,
-    });
-    setAddForm(EMPTY_FORM);
-    setAdding(false);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await createLiability(supabase, {
+        name:     addForm.name,
+        amount:   parseFloat(addForm.amount) || 0,
+        category: addForm.category,
+        notes:    addForm.notes || undefined,
+        due_date: addForm.due_date || undefined,
+      });
+      setAddForm(EMPTY_FORM);
+      setAdding(false);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to add liability:", e);
+      alert("Failed to add liability. Please try again.");
+    }
   }
 
   async function handleUpdate(id: string) {
-    const supabase = createClient();
-    await updateLiability(supabase, id, {
-      name:     editForm.name,
-      amount:   parseFloat(editForm.amount) || 0,
-      category: editForm.category,
-      notes:    editForm.notes || null,
-      due_date: editForm.due_date || null,
-    } as any);
-    setEditingId(null);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await updateLiability(supabase, id, {
+        name:     editForm.name,
+        amount:   parseFloat(editForm.amount) || 0,
+        category: editForm.category,
+        notes:    editForm.notes || null,
+        due_date: editForm.due_date || null,
+      } as any);
+      setEditingId(null);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to update liability:", e);
+      alert("Failed to update liability. Please try again.");
+    }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Remove this liability?")) return;
-    const supabase = createClient();
-    await deleteLiability(supabase, id);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await deleteLiability(supabase, id);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to delete liability:", e);
+      alert("Failed to delete liability. Please try again.");
+    }
   }
 
   function startEdit(l: Liability) {

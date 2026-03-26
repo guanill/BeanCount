@@ -88,43 +88,56 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const supabase = createClient();
-    await createCreditCard(supabase, {
-      name: addForm.name,
-      balance_owed: parseFloat(addForm.balance_owed) || 0,
-      credit_limit: parseFloat(addForm.credit_limit) || 0,
-      points_balance: parseFloat(addForm.points_balance) || 0,
-      points_value_cents: parseFloat(addForm.points_value_cents) || 1,
-      due_date: addForm.due_date || undefined,
-      min_payment: parseFloat(addForm.min_payment) || 0,
-    });
-
-    setAddForm({ name: "", balance_owed: "", credit_limit: "", points_balance: "", points_value_cents: "1", due_date: "", min_payment: "" });
-    setAdding(false);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await createCreditCard(supabase, {
+        name: addForm.name,
+        balance_owed: parseFloat(addForm.balance_owed) || 0,
+        credit_limit: parseFloat(addForm.credit_limit) || 0,
+        points_balance: parseFloat(addForm.points_balance) || 0,
+        points_value_cents: parseFloat(addForm.points_value_cents) || 1,
+        due_date: addForm.due_date || undefined,
+        min_payment: parseFloat(addForm.min_payment) || 0,
+      });
+      setAddForm({ name: "", balance_owed: "", credit_limit: "", points_balance: "", points_value_cents: "1", due_date: "", min_payment: "" });
+      setAdding(false);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to add credit card:", e);
+      alert("Failed to add credit card. Please try again.");
+    }
   }
 
   async function handleUpdate(id: string) {
-    const supabase = createClient();
-    await updateCreditCard(supabase, id, {
-      name: editForm.name,
-      balance_owed: parseFloat(editForm.balance_owed) || 0,
-      credit_limit: parseFloat(editForm.credit_limit) || 0,
-      points_balance: parseFloat(editForm.points_balance) || 0,
-      points_value_cents: parseFloat(editForm.points_value_cents) || 1,
-      due_date: editForm.due_date || null,
-      min_payment: parseFloat(editForm.min_payment) || 0,
-    } as any);
-
-    setEditingId(null);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await updateCreditCard(supabase, id, {
+        name: editForm.name,
+        balance_owed: parseFloat(editForm.balance_owed) || 0,
+        credit_limit: parseFloat(editForm.credit_limit) || 0,
+        points_balance: parseFloat(editForm.points_balance) || 0,
+        points_value_cents: parseFloat(editForm.points_value_cents) || 1,
+        due_date: editForm.due_date || null,
+        min_payment: parseFloat(editForm.min_payment) || 0,
+      } as any);
+      setEditingId(null);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to update credit card:", e);
+      alert("Failed to update credit card. Please try again.");
+    }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this credit card?")) return;
-    const supabase = createClient();
-    await deleteCreditCard(supabase, id);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await deleteCreditCard(supabase, id);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to delete credit card:", e);
+      alert("Failed to delete credit card. Please try again.");
+    }
   }
 
   function startEdit(card: CreditCard) {

@@ -126,9 +126,12 @@ export async function createAccount(
     color?: string;
   }
 ) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const { data, error } = await supabase
     .from("accounts")
     .insert({
+      user_id: user.id,
       name: account.name,
       type: account.type,
       balance: account.balance ?? 0,
@@ -193,9 +196,12 @@ export async function createCreditCard(
     color?: string;
   }
 ) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const { data, error } = await supabase
     .from("credit_cards")
     .insert({
+      user_id: user.id,
       name: card.name,
       balance_owed: card.balance_owed ?? 0,
       credit_limit: card.credit_limit ?? 0,
@@ -247,9 +253,12 @@ export async function createDebt(
   supabase: SupabaseClient,
   debt: { person_name: string; amount: number; reason?: string; due_date?: string }
 ) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const { data, error } = await supabase
     .from("debts_owed")
     .insert({
+      user_id: user.id,
       person_name: debt.person_name,
       amount: debt.amount,
       reason: debt.reason ?? null,
@@ -302,9 +311,12 @@ export async function createLiability(
     due_date?: string;
   }
 ) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const { data, error } = await supabase
     .from("liabilities")
     .insert({
+      user_id: user.id,
       name: liability.name,
       amount: liability.amount,
       category: liability.category ?? "other",
@@ -362,9 +374,12 @@ export async function createLoan(
     deferral_type?: string;
   }
 ) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const { data, error } = await supabase
     .from("loans")
     .insert({
+      user_id: user.id,
       name: loan.name,
       type: loan.type ?? "personal",
       balance: loan.balance,
@@ -538,9 +553,12 @@ export async function createTransaction(
     txType = txType || guess.type;
   }
 
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const { data, error } = await supabase
     .from("transactions")
     .insert({
+      user_id: user.id,
       account_id: tx.account_id ?? null,
       amount: amt,
       date: tx.date ?? new Date().toISOString().slice(0, 10),
@@ -613,7 +631,10 @@ export async function splitTransaction(
     .eq("id", id);
 
   // Create two new transactions
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
   const base = {
+    user_id: user.id,
     account_id: original.account_id,
     date: original.date,
     is_manual: true,

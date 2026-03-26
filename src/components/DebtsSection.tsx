@@ -25,43 +25,61 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const supabase = createClient();
-    await createDebt(supabase, {
-      person_name: addForm.person_name,
-      amount: parseFloat(addForm.amount) || 0,
-      reason: addForm.reason || undefined,
-      due_date: addForm.due_date || undefined,
-    });
-
-    setAddForm({ person_name: "", amount: "", reason: "", due_date: "" });
-    setAdding(false);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await createDebt(supabase, {
+        person_name: addForm.person_name,
+        amount: parseFloat(addForm.amount) || 0,
+        reason: addForm.reason || undefined,
+        due_date: addForm.due_date || undefined,
+      });
+      setAddForm({ person_name: "", amount: "", reason: "", due_date: "" });
+      setAdding(false);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to add debt:", e);
+      alert("Failed to add debt. Please try again.");
+    }
   }
 
   async function handleUpdate(id: string) {
-    const supabase = createClient();
-    await updateDebt(supabase, id, {
-      person_name: editForm.person_name,
-      amount: parseFloat(editForm.amount) || 0,
-      reason: editForm.reason || null,
-      due_date: editForm.due_date || null,
-    } as any);
-
-    setEditingId(null);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await updateDebt(supabase, id, {
+        person_name: editForm.person_name,
+        amount: parseFloat(editForm.amount) || 0,
+        reason: editForm.reason || null,
+        due_date: editForm.due_date || null,
+      } as any);
+      setEditingId(null);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to update debt:", e);
+      alert("Failed to update debt. Please try again.");
+    }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Remove this debt?")) return;
-    const supabase = createClient();
-    await deleteDebt(supabase, id);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await deleteDebt(supabase, id);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to delete debt:", e);
+      alert("Failed to delete debt. Please try again.");
+    }
   }
 
   async function markPaid(id: string) {
-    const supabase = createClient();
-    await updateDebt(supabase, id, { status: "paid" } as any);
-    onRefresh();
+    try {
+      const supabase = createClient();
+      await updateDebt(supabase, id, { status: "paid" } as any);
+      onRefresh();
+    } catch (e) {
+      console.error("Failed to mark as paid:", e);
+      alert("Failed to mark as paid. Please try again.");
+    }
   }
 
   function startEdit(debt: DebtOwed) {
