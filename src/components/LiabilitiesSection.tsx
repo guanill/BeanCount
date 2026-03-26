@@ -61,8 +61,9 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
       setAdding(false);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add liability:", e);
-      alert("Failed to add liability. Please try again.");
+      alert("Failed to add liability: " + msg);
     }
   }
 
@@ -79,8 +80,9 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
       setEditingId(null);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update liability:", e);
-      alert("Failed to update liability. Please try again.");
+      alert("Failed to update liability: " + msg);
     }
   }
 
@@ -91,8 +93,9 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
       await deleteLiability(supabase, id);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete liability:", e);
-      alert("Failed to delete liability. Please try again.");
+      alert("Failed to delete liability: " + msg);
     }
   }
 

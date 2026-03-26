@@ -682,8 +682,9 @@ export default function TransactionsSection() {
       await deleteTransaction(supabase, id);
       fetchTransactions();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete transaction:", e);
-      alert("Failed to delete transaction. Please try again.");
+      alert("Failed to delete transaction: " + msg);
     }
   }
 
@@ -695,8 +696,9 @@ export default function TransactionsSection() {
       await updateTransaction(supabase, id, { category: newCategory, transaction_type: newType });
       fetchTransactions();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to reclassify transaction:", e);
-      alert("Failed to reclassify transaction. Please try again.");
+      alert("Failed to reclassify transaction: " + msg);
     }
   }
 
@@ -707,8 +709,9 @@ export default function TransactionsSection() {
       await fetchTransactions();
       setSelectedTx(prev => prev?.id === id ? { ...prev, ...updates } as Transaction : prev);
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update transaction:", e);
-      alert("Failed to update transaction. Please try again.");
+      alert("Failed to update transaction: " + msg);
     }
   }
 
@@ -719,8 +722,9 @@ export default function TransactionsSection() {
       await fetchTransactions();
       setSelectedTx(prev => prev?.id === id ? { ...prev, is_ignored: ignore } : prev);
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update transaction:", e);
-      alert("Failed to update transaction. Please try again.");
+      alert("Failed to update transaction: " + msg);
     }
   }
 
@@ -736,8 +740,9 @@ export default function TransactionsSection() {
       setSelectedTx(null);
       fetchTransactions();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to split transaction:", e);
-      alert("Failed to split transaction. Please try again.");
+      alert("Failed to split transaction: " + msg);
     }
   }
 

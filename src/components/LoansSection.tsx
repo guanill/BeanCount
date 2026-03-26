@@ -435,8 +435,9 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
       setEditing(false);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update loan:", e);
-      alert("Failed to update loan. Please try again.");
+      alert("Failed to update loan: " + msg);
     }
   }
 
@@ -447,8 +448,9 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
       await deleteLoan(supabase, loan.id);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete loan:", e);
-      alert("Failed to delete loan. Please try again.");
+      alert("Failed to delete loan: " + msg);
     }
   }
 
@@ -761,8 +763,9 @@ export default function LoansSection() {
       setAdding(false);
       fetchLoans();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add loan:", e);
-      alert("Failed to add loan. Please try again.");
+      alert("Failed to add loan: " + msg);
     }
   }
 

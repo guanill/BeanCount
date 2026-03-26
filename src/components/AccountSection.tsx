@@ -85,8 +85,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
       await deleteAccount(supabase, id);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete account:", e);
-      alert("Failed to delete account. Please try again.");
+      alert("Failed to delete account: " + msg);
     }
   }
 
@@ -105,8 +106,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
       setEditingId(null);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update account:", e);
-      alert("Failed to update account. Please try again.");
+      alert("Failed to update account: " + msg);
     }
   }
 
@@ -124,8 +126,9 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
       setAdding(false);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to create account:", e);
-      alert("Failed to create account. Please try again.");
+      alert("Failed to create account: " + msg);
     }
   }
 

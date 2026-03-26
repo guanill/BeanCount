@@ -103,8 +103,9 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
       setAdding(false);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add credit card:", e);
-      alert("Failed to add credit card. Please try again.");
+      alert("Failed to add credit card: " + msg);
     }
   }
 
@@ -123,8 +124,9 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
       setEditingId(null);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update credit card:", e);
-      alert("Failed to update credit card. Please try again.");
+      alert("Failed to update credit card: " + msg);
     }
   }
 
@@ -135,8 +137,9 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
       await deleteCreditCard(supabase, id);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete credit card:", e);
-      alert("Failed to delete credit card. Please try again.");
+      alert("Failed to delete credit card: " + msg);
     }
   }
 
