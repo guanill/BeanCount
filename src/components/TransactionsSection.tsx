@@ -39,6 +39,7 @@ import {
   splitTransaction,
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
+import { useToast } from "./Toast";
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -519,6 +520,7 @@ const emptyForm: AddForm = {
 
 /* â"€â"€â"€ Main component â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 export default function TransactionsSection() {
+  const { toast } = useToast();
   const now = new Date();
   const [year,     setYear]    = useState(now.getFullYear());
   const [month,    setMonth]   = useState(now.getMonth() + 1);
@@ -680,11 +682,12 @@ export default function TransactionsSection() {
     try {
       const supabase = createClient();
       await deleteTransaction(supabase, id);
+      toast("Transaction deleted");
       fetchTransactions();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete transaction:", e);
-      alert("Failed to delete transaction: " + msg);
+      toast("Failed to delete transaction: " + msg, "error");
     }
   }
 
@@ -694,11 +697,12 @@ export default function TransactionsSection() {
       const newType = newMeta.type;
       const supabase = createClient();
       await updateTransaction(supabase, id, { category: newCategory, transaction_type: newType });
+      toast("Transaction reclassified");
       fetchTransactions();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to reclassify transaction:", e);
-      alert("Failed to reclassify transaction: " + msg);
+      toast("Failed to reclassify transaction: " + msg, "error");
     }
   }
 
@@ -706,12 +710,13 @@ export default function TransactionsSection() {
     try {
       const supabase = createClient();
       await updateTransaction(supabase, id, updates as any);
+      toast("Transaction updated");
       await fetchTransactions();
       setSelectedTx(prev => prev?.id === id ? { ...prev, ...updates } as Transaction : prev);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update transaction:", e);
-      alert("Failed to update transaction: " + msg);
+      toast("Failed to update transaction: " + msg, "error");
     }
   }
 
@@ -719,12 +724,13 @@ export default function TransactionsSection() {
     try {
       const supabase = createClient();
       await updateTransaction(supabase, id, { is_ignored: ignore });
+      toast("Transaction updated");
       await fetchTransactions();
       setSelectedTx(prev => prev?.id === id ? { ...prev, is_ignored: ignore } : prev);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update transaction:", e);
-      alert("Failed to update transaction: " + msg);
+      toast("Failed to update transaction: " + msg, "error");
     }
   }
 
@@ -738,11 +744,12 @@ export default function TransactionsSection() {
         { ...b, amount: parseFloat(b.amount) || 0 },
       );
       setSelectedTx(null);
+      toast("Transaction split");
       fetchTransactions();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to split transaction:", e);
-      alert("Failed to split transaction: " + msg);
+      toast("Failed to split transaction: " + msg, "error");
     }
   }
 

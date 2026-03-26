@@ -8,6 +8,7 @@ import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import { createCreditCard, updateCreditCard, deleteCreditCard } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
+import { useToast } from "./Toast";
 
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
 
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export default function CreditCardsSection({ cards, totalDebt, totalPointsValue, onRefresh }: Props) {
+  const { toast } = useToast();
   const [adding, setAdding] = useState(false);
   const [addForm, setAddForm] = useState({
     name: "", balance_owed: "", credit_limit: "", points_balance: "",
@@ -101,11 +103,12 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
       });
       setAddForm({ name: "", balance_owed: "", credit_limit: "", points_balance: "", points_value_cents: "1", due_date: "", min_payment: "" });
       setAdding(false);
+      toast("Credit card added");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add credit card:", e);
-      alert("Failed to add credit card: " + msg);
+      toast("Failed to add credit card: " + msg, "error");
     }
   }
 
@@ -122,11 +125,12 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
         min_payment: parseFloat(editForm.min_payment) || 0,
       } as any);
       setEditingId(null);
+      toast("Credit card updated");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update credit card:", e);
-      alert("Failed to update credit card: " + msg);
+      toast("Failed to update credit card: " + msg, "error");
     }
   }
 
@@ -135,11 +139,12 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
     try {
       const supabase = createClient();
       await deleteCreditCard(supabase, id);
+      toast("Credit card deleted");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete credit card:", e);
-      alert("Failed to delete credit card: " + msg);
+      toast("Failed to delete credit card: " + msg, "error");
     }
   }
 

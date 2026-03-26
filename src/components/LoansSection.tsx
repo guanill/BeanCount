@@ -10,6 +10,7 @@ import { Loan } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import { getLoans, createLoan, updateLoan, deleteLoan } from "@/lib/supabase/queries";
+import { useToast } from "./Toast";
 
 // ─── Loan type metadata ────────────────────────────────────────────────────────
 const LOAN_TYPES = [
@@ -375,6 +376,7 @@ function ExtraPaymentSim({
 
 // ─── Single Loan Card ─────────────────────────────────────────────────────────
 function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
+  const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing]   = useState(false);
   const [editForm, setEditForm] = useState<LoanFormValues>(EMPTY_FORM);
@@ -433,11 +435,12 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
         deferral_type: editForm.deferral_type as "subsidized" | "unsubsidized",
       } as any);
       setEditing(false);
+      toast("Loan updated");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update loan:", e);
-      alert("Failed to update loan: " + msg);
+      toast("Failed to update loan: " + msg, "error");
     }
   }
 
@@ -446,11 +449,12 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
     try {
       const supabase = createClient();
       await deleteLoan(supabase, loan.id);
+      toast("Loan deleted");
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete loan:", e);
-      alert("Failed to delete loan: " + msg);
+      toast("Failed to delete loan: " + msg, "error");
     }
   }
 
@@ -726,6 +730,7 @@ function sortLoans(loans: Loan[], key: SortKey): Loan[] {
 
 // ─── Main section ──────────────────────────────────────────────────────────────
 export default function LoansSection() {
+  const { toast } = useToast();
   const [loans,   setLoans]   = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding,  setAdding]  = useState(false);
@@ -761,11 +766,12 @@ export default function LoansSection() {
       });
       setAddForm(EMPTY_FORM);
       setAdding(false);
+      toast("Loan added");
       fetchLoans();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add loan:", e);
-      alert("Failed to add loan: " + msg);
+      toast("Failed to add loan: " + msg, "error");
     }
   }
 
