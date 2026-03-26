@@ -113,7 +113,11 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
   }
 
   async function saveNew() {
-    if (!addValues.name.trim()) return;
+    console.log("[saveNew] called, type:", type, "name:", addValues.name, "balance:", addValues.balance);
+    if (!addValues.name.trim()) {
+      alert("Please enter an account name.");
+      return;
+    }
     try {
       const supabase = createClient();
       await createAccount(supabase, {
@@ -121,7 +125,6 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
         type,
         balance: parseFloat(addValues.balance) || 0,
       });
-
       setAddValues({ name: "", balance: "" });
       setAdding(false);
       onRefresh();
