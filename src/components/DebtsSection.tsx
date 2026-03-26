@@ -37,8 +37,9 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
       setAdding(false);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to add debt:", e);
-      alert("Failed to add debt. Please try again.");
+      alert("Failed to add debt: " + msg);
     }
   }
 
@@ -54,8 +55,9 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
       setEditingId(null);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update debt:", e);
-      alert("Failed to update debt. Please try again.");
+      alert("Failed to update debt: " + msg);
     }
   }
 
@@ -66,8 +68,9 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
       await deleteDebt(supabase, id);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete debt:", e);
-      alert("Failed to delete debt. Please try again.");
+      alert("Failed to delete debt: " + msg);
     }
   }
 
@@ -77,8 +80,9 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
       await updateDebt(supabase, id, { status: "paid" } as any);
       onRefresh();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to mark as paid:", e);
-      alert("Failed to mark as paid. Please try again.");
+      alert("Failed to mark as paid: " + msg);
     }
   }
 
