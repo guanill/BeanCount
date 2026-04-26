@@ -234,6 +234,53 @@ function isLoanPayoffMonth(override: string | undefined, year: number, month: nu
 }
 
 /**
+ * Walks the loan forward from "now" with normal monthly payments and returns the (year, month)
+ * of the FINAL payment — i.e. the month the loan is fully paid off. Returns null if the loan
+ * doesn't naturally amortize (no payment / no balance / minimum payment can't cover interest).
+ */
+function loanNaturalPayoffMonth(
+  loan: { balance: number; interest_rate: number; monthly_payment: number; deferral_months: number | null; deferral_type?: string | null; created_at: string | null },
+  now: Date = new Date(),
+): { year: number; month: number } | null {
+  if (loan.balance <= 0 || loan.monthly_payment <= 0) return null;
+  const r = (loan.interest_rate ?? 0) / 100 / 12;
+  const subsidized = (loan.deferral_type ?? "unsubsidized") === "subsidized";
+  const created = loan.created_at ? new Date(loan.created_at) : now;
+  const defMonths = loan.deferral_months ?? 0;
+  const firstPay = defMonths > 0 ? new Date(created.getFullYear(), created.getMonth() + defMonths, 1) : null;
+
+  let bal = loan.balance;
+  let y = now.getFullYear();
+  let m = now.getMonth() + 1;
+  let last: { year: number; month: number } | null = null;
+  for (let i = 0; i < 720; i++) { // 60-year safety
+    if (bal <= 0.005) break;
+    const stepDate = new Date(y, m - 1, 1);
+    const inDeferral = firstPay && stepDate < firstPay;
+    if (inDeferral) {
+      if (!subsidized && r > 0) bal += bal * r;
+    } else {
+      const interest = r > 0 ? bal * r : 0;
+      // Payment can't cover interest → loan never amortizes.
+      if (loan.monthly_payment <= interest && bal > 0) return null;
+      const payment = Math.min(loan.monthly_payment, bal + interest);
+      bal = Math.max(0, bal - (payment - interest));
+      last = { year: y, month: m };
+      if (bal <= 0.005) break;
+    }
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return last;
+}
+
+/** True if (y, m) is strictly after the loan's natural last-payment month. */
+function isAfterPayoff(end: { year: number; month: number } | null, year: number, month: number): boolean {
+  if (!end) return false;
+  return year * 12 + month > end.year * 12 + end.month;
+}
+
+/**
  * What does the loan's balance look like ENTERING the target (year, month), if we make normal
  * monthly payments from now until then? This is the lump-sum the user would owe to pay it off in
  * that month — interest and any in-progress deferral are baked in.
@@ -1210,12 +1257,21 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
   const payoffOverrides = useMemo(() => config.loanPayoffOverrides ?? {}, [config.loanPayoffOverrides]);
 
+  // Pre-compute each loan's natural payoff month so per-month projection lookups stay O(1).
+  // Without this, planner months past the loan's actual end would keep adding phantom payments.
+  const naturalPayoffEnd = useMemo(() => {
+    const out: Record<string, { year: number; month: number } | null> = {};
+    for (const l of loans) out[l.id] = loanNaturalPayoffMonth(l);
+    return out;
+  }, [loans]);
+
   const totalLoanPayments = useMemo(
     () => loans.reduce((s, l) => {
       if (isLoanPaidOffBy(payoffOverrides[l.id], CUR_YEAR, CUR_MONTH)) return s;
+      if (isAfterPayoff(naturalPayoffEnd[l.id], CUR_YEAR, CUR_MONTH)) return s;
       return s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH);
     }, 0),
-    [loans, payoffOverrides],
+    [loans, payoffOverrides, naturalPayoffEnd],
   );
 
   const getLoanPaymentsForMonth = useCallback(
@@ -1225,11 +1281,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         // Payoff month: pay the entire projected remaining balance instead of a normal payment.
         if (isLoanPayoffMonth(ov, y, m)) return s + projectLoanBalanceAt(l, y, m);
         if (isLoanPaidOffBy(ov, y, m)) return s;
+        if (isAfterPayoff(naturalPayoffEnd[l.id], y, m)) return s;
         if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) return s;
         return s + loanPaymentForMonth(l, y, m);
       }, 0);
     },
-    [loans, paidLoanIds, payoffOverrides],
+    [loans, paidLoanIds, payoffOverrides, naturalPayoffEnd],
   );
 
   const getLoanBreakdownForMonth = useCallback(
@@ -1243,13 +1300,14 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           continue;
         }
         if (isLoanPaidOffBy(ov, y, m)) continue;
+        if (isAfterPayoff(naturalPayoffEnd[l.id], y, m)) continue;
         if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) continue;
         const amt = loanPaymentForMonth(l, y, m);
         if (amt > 0) out.push({ id: l.id, name: l.name, amount: amt });
       }
       return out;
     },
-    [loans, paidLoanIds, payoffOverrides],
+    [loans, paidLoanIds, payoffOverrides, naturalPayoffEnd],
   );
 
   const totalRecurringCharges = useMemo(
@@ -2309,6 +2367,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 {activeLoans.map(loan => {
                   const paid = paidLoanIds.has(loan.id);
                   const override = payoffOverrides[loan.id];
+                  const naturalEnd = naturalPayoffEnd[loan.id];
                   return (
                     <div key={loan.id} className={`rounded-xl border transition-colors ${
                       paid
@@ -2319,7 +2378,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                         <div className={`w-2 h-2 rounded-full shrink-0 ${paid ? "bg-green" : "bg-accent/50"}`} />
                         <div className="flex-1 min-w-0">
                           <span className={`text-sm font-medium truncate block ${paid ? "text-foreground/40 line-through" : "text-foreground/80"}`}>{loan.name}</span>
-                          <span className="text-[10px] text-foreground/30 capitalize">{loan.type}</span>
+                          <span className="text-[10px] text-foreground/30 capitalize">
+                            {loan.type}
+                            {naturalEnd && (
+                              <span className="ml-1.5 text-foreground/40">· ends {MONTHS_SHORT[naturalEnd.month - 1]} {naturalEnd.year}</span>
+                            )}
+                          </span>
                         </div>
                         <span className={`text-xs font-semibold tabular-nums shrink-0 ${paid ? "text-foreground/30" : "text-red/70"}`}>
                           −{formatCurrency(loan.monthly_payment)}<span className="text-foreground/30 font-normal">/mo</span>
