@@ -17,13 +17,36 @@ import { createClient } from "@/lib/supabase/client";
 import { getDashboardData } from "@/lib/supabase/queries";
 
 type View = "overview" | "spending" | "planner" | "loans";
+const VIEWS: View[] = ["overview", "spending", "planner", "loans"];
+
+/** Read the active tab from the URL hash so a refresh keeps you where you were. */
+function readViewFromHash(): View {
+  if (typeof window === "undefined") return "overview";
+  const hash = window.location.hash.replace(/^#/, "") as View;
+  return VIEWS.includes(hash) ? hash : "overview";
+}
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(readViewFromHash);
   const [showSignOut, setShowSignOut] = useState(false);
+
+  // Sync view → URL hash, and respond to back/forward navigation.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash.replace(/^#/, "") !== view) {
+      const url = `${window.location.pathname}${window.location.search}#${view}`;
+      window.history.replaceState(null, "", url);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    const onHashChange = () => setView(readViewFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
