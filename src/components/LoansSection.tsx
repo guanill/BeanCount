@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Plus, Pencil, Trash2, TrendingDown,
   Zap, ChevronDown, ChevronUp,
@@ -103,6 +103,61 @@ function payoffDate(months: number): string {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth() + months);
   return `${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Calendar-month difference (b − a). Positive when b is later than a. */
+function monthsBetween(a: Date, b: Date): number {
+  return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+}
+
+/** Months of deferral still remaining vs. the loan's creation date. Never negative. */
+function deferralMonthsRemaining(loan: Loan, now: Date = new Date()): number {
+  const total = loan.deferral_months ?? 0;
+  if (total <= 0 || !loan.created_at) return total;
+  const elapsed = monthsBetween(new Date(loan.created_at), now);
+  return Math.max(0, total - Math.max(0, elapsed));
+}
+
+/** Date when deferral ends (first month a payment is due). */
+function deferralEndDate(loan: Loan): Date | null {
+  if (!loan.created_at || !loan.deferral_months) return null;
+  const c = new Date(loan.created_at);
+  return new Date(c.getFullYear(), c.getMonth() + loan.deferral_months, 1);
+}
+
+/**
+ * Auto-amortize a loan forward from its `updated_at` date by however many calendar months
+ * have elapsed. Returns the new balance + how many months were actually applied.
+ * - During deferral: no payment (subsidized = no interest, unsubsidized = interest accrues onto balance).
+ * - Post-deferral: standard interest + principal split using the loan's monthly_payment.
+ */
+function applyMonthlyAccrual(loan: Loan, now: Date = new Date()): { newBalance: number; monthsApplied: number } {
+  if (loan.balance <= 0 || !loan.updated_at) return { newBalance: loan.balance, monthsApplied: 0 };
+  const updated = new Date(loan.updated_at);
+  const monthsElapsed = monthsBetween(updated, now);
+  if (monthsElapsed <= 0) return { newBalance: loan.balance, monthsApplied: 0 };
+
+  const r = (loan.interest_rate ?? 0) / 100 / 12;
+  const subsidized = (loan.deferral_type ?? "unsubsidized") === "subsidized";
+  const firstPay = deferralEndDate(loan);
+
+  let bal = loan.balance;
+  let applied = 0;
+  for (let i = 0; i < monthsElapsed; i++) {
+    if (bal <= 0) break;
+    const stepDate = new Date(updated.getFullYear(), updated.getMonth() + i + 1, 1);
+    const inDeferral = firstPay && stepDate < firstPay;
+    if (inDeferral) {
+      if (!subsidized && r > 0) bal += bal * r;
+    } else {
+      const interest = r > 0 ? bal * r : 0;
+      const payment = Math.min(loan.monthly_payment, bal + interest);
+      const principal = payment - interest;
+      bal = Math.max(0, bal - principal);
+    }
+    applied++;
+  }
+  return { newBalance: Math.round(bal * 100) / 100, monthsApplied: applied };
 }
 
 // ─── Sparkline chart for individual loan ──────────────────────────────────────
@@ -386,10 +441,13 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
   const colors         = getTypeColors(loan.type);
   const deferralMonths = loan.deferral_months ?? 0;
   const subsidized     = (loan.deferral_type ?? "unsubsidized") === "subsidized";
+  const deferralRemaining = useMemo(() => deferralMonthsRemaining(loan), [loan]);
 
+  // Build the schedule from "now" — i.e. only the deferral months still remaining count toward
+  // the projection, so the chart and payoff date both move forward as time passes.
   const baseRows = useMemo(
-    () => buildAmortSchedule(loan.balance, loan.interest_rate, loan.monthly_payment, 600, deferralMonths, subsidized),
-    [loan, deferralMonths, subsidized],
+    () => buildAmortSchedule(loan.balance, loan.interest_rate, loan.monthly_payment, 600, deferralRemaining, subsidized),
+    [loan, deferralRemaining, subsidized],
   );
 
   const lifetimeInterest = useMemo(() => totalInterest(baseRows), [baseRows]);
@@ -495,9 +553,14 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
                     {meta.label}
                   </span>
                   <span className="text-[10px] text-foreground/40 font-medium">{loan.interest_rate}% APR</span>
-                  {deferralMonths > 0 && (
+                  {deferralMonths > 0 && deferralRemaining > 0 && (
                     <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 text-[10px] font-bold border border-yellow-500/20">
-                      ⏸ {deferralMonths}mo
+                      ⏸ {deferralRemaining}mo left
+                    </span>
+                  )}
+                  {loan.original_amount && loan.original_amount > 0 && (
+                    <span className="text-[10px] text-foreground/35 font-medium">
+                      orig {formatCurrency(loan.original_amount)}
                     </span>
                   )}
                 </div>
@@ -737,13 +800,41 @@ export default function LoansSection() {
   const [addForm, setAddForm] = useState<LoanFormValues>(EMPTY_FORM);
   const [sortKey, setSortKey] = useState<SortKey>("balance");
 
+  const accruedRef = useRef(false);
+
   const fetchLoans = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
     const data = await getLoans(supabase);
+
+    // Auto-amortize forward: once per session, walk each loan from its updated_at to today
+    // and apply the resulting principal payments. This is what makes balances tick down
+    // automatically as months pass instead of staying frozen at whatever the user last entered.
+    if (!accruedRef.current && data.length > 0) {
+      accruedRef.current = true;
+      const updates = data
+        .map(l => ({ loan: l, ...applyMonthlyAccrual(l) }))
+        .filter(u => u.monthsApplied > 0 && Math.abs(u.newBalance - u.loan.balance) > 0.005);
+      if (updates.length > 0) {
+        await Promise.all(updates.map(u =>
+          updateLoan(supabase, u.loan.id, { balance: u.newBalance } as Partial<Loan>).catch(() => null),
+        ));
+        const totalMonths = updates.reduce((s, u) => s + u.monthsApplied, 0);
+        toast(`Auto-applied ${totalMonths} month${totalMonths !== 1 ? "s" : ""} of payments to ${updates.length} loan${updates.length !== 1 ? "s" : ""}`);
+        // Reflect new balances locally
+        const patched = data.map(l => {
+          const u = updates.find(x => x.loan.id === l.id);
+          return u ? { ...l, balance: u.newBalance } : l;
+        });
+        setLoans(patched);
+        setLoading(false);
+        return;
+      }
+    }
+
     setLoans(data);
     setLoading(false);
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchLoans().catch(console.error);

@@ -46,8 +46,10 @@ interface RecurringBonus {
   startYear: number;
   endYear: number | null; // null = ongoing
   amountType: BonusAmountType;
-  amountMin: number;      // $ or % depending on amountType
-  amountMax: number;
+  amount: number;         // $ or % depending on amountType
+  // Legacy (older data wrote min/max) — read-only fallback during normalization.
+  amountMin?: number;
+  amountMax?: number;
 }
 
 interface RecurringCharge {
@@ -82,6 +84,8 @@ interface PlannerConfig {
   recurringCharges: RecurringCharge[];
   scenarioEvents: ScenarioEvent[];
   events: PlannerEvent[];
+  /** Per-loan "pay off in month YYYY-MM" override — payments stop being projected at/after that month. */
+  loanPayoffOverrides?: Record<string, string>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -116,7 +120,25 @@ const DEFAULT_CONFIG: PlannerConfig = {
   recurringCharges: [],
   scenarioEvents: [],
   events: [],
+  loanPayoffOverrides: {},
 };
+
+/** Normalize legacy bonus shape (`amountMin/amountMax`) into the new single `amount` field. */
+function normalizeBonus(b: RecurringBonus): RecurringBonus {
+  if (typeof b.amount === "number" && !isNaN(b.amount)) return b;
+  const min = b.amountMin ?? 0;
+  const max = b.amountMax ?? min;
+  return { ...b, amount: (min + max) / 2 };
+}
+
+/** Apply legacy-data migrations to a loaded config so the UI can rely on the new shape. */
+function migrateConfig(c: PlannerConfig): PlannerConfig {
+  return {
+    ...c,
+    recurringBonuses: (c.recurringBonuses ?? []).map(normalizeBonus),
+    loanPayoffOverrides: c.loanPayoffOverrides ?? {},
+  };
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getSalaryForMonth(periods: SalaryPeriod[], year: number, month: number): number {
@@ -140,11 +162,15 @@ function getVestEvents(grants: VestingGrant[]): Array<{ year: number; month: num
   return out;
 }
 
-/** Returns the $ amount for a recurring bonus under a given scenario. */
-function getBonusAmount(b: RecurringBonus, salary: number, scenario: "low" | "mid" | "high"): number {
+/** Returns the $ amount for a recurring bonus. (Scenario param kept for legacy min/max data.) */
+function getBonusAmount(b: RecurringBonus, salary: number, scenario: "low" | "mid" | "high" = "mid"): number {
   const toAmt = (v: number) => b.amountType === "pct_salary" ? salary * v / 100 : v;
-  const min = toAmt(b.amountMin), max = toAmt(b.amountMax);
-  return scenario === "low" ? min : scenario === "high" ? max : (min + max) / 2;
+  // Legacy data: amountMin/amountMax differ → respect scenario
+  if (typeof b.amount !== "number" && b.amountMin !== undefined && b.amountMax !== undefined) {
+    const min = toAmt(b.amountMin), max = toAmt(b.amountMax);
+    return scenario === "low" ? min : scenario === "high" ? max : (min + max) / 2;
+  }
+  return toAmt(b.amount ?? 0);
 }
 
 type FilingStatus = "single" | "mfj" | "mfs" | "hoh";
@@ -190,6 +216,14 @@ function loanPaymentForMonth(
   return (year > firstPayYear || (year === firstPayYear && month >= firstPayMonth))
     ? loan.monthly_payment
     : 0;
+}
+
+/** True if a payoff override is set and the (year, month) is at or after the override month. */
+function isLoanPaidOffBy(override: string | undefined, year: number, month: number): boolean {
+  if (!override) return false;
+  const [oy, om] = override.split("-").map(Number);
+  if (!oy || !om) return false;
+  return year * 12 + month >= oy * 12 + om;
 }
 
 function projectBalances(
@@ -304,7 +338,9 @@ function ProjectionChart({ config, loanPaymentsTotal = 0 }: { config: PlannerCon
   const dataLow  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal), [config, loanPaymentsTotal]);
   const dataHigh = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal), [config, loanPaymentsTotal]);
 
-  const hasRange = (config.recurringBonuses ?? []).some(b => b.amountMin !== b.amountMax);
+  const hasRange = (config.recurringBonuses ?? []).some(b =>
+    b.amountMin !== undefined && b.amountMax !== undefined && b.amountMin !== b.amountMax,
+  );
 
   const allBals = [
     ...dataMid.map(d => d.balance),
@@ -513,7 +549,13 @@ function MonthCard({
           ))}
           {recurBonuses.map(b => {
             const toAmt = (v: number) => b.amountType === "pct_salary" ? salary * v / 100 : v;
-            const min = toAmt(b.amountMin), max = toAmt(b.amountMax);
+            const hasLegacyRange =
+              b.amount === undefined &&
+              b.amountMin !== undefined && b.amountMax !== undefined &&
+              b.amountMin !== b.amountMax;
+            const min = toAmt(b.amountMin ?? 0);
+            const max = toAmt(b.amountMax ?? 0);
+            const single = toAmt(b.amount ?? (min + max) / 2);
             return (
               <div key={b.id} className="flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 bg-pink-500/10">
                 <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 text-pink-400">
@@ -521,7 +563,7 @@ function MonthCard({
                   <span className="truncate font-medium">{b.label}</span>
                 </span>
                 <span className="font-semibold text-green shrink-0 tabular-nums">
-                  {min === max ? `+${formatCurrency(min)}` : `+${formatCurrency(min)}–${formatCurrency(max)}`}
+                  {hasLegacyRange ? `+${formatCurrency(min)}–${formatCurrency(max)}` : `+${formatCurrency(single)}`}
                 </span>
               </div>
             );
@@ -621,6 +663,160 @@ function Accordion({ title, icon, subtitle, defaultOpen = false, gradient = "", 
   );
 }
 
+// ─── Vesting Grant Form ────────────────────────────────────────────────────────
+function VestGrantFormBody({
+  value, onChange, offsetInput, setOffsetInput, onSave, onCancel, saveLabel,
+}: {
+  value: Omit<VestingGrant, "id">;
+  onChange: (v: Omit<VestingGrant, "id">) => void;
+  offsetInput: string;
+  setOffsetInput: (s: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saveLabel: string;
+}) {
+  const addOffset = () => {
+    const mo = parseInt(offsetInput);
+    if (mo > 0 && !value.vestOffsets.includes(mo)) {
+      onChange({ ...value, vestOffsets: [...value.vestOffsets, mo].sort((a, b) => a - b) });
+      setOffsetInput("");
+    }
+  };
+  const presets: number[][] = [[6,18,30,42],[6,18,30],[12,24,36],[6,12,18,24,30,36]];
+  return (
+    <div className="space-y-3 bg-background/60 border border-border/30 rounded-xl p-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Grant label</label>
+          <input value={value.label} onChange={e => onChange({ ...value, label: e.target.value })}
+            placeholder="e.g. Initial RSU Grant" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Total value ($)</label>
+          <input type="number" value={value.totalValue || ""} onChange={e => onChange({ ...value, totalValue: parseFloat(e.target.value) || 0 })}
+            placeholder="50000" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Award month</label>
+          <select value={value.hireMonth} onChange={e => onChange({ ...value, hireMonth: parseInt(e.target.value) })}
+            className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
+            {MONTHS_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Award year</label>
+          <input type="number" value={value.hireYear} onChange={e => onChange({ ...value, hireYear: parseInt(e.target.value) || CUR_YEAR })}
+            className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-full" />
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Vest schedule (months after award)</label>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-foreground/30">Presets:</span>
+          {presets.map((preset, pi) => (
+            <button key={pi} type="button" onClick={() => onChange({ ...value, vestOffsets: preset })}
+              className="text-xs px-2.5 py-1 rounded-lg border border-border/40 text-foreground/40 hover:border-indigo-400/40 hover:text-indigo transition-colors">
+              {preset.map(o => `+${o}mo`).join(", ")}
+            </button>
+          ))}
+          <button type="button" onClick={() => onChange({ ...value, vestOffsets: [] })}
+            className="text-xs px-2 py-1 rounded-lg border border-border/30 text-foreground/25 hover:border-red-400/40 hover:text-red transition-colors">Clear</button>
+        </div>
+        {value.vestOffsets.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap">
+            {[...value.vestOffsets].sort((a, b) => a - b).map((off, i) => (
+              <span key={i} className="flex items-center gap-1 bg-indigo/15 text-indigo text-xs px-2 py-0.5 rounded-lg">
+                +{off}mo
+                <button type="button" onClick={() => onChange({ ...value, vestOffsets: value.vestOffsets.filter(v => v !== off) })}
+                  className="hover:text-red transition-colors ml-0.5"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-1.5">
+          <input type="number" min={1} value={offsetInput} onChange={e => setOffsetInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addOffset(); } }}
+            placeholder="Custom month, e.g. 18" className="flex-1 bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+          <button type="button" onClick={addOffset}
+            className="px-3 py-1.5 bg-indigo/15 hover:bg-indigo/25 text-indigo text-xs rounded-lg transition-colors font-medium whitespace-nowrap">+ Add</button>
+        </div>
+        <p className="text-[10px] text-foreground/30">
+          {value.vestOffsets.length} vest{value.vestOffsets.length !== 1 ? "s" : ""} · {formatCurrency(value.totalValue / (value.vestOffsets.length || 1))} each
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <button type="button" onClick={onSave} className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo hover:bg-indigo-light text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
+          <Check className="w-3 h-3" /> {saveLabel}
+        </button>
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/50 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Recurring Bonus Form ──────────────────────────────────────────────────────
+function BonusFormBody({
+  value, onChange, onSave, onCancel, saveLabel,
+}: {
+  value: Omit<RecurringBonus, "id">;
+  onChange: (v: Omit<RecurringBonus, "id">) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saveLabel: string;
+}) {
+  return (
+    <div className="space-y-3 bg-background/60 border border-border/30 rounded-xl p-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Label</label>
+          <input value={value.label} onChange={e => onChange({ ...value, label: e.target.value })}
+            placeholder="e.g. Annual September Bonus" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Month paid</label>
+          <select value={value.month} onChange={e => onChange({ ...value, month: parseInt(e.target.value) })}
+            className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
+            {MONTHS_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Amount type</label>
+          <select value={value.amountType} onChange={e => onChange({ ...value, amountType: e.target.value as BonusAmountType })}
+            className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
+            <option value="pct_salary">% of Salary</option>
+            <option value="fixed">Fixed $</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Amount {value.amountType === "pct_salary" ? "(%)" : "($)"}</label>
+          <input type="number" value={value.amount ?? ""} onChange={e => onChange({ ...value, amount: parseFloat(e.target.value) || 0 })}
+            placeholder={value.amountType === "pct_salary" ? "10" : "5000"} className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Start year</label>
+          <input type="number" value={value.startYear} onChange={e => onChange({ ...value, startYear: parseInt(e.target.value) || CUR_YEAR })}
+            className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">End year (blank = forever)</label>
+          <input type="number" value={value.endYear ?? ""} onChange={e => onChange({ ...value, endYear: e.target.value ? parseInt(e.target.value) : null })}
+            placeholder="ongoing" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button type="button" onClick={onSave} className="flex items-center gap-1.5 px-4 py-1.5 bg-accent hover:bg-accent/90 text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
+          <Check className="w-3 h-3" /> {saveLabel}
+        </button>
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/40 hover:border-border/60 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth: number; stockTotal?: number }) {
   const [config,       setConfig]       = useState<PlannerConfig>(DEFAULT_CONFIG);
@@ -637,9 +833,14 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     label: "", totalValue: 0, hireYear: CUR_YEAR, hireMonth: CUR_MONTH, vestOffsets: [],
   });
   const [addingBonus,  setAddingBonus]  = useState(false);
+  const [editingBonusId, setEditingBonusId] = useState<string | null>(null);
   const [vestOffsetInput, setVestOffsetInput] = useState("");
+  const [editingVestId, setEditingVestId] = useState<string | null>(null);
+  const [editVestOffsetInput, setEditVestOffsetInput] = useState("");
+  const [editVest, setEditVest] = useState<VestingGrant | null>(null);
+  const [editBonus, setEditBonus] = useState<RecurringBonus | null>(null);
   const [newBonus,     setNewBonus]     = useState<Omit<RecurringBonus, "id">>({
-    label: "", month: 9, startYear: CUR_YEAR, endYear: null, amountType: "pct_salary", amountMin: 5, amountMax: 15,
+    label: "", month: 9, startYear: CUR_YEAR, endYear: null, amountType: "pct_salary", amount: 10,
   });
   const [addingCharge,     setAddingCharge]     = useState(false);
   const [newCharge,        setNewCharge]        = useState<Omit<RecurringCharge, "id">>({ label: "", amount: 0, category: "other" });
@@ -663,7 +864,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       setLoans(loansData ?? []);
       if (plannerRow) {
         const saved = plannerRow.config as unknown;
-        if (saved && typeof saved === "object") setConfig({ ...DEFAULT_CONFIG, ...(saved as PlannerConfig) });
+        if (saved && typeof saved === "object") setConfig(migrateConfig({ ...DEFAULT_CONFIG, ...(saved as PlannerConfig) }));
         if (plannerRow.paid_loan_month === THIS_MONTH_KEY && Array.isArray(plannerRow.paid_loan_ids)) {
           setPaidLoanIds(new Set(plannerRow.paid_loan_ids as string[]));
         }
@@ -680,7 +881,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           const lsConfig = localStorage.getItem("wp_planner");
           if (lsConfig) {
             const parsed = JSON.parse(lsConfig) as PlannerConfig;
-            setConfig({ ...DEFAULT_CONFIG, ...parsed });
+            setConfig(migrateConfig({ ...DEFAULT_CONFIG, ...parsed }));
             migrate.config = parsed;
           }
         } catch { /* ignore */ }
@@ -849,19 +1050,25 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     savePlanner({ config });
   }, [config, dbLoaded]);
 
+  const payoffOverrides = useMemo(() => config.loanPayoffOverrides ?? {}, [config.loanPayoffOverrides]);
+
   const totalLoanPayments = useMemo(
-    () => loans.reduce((s, l) => s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH), 0),
-    [loans],
+    () => loans.reduce((s, l) => {
+      if (isLoanPaidOffBy(payoffOverrides[l.id], CUR_YEAR, CUR_MONTH)) return s;
+      return s + loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH);
+    }, 0),
+    [loans, payoffOverrides],
   );
 
   const getLoanPaymentsForMonth = useCallback(
     (y: number, m: number) => {
-      const applicable = (y === CUR_YEAR && m === CUR_MONTH)
-        ? loans.filter(l => !paidLoanIds.has(l.id))
-        : loans;
-      return applicable.reduce((s, l) => s + loanPaymentForMonth(l, y, m), 0);
+      return loans.reduce((s, l) => {
+        if (isLoanPaidOffBy(payoffOverrides[l.id], y, m)) return s;
+        if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) return s;
+        return s + loanPaymentForMonth(l, y, m);
+      }, 0);
     },
-    [loans, paidLoanIds],
+    [loans, paidLoanIds, payoffOverrides],
   );
 
   const totalRecurringCharges = useMemo(
@@ -932,10 +1139,49 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   }
 
   function addRecurringBonus() {
-    if (!newBonus.label.trim() || newBonus.amountMax <= 0) return;
+    if (!newBonus.label.trim() || (newBonus.amount ?? 0) <= 0) return;
     setConfig(c => ({ ...c, recurringBonuses: [...(c.recurringBonuses ?? []), { ...newBonus, id: uid() }] }));
-    setNewBonus({ label: "", month: 9, startYear: CUR_YEAR, endYear: null, amountType: "pct_salary", amountMin: 5, amountMax: 15 });
+    setNewBonus({ label: "", month: 9, startYear: CUR_YEAR, endYear: null, amountType: "pct_salary", amount: 10 });
     setAddingBonus(false);
+  }
+
+  function saveEditedBonus() {
+    if (!editBonus || !editBonus.label.trim() || (editBonus.amount ?? 0) <= 0) return;
+    setConfig(c => ({
+      ...c,
+      recurringBonuses: (c.recurringBonuses ?? []).map(b => b.id === editBonus.id
+        // Drop legacy min/max so the displayed value stops splitting into a range
+        ? { id: editBonus.id, label: editBonus.label, month: editBonus.month, startYear: editBonus.startYear, endYear: editBonus.endYear, amountType: editBonus.amountType, amount: editBonus.amount }
+        : b),
+    }));
+    setEditingBonusId(null);
+    setEditBonus(null);
+  }
+
+  function startEditVest(g: VestingGrant) {
+    setEditVest({ ...g, vestOffsets: [...g.vestOffsets] });
+    setEditingVestId(g.id);
+    setEditVestOffsetInput("");
+    setAddingVest(false);
+  }
+
+  function saveEditedVest() {
+    if (!editVest || !editVest.label.trim() || !editVest.totalValue || !editVest.vestOffsets.length) return;
+    setConfig(c => ({
+      ...c,
+      vestingGrants: (c.vestingGrants ?? []).map(g => g.id === editVest.id ? editVest : g),
+    }));
+    setEditingVestId(null);
+    setEditVest(null);
+    setEditVestOffsetInput("");
+  }
+
+  function setLoanPayoffOverride(loanId: string, ymOrNull: string | null) {
+    setConfig(c => {
+      const next = { ...(c.loanPayoffOverrides ?? {}) };
+      if (ymOrNull) next[loanId] = ymOrNull; else delete next[loanId];
+      return { ...c, loanPayoffOverrides: next };
+    });
   }
 
   function addRecurringCharge() {
@@ -1071,7 +1317,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-indigo-light inline-block" /> vest</span>
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-pink-light inline-block" /> bonus</span>
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green inline-block" /> salary change</span>
-            {(effectiveConfig.recurringBonuses ?? []).some(b => b.amountMin !== b.amountMax) && (
+            {(effectiveConfig.recurringBonuses ?? []).some(b => b.amountMin !== undefined && b.amountMax !== undefined && b.amountMin !== b.amountMax) && (
               <span className="flex items-center gap-1.5"><span className="inline-block w-6 h-2 rounded bg-accent/20 border border-accent/30" /> range</span>
             )}
           </div>
@@ -1439,7 +1685,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           <div className="h-px flex-1 bg-border/30" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
         {/* Recurring Charges */}
         <Accordion
           title="Recurring Charges"
@@ -1707,6 +1953,21 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           )}
           <div className="space-y-1.5">
             {(config.vestingGrants ?? []).map(g => {
+              const isEditing = editingVestId === g.id;
+              if (isEditing && editVest) {
+                return (
+                  <VestGrantFormBody
+                    key={g.id}
+                    value={editVest}
+                    onChange={v => setEditVest({ ...(editVest as VestingGrant), ...v })}
+                    offsetInput={editVestOffsetInput}
+                    setOffsetInput={setEditVestOffsetInput}
+                    onSave={saveEditedVest}
+                    onCancel={() => { setEditingVestId(null); setEditVest(null); setEditVestOffsetInput(""); }}
+                    saveLabel="Save changes"
+                  />
+                );
+              }
               const vestDates = g.vestOffsets.map(off => {
                 const tot = (g.hireMonth - 1) + off;
                 return `${MONTHS_SHORT[(tot % 12)]} ${g.hireYear + Math.floor(tot / 12)}`;
@@ -1717,7 +1978,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium text-foreground">{g.label}</span>
-                      <span className="text-[11px] text-foreground/50">hired {MONTHS_SHORT[g.hireMonth-1]} {g.hireYear}</span>
+                      <span className="text-[11px] text-foreground/50">awarded {MONTHS_SHORT[g.hireMonth-1]} {g.hireYear}</span>
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {vestDates.map((d, i) => (
@@ -1729,8 +1990,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-indigo font-semibold text-sm tabular-nums">{formatCurrency(g.totalValue)}<span className="text-foreground/45 font-normal text-xs ml-0.5">total</span></span>
+                    <button onClick={() => startEditVest(g)}
+                      className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-accent transition-all" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
                     <button onClick={() => setConfig(c => ({ ...c, vestingGrants: (c.vestingGrants ?? []).filter(v => v.id !== g.id) }))}
-                      className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                      className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red transition-all" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </div>
               );
@@ -1738,77 +2001,17 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           </div>
 
           {addingVest ? (
-            <div className="space-y-3 bg-background/60 border border-border/30 rounded-xl p-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Grant label</label>
-                  <input autoFocus value={newVest.label} onChange={e => setNewVest(f => ({ ...f, label: e.target.value }))}
-                    placeholder="e.g. Initial RSU Grant" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Total value ($)</label>
-                  <input type="number" value={newVest.totalValue || ""} onChange={e => setNewVest(f => ({ ...f, totalValue: parseFloat(e.target.value) || 0 }))}
-                    placeholder="50000" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Hire month</label>
-                  <select value={newVest.hireMonth} onChange={e => setNewVest(f => ({ ...f, hireMonth: parseInt(e.target.value) }))}
-                    className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
-                    {MONTHS_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Hire year</label>
-                  <input type="number" value={newVest.hireYear} onChange={e => setNewVest(f => ({ ...f, hireYear: parseInt(e.target.value) || CUR_YEAR }))}
-                    className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-full" />
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Vest schedule (months after hire)</label>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] text-foreground/30">Presets:</span>
-                  {[[6,18,30],[12,24,36],[6,12,18,24,30,36]].map((preset, pi) => (
-                    <button key={pi} onClick={() => setNewVest(f => ({ ...f, vestOffsets: preset }))}
-                      className="text-xs px-2.5 py-1 rounded-lg border border-border/40 text-foreground/40 hover:border-indigo-400/40 hover:text-indigo transition-colors">
-                      {preset.map(o => `+${o}mo`).join(", ")}
-                    </button>
-                  ))}
-                  <button onClick={() => setNewVest(f => ({ ...f, vestOffsets: [] }))}
-                    className="text-xs px-2 py-1 rounded-lg border border-border/30 text-foreground/25 hover:border-red-400/40 hover:text-red transition-colors">Clear</button>
-                </div>
-                {newVest.vestOffsets.length > 0 && (
-                  <div className="flex gap-1.5 flex-wrap">
-                    {[...newVest.vestOffsets].sort((a, b) => a - b).map((off, i) => (
-                      <span key={i} className="flex items-center gap-1 bg-indigo/15 text-indigo text-xs px-2 py-0.5 rounded-lg">
-                        +{off}mo
-                        <button onClick={() => setNewVest(f => ({ ...f, vestOffsets: f.vestOffsets.filter(v => v !== off) }))}
-                          className="hover:text-red transition-colors ml-0.5"><X className="w-2.5 h-2.5" /></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex gap-1.5">
-                  <input type="number" min={1} value={vestOffsetInput} onChange={e => setVestOffsetInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") { const mo = parseInt(vestOffsetInput); if (mo > 0 && !newVest.vestOffsets.includes(mo)) { setNewVest(f => ({ ...f, vestOffsets: [...f.vestOffsets, mo].sort((a, b) => a - b) })); setVestOffsetInput(""); } } }}
-                    placeholder="Custom month, e.g. 18" className="flex-1 bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                  <button onClick={() => { const mo = parseInt(vestOffsetInput); if (mo > 0 && !newVest.vestOffsets.includes(mo)) { setNewVest(f => ({ ...f, vestOffsets: [...f.vestOffsets, mo].sort((a, b) => a - b) })); setVestOffsetInput(""); } }}
-                    className="px-3 py-1.5 bg-indigo/15 hover:bg-indigo/25 text-indigo text-xs rounded-lg transition-colors font-medium whitespace-nowrap">+ Add</button>
-                </div>
-                <p className="text-[10px] text-foreground/30">
-                  {newVest.vestOffsets.length} vest{newVest.vestOffsets.length !== 1 ? "s" : ""} · {formatCurrency(newVest.totalValue / (newVest.vestOffsets.length || 1))} each
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={addVestingGrant} className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo hover:bg-indigo-light text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
-                  <Check className="w-3 h-3" /> Save grant
-                </button>
-                <button onClick={() => { setAddingVest(false); setVestOffsetInput(""); }} className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/50 transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <VestGrantFormBody
+              value={newVest}
+              onChange={v => setNewVest(v)}
+              offsetInput={vestOffsetInput}
+              setOffsetInput={setVestOffsetInput}
+              onSave={addVestingGrant}
+              onCancel={() => { setAddingVest(false); setVestOffsetInput(""); }}
+              saveLabel="Save grant"
+            />
           ) : (
-            <button onClick={() => setAddingVest(true)}
+            <button onClick={() => { setAddingVest(true); setEditingVestId(null); setEditVest(null); }}
               className="flex items-center gap-1 text-xs text-accent-light hover:text-accent transition-colors w-fit">
               <Plus className="w-3 h-3" /> Add grant
             </button>
@@ -1823,82 +2026,58 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           gradient="from-pink/10 to-pink/5"
         >
           {(config.recurringBonuses ?? []).length === 0 && !addingBonus && (
-            <p className="text-xs text-foreground/40 text-center py-2">No recurring bonuses. Model your annual bonus or profit share range.</p>
+            <p className="text-xs text-foreground/40 text-center py-2">No recurring bonuses. Model your annual bonus or profit share.</p>
           )}
           <div className="space-y-1.5">
-            {(config.recurringBonuses ?? []).map(b => (
-              <div key={b.id} className="group flex items-center gap-3 rounded-xl px-4 py-3 bg-card border border-border/40 hover:border-border/70 transition-colors">
-                <div className="w-2.5 h-2.5 rounded-full bg-pink-light shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-foreground">{b.label}</span>
-                  <span className="text-[11px] text-foreground/50 ml-2">every {MONTHS_FULL[b.month-1]} · {b.startYear}{b.endYear ? `–${b.endYear}` : "+"}</span>
+            {(config.recurringBonuses ?? []).map(b => {
+              const isEditing = editingBonusId === b.id;
+              if (isEditing && editBonus) {
+                return (
+                  <BonusFormBody
+                    key={b.id}
+                    value={editBonus}
+                    onChange={v => setEditBonus({ ...(editBonus as RecurringBonus), ...v })}
+                    onSave={saveEditedBonus}
+                    onCancel={() => { setEditingBonusId(null); setEditBonus(null); }}
+                    saveLabel="Save changes"
+                  />
+                );
+              }
+              const hasLegacyRange =
+                b.amount === undefined &&
+                b.amountMin !== undefined && b.amountMax !== undefined &&
+                b.amountMin !== b.amountMax;
+              const single = b.amount ?? ((b.amountMin ?? 0) + (b.amountMax ?? 0)) / 2;
+              const display = b.amountType === "pct_salary"
+                ? hasLegacyRange ? `${b.amountMin}–${b.amountMax}% salary` : `${single}% salary`
+                : hasLegacyRange ? `${formatCurrency(b.amountMin ?? 0)}–${formatCurrency(b.amountMax ?? 0)}` : formatCurrency(single);
+              return (
+                <div key={b.id} className="group flex items-center gap-3 rounded-xl px-4 py-3 bg-card border border-border/40 hover:border-border/70 transition-colors">
+                  <div className="w-2.5 h-2.5 rounded-full bg-pink-light shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-medium text-foreground">{b.label}</span>
+                    <span className="text-[11px] text-foreground/50 ml-2">every {MONTHS_FULL[b.month-1]} · {b.startYear}{b.endYear ? `–${b.endYear}` : "+"}</span>
+                  </div>
+                  <span className="text-pink font-semibold text-sm shrink-0 tabular-nums">{display}</span>
+                  <button onClick={() => { setEditingBonusId(b.id); setEditBonus({ ...b, amount: b.amount ?? single }); setAddingBonus(false); }}
+                    className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-accent transition-all shrink-0" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setConfig(c => ({ ...c, recurringBonuses: (c.recurringBonuses ?? []).filter(rb => rb.id !== b.id) }))}
+                    className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red transition-all shrink-0" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
-                <span className="text-pink font-semibold text-sm shrink-0 tabular-nums">
-                  {b.amountType === "pct_salary"
-                    ? b.amountMin === b.amountMax ? `${b.amountMin}% salary` : `${b.amountMin}–${b.amountMax}% salary`
-                    : b.amountMin === b.amountMax ? formatCurrency(b.amountMin) : `${formatCurrency(b.amountMin)}–${formatCurrency(b.amountMax)}`}
-                </span>
-                <button onClick={() => setConfig(c => ({ ...c, recurringBonuses: (c.recurringBonuses ?? []).filter(rb => rb.id !== b.id) }))}
-                  className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red transition-all shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {addingBonus ? (
-            <div className="space-y-3 bg-background/60 border border-border/30 rounded-xl p-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Label</label>
-                  <input autoFocus value={newBonus.label} onChange={e => setNewBonus(f => ({ ...f, label: e.target.value }))}
-                    placeholder="e.g. Annual September Bonus" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Month paid</label>
-                  <select value={newBonus.month} onChange={e => setNewBonus(f => ({ ...f, month: parseInt(e.target.value) }))}
-                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
-                    {MONTHS_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Amount type</label>
-                  <select value={newBonus.amountType} onChange={e => setNewBonus(f => ({ ...f, amountType: e.target.value as BonusAmountType }))}
-                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
-                    <option value="pct_salary">% of Salary</option>
-                    <option value="fixed">Fixed $</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Min {newBonus.amountType === "pct_salary" ? "%" : "$"}</label>
-                  <input type="number" value={newBonus.amountMin} onChange={e => setNewBonus(f => ({ ...f, amountMin: parseFloat(e.target.value) || 0 }))}
-                    placeholder="5" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Max {newBonus.amountType === "pct_salary" ? "%" : "$"}</label>
-                  <input type="number" value={newBonus.amountMax} onChange={e => setNewBonus(f => ({ ...f, amountMax: parseFloat(e.target.value) || 0 }))}
-                    placeholder="15" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Start year</label>
-                  <input type="number" value={newBonus.startYear} onChange={e => setNewBonus(f => ({ ...f, startYear: parseInt(e.target.value) || CUR_YEAR }))}
-                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-foreground/40 uppercase tracking-wide">End year (blank = forever)</label>
-                  <input type="number" value={newBonus.endYear ?? ""} onChange={e => setNewBonus(f => ({ ...f, endYear: e.target.value ? parseInt(e.target.value) : null }))}
-                    placeholder="ongoing" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={addRecurringBonus} className="flex items-center gap-1.5 px-4 py-1.5 bg-accent hover:bg-accent/90 text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
-                  <Check className="w-3 h-3" /> Save bonus
-                </button>
-                <button onClick={() => setAddingBonus(false)} className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/40 hover:border-border/60 transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <BonusFormBody
+              value={newBonus}
+              onChange={v => setNewBonus(v)}
+              onSave={addRecurringBonus}
+              onCancel={() => setAddingBonus(false)}
+              saveLabel="Save bonus"
+            />
           ) : (
-            <button onClick={() => setAddingBonus(true)}
+            <button onClick={() => { setAddingBonus(true); setEditingBonusId(null); setEditBonus(null); }}
               className="flex items-center gap-1 text-xs text-accent-light hover:text-accent transition-colors w-fit">
               <Plus className="w-3 h-3" /> Add bonus
             </button>
@@ -1909,48 +2088,117 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         <Accordion
           title="Loan Payments"
           icon={<div className="p-2.5 bg-accent/15 rounded-xl"><Building className="w-4 h-4 text-accent" /></div>}
+          subtitle="— this month's loans · payoff overrides"
           gradient="from-accent/10 to-indigo/5"
         >
           {loans.length === 0 ? (
             <p className="text-sm text-foreground/40 py-2">No loans tracked yet. Add loans in the main dashboard.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {loans.map(loan => {
-                const paid = paidLoanIds.has(loan.id);
-                return (
-                  <div key={loan.id} className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
-                    paid
-                      ? "bg-green/5 border-green/20"
-                      : "bg-card border-border/40 hover:border-border/60"
-                  }`}>
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${paid ? "bg-green" : "bg-accent/50"}`} />
-                    <div className="flex-1 min-w-0">
-                      <span className={`text-sm font-medium truncate block ${paid ? "text-foreground/40 line-through" : "text-foreground/80"}`}>{loan.name}</span>
-                      <span className="text-[10px] text-foreground/30 capitalize">{loan.type}</span>
+          ) : (() => {
+            // Active = has a payment due this month (not deferred, not user-marked-paid-off via override).
+            const activeLoans = loans.filter(l => {
+              if (isLoanPaidOffBy(payoffOverrides[l.id], CUR_YEAR, CUR_MONTH)) return false;
+              return loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH) > 0;
+            });
+            const deferredCount = loans.length - activeLoans.length;
+            return (
+              <div className="space-y-1.5">
+                {activeLoans.length === 0 && (
+                  <p className="text-xs text-foreground/40 text-center py-2">No active loan payments this month.</p>
+                )}
+                {activeLoans.map(loan => {
+                  const paid = paidLoanIds.has(loan.id);
+                  const override = payoffOverrides[loan.id];
+                  return (
+                    <div key={loan.id} className={`rounded-xl border transition-colors ${
+                      paid
+                        ? "bg-green/5 border-green/20"
+                        : "bg-card border-border/40 hover:border-border/60"
+                    }`}>
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${paid ? "bg-green" : "bg-accent/50"}`} />
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm font-medium truncate block ${paid ? "text-foreground/40 line-through" : "text-foreground/80"}`}>{loan.name}</span>
+                          <span className="text-[10px] text-foreground/30 capitalize">{loan.type}</span>
+                        </div>
+                        <span className={`text-xs font-semibold tabular-nums shrink-0 ${paid ? "text-foreground/30" : "text-red/70"}`}>
+                          −{formatCurrency(loan.monthly_payment)}<span className="text-foreground/30 font-normal">/mo</span>
+                        </span>
+                        <button
+                          onClick={() => toggleLoanPaid(loan.id)}
+                          className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                            paid
+                              ? "bg-green/10 hover:bg-green/20 text-green"
+                              : "bg-card hover:bg-card-hover border border-border/40 text-foreground/40 hover:text-foreground"
+                          }`}
+                        >
+                          {paid ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
+                          {paid ? "Paid" : "Mark paid"}
+                        </button>
+                      </div>
+                      {/* Payoff simulator row */}
+                      <div className="flex items-center gap-2 px-4 pb-3 pt-1 flex-wrap">
+                        <span className="text-[10px] text-foreground/40 uppercase tracking-wider">Pay off in</span>
+                        <select value={override ? override.split("-")[1] : ""}
+                          onChange={e => {
+                            const m = e.target.value;
+                            if (!m) { setLoanPayoffOverride(loan.id, null); return; }
+                            const y = override ? override.split("-")[0] : String(CUR_YEAR);
+                            setLoanPayoffOverride(loan.id, `${y}-${m.padStart(2, "0")}`);
+                          }}
+                          className="bg-background border border-border/40 rounded-md px-1.5 py-0.5 text-[11px] text-foreground/80">
+                          <option value="">—</option>
+                          {MONTHS_FULL.map((m, i) => <option key={i} value={String(i + 1).padStart(2, "0")}>{m}</option>)}
+                        </select>
+                        <select value={override ? override.split("-")[0] : ""}
+                          disabled={!override}
+                          onChange={e => {
+                            const y = e.target.value;
+                            if (!override) return;
+                            const m = override.split("-")[1];
+                            setLoanPayoffOverride(loan.id, `${y}-${m}`);
+                          }}
+                          className="bg-background border border-border/40 rounded-md px-1.5 py-0.5 text-[11px] text-foreground/80 disabled:opacity-40">
+                          <option value="">year</option>
+                          {[CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3, CUR_YEAR + 4].map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                        {override && (
+                          <>
+                            <span className="text-[10px] text-accent/70 italic">→ payments stop after that month</span>
+                            <button onClick={() => setLoanPayoffOverride(loan.id, null)}
+                              className="text-[10px] text-foreground/40 hover:text-red transition-colors ml-auto">
+                              <X className="w-3 h-3 inline" /> clear
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <span className={`text-xs font-semibold tabular-nums shrink-0 ${paid ? "text-foreground/30" : "text-red/70"}`}>
-                      −{formatCurrency(loan.monthly_payment)}<span className="text-foreground/30 font-normal">/mo</span>
-                    </span>
-                    <button
-                      onClick={() => toggleLoanPaid(loan.id)}
-                      className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
-                        paid
-                          ? "bg-green/10 hover:bg-green/20 text-green"
-                          : "bg-card hover:bg-card-hover border border-border/40 text-foreground/40 hover:text-foreground"
-                      }`}
-                    >
-                      {paid ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
-                      {paid ? "Paid" : "Mark paid"}
-                    </button>
-                  </div>
-                );
-              })}
-              <div className="flex items-center justify-between px-4 py-2 border-t border-border/20 mt-2">
-                <span className="text-xs text-foreground/40">{paidLoanIds.size} of {loans.length} paid this month</span>
-                <span className="text-xs font-semibold text-accent">{formatCurrency(totalLoanPayments)}<span className="text-foreground/30 font-normal"> /mo total</span></span>
+                  );
+                })}
+                {/* Loans with override applied (already-paid-off in projection) */}
+                {loans.filter(l => isLoanPaidOffBy(payoffOverrides[l.id], CUR_YEAR, CUR_MONTH)).map(loan => {
+                  const override = payoffOverrides[loan.id];
+                  return (
+                    <div key={loan.id} className="flex items-center gap-3 rounded-xl px-4 py-2.5 border border-green/15 bg-green/5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-green/60 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium text-foreground/60 truncate block line-through">{loan.name}</span>
+                        <span className="text-[10px] text-green/60">paid off {override}</span>
+                      </div>
+                      <button onClick={() => setLoanPayoffOverride(loan.id, null)}
+                        className="text-[10px] text-foreground/40 hover:text-foreground transition-colors">undo</button>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center justify-between px-4 py-2 border-t border-border/20 mt-2">
+                  <span className="text-xs text-foreground/40">
+                    {paidLoanIds.size} of {activeLoans.length} paid this month
+                    {deferredCount > 0 && <span className="ml-2 text-yellow-400/60">· {deferredCount} deferred</span>}
+                  </span>
+                  <span className="text-xs font-semibold text-accent">{formatCurrency(totalLoanPayments)}<span className="text-foreground/30 font-normal"> /mo total</span></span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </Accordion>
 
         {/* ── Big Plans ── */}
