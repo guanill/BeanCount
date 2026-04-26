@@ -429,7 +429,7 @@ interface AddEventForm { label: string; amount: string; type: EventType; }
 const EMPTY_FORM: AddEventForm = { label: "", amount: "", type: "bonus" };
 
 function MonthCard({
-  year, month, salary, netSalary, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, scenarioEvents, balance, net, isPast, isToday,
+  year, month, salary, netSalary, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, scenarioEvents, balance, net, isPast, isToday,
   onAddEvent, onRemoveEvent,
 }: {
   year: number; month: number; salary: number; netSalary: number; monthlyExpenses: number;
@@ -437,6 +437,7 @@ function MonthCard({
   vestEvents: Array<{ label: string; amount: number }>;
   recurBonuses: RecurringBonus[];
   loanPaymentsTotal: number;
+  loanBreakdown: Array<{ id: string; name: string; amount: number }>;
   scenarioEvents: ScenarioEvent[];
   balance: number; net: number;
   isPast: boolean; isToday: boolean;
@@ -463,7 +464,7 @@ function MonthCard({
   const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0;
 
   return (
-    <div className={`relative rounded-2xl border flex flex-col transition-all overflow-hidden ${
+    <div className={`relative rounded-2xl border flex flex-col transition-all ${
       isToday   ? "border-accent/60 bg-accent/5 shadow-lg shadow-accent/10 ring-1 ring-accent/20"
       : isPast  ? "border-border/15 bg-card/15 opacity-50"
       : "border-border/40 bg-card hover:border-border/70 hover:shadow-md hover:shadow-black/20"
@@ -500,18 +501,52 @@ function MonthCard({
 
       {/* Income / Spending / Loans mini row */}
       <div className="grid grid-cols-3 border-t border-border/20 divide-x divide-border/20">
-        <div className="px-1.5 sm:px-3 py-1.5 sm:py-2">
+        {/* Income (with breakdown popover) */}
+        <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
           <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(netSalary)}</div>
+          {salary > 0 && (
+            <div className="invisible group-hover/inc:visible opacity-0 group-hover/inc:opacity-100 transition-opacity absolute z-30 left-1/2 -translate-x-1/2 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[170px] space-y-1 pointer-events-none">
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <span className="text-foreground/50">Gross salary</span>
+                <span className="text-foreground/80 font-semibold tabular-nums">+{formatCurrency(salary)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <span className="text-foreground/50">Tax withheld</span>
+                <span className="text-rose-400/80 font-semibold tabular-nums">−{formatCurrency(Math.max(0, salary - netSalary))}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[10px] border-t border-border/30 pt-1 mt-1">
+                <span className="text-foreground/70">Net take-home</span>
+                <span className="text-green font-bold tabular-nums">+{formatCurrency(netSalary)}</span>
+              </div>
+              <p className="text-[9px] text-foreground/30 italic pt-0.5">Bonuses & vests show as separate rows below</p>
+            </div>
+          )}
         </div>
+        {/* Spend */}
         <div className="px-1.5 sm:px-3 py-1.5 sm:py-2">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Spend</div>
           <div className="text-[9px] sm:text-xs font-semibold text-red/70 tabular-nums break-all leading-tight">−{formatCurrency(monthlyExpenses + scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0))}</div>
         </div>
+        {/* Loans (with per-loan breakdown popover) */}
         {loanPaymentsTotal > 0 ? (
-          <div className="px-1.5 sm:px-3 py-1.5 sm:py-2">
+          <div className="relative group/lo px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
             <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Loans</div>
             <div className="text-[9px] sm:text-xs font-semibold text-accent/70 tabular-nums break-all leading-tight">−{formatCurrency(loanPaymentsTotal)}</div>
+            {loanBreakdown.length > 0 && (
+              <div className="invisible group-hover/lo:visible opacity-0 group-hover/lo:opacity-100 transition-opacity absolute z-30 right-0 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[180px] space-y-1 pointer-events-none">
+                {loanBreakdown.map(l => (
+                  <div key={l.id} className="flex items-center justify-between gap-3 text-[10px]">
+                    <span className="text-foreground/60 truncate">{l.name}</span>
+                    <span className="text-accent/80 font-semibold tabular-nums shrink-0">−{formatCurrency(l.amount)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between gap-3 text-[10px] border-t border-border/30 pt-1 mt-1">
+                  <span className="text-foreground/70">Total</span>
+                  <span className="text-accent font-bold tabular-nums">−{formatCurrency(loanPaymentsTotal)}</span>
+                </div>
+              </div>
+            )}
           </div>
         ) : <div />}
       </div>
@@ -1146,6 +1181,20 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     [loans, paidLoanIds, payoffOverrides],
   );
 
+  const getLoanBreakdownForMonth = useCallback(
+    (y: number, m: number): Array<{ id: string; name: string; amount: number }> => {
+      const out: Array<{ id: string; name: string; amount: number }> = [];
+      for (const l of loans) {
+        if (isLoanPaidOffBy(payoffOverrides[l.id], y, m)) continue;
+        if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) continue;
+        const amt = loanPaymentForMonth(l, y, m);
+        if (amt > 0) out.push({ id: l.id, name: l.name, amount: amt });
+      }
+      return out;
+    },
+    [loans, paidLoanIds, payoffOverrides],
+  );
+
   const totalRecurringCharges = useMemo(
     () => (config.recurringCharges ?? []).reduce((s, c) => s + c.amount, 0),
     [config.recurringCharges],
@@ -1588,6 +1637,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 events={eventsM} vestEvents={vestEventsM} recurBonuses={recurBonusM}
                 scenarioEvents={scenarioEventsM}
                 loanPaymentsTotal={getLoanPaymentsForMonth(d.year, d.month)}
+                loanBreakdown={getLoanBreakdownForMonth(d.year, d.month)}
                 balance={d.balance} net={d.net}
                 isPast={isPast} isToday={isToday}
                 onAddEvent={addEvent} onRemoveEvent={removeEvent}
