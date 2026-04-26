@@ -228,20 +228,56 @@ const EMPTY_FORM: LoanFormValues = {
   deferral_months: "0", deferral_type: "unsubsidized",
 };
 
+/** Calendar-month diff (target − base), floored at 0. */
+function calMonthsBetween(base: Date, target: Date): number {
+  return Math.max(0, (target.getFullYear() - base.getFullYear()) * 12 + (target.getMonth() - base.getMonth()));
+}
+
+/** Convert a number of months and a base date into a YYYY-MM string. */
+function monthsToYm(months: number, base: Date): string {
+  if (!months || months <= 0) return "";
+  const t = new Date(base.getFullYear(), base.getMonth() + months, 1);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Convert a YYYY-MM string + base date into a months count. */
+function ymToMonths(ym: string, base: Date): number {
+  if (!ym) return 0;
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return 0;
+  return calMonthsBetween(base, new Date(y, m - 1, 1));
+}
+
 function LoanForm({
   value,
   onChange,
   onSubmit,
   onCancel,
   submitLabel = "Save",
+  baseDate,
 }: {
   value: LoanFormValues;
   onChange: (v: LoanFormValues) => void;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
   submitLabel?: string;
+  /** Anchor used to convert between "N months" and "until date". For an existing loan use created_at. */
+  baseDate?: Date;
 }) {
   const set = (k: keyof LoanFormValues, v: string) => onChange({ ...value, [k]: v });
+  const anchor = baseDate ?? new Date();
+  const [defMode, setDefMode] = useState<"months" | "date">("months");
+  const months = parseInt(value.deferral_months) || 0;
+  const ym = monthsToYm(months, anchor);
+  const [yStr, mStr] = ym ? ym.split("-") : ["", ""];
+  const yearOptions: number[] = (() => {
+    const start = anchor.getFullYear();
+    return [start, start + 1, start + 2, start + 3, start + 4, start + 5];
+  })();
+  const updateUntil = (newY: string, newM: string) => {
+    if (!newY || !newM) { set("deferral_months", "0"); return; }
+    set("deferral_months", String(ymToMonths(`${newY}-${newM}`, anchor)));
+  };
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
@@ -324,13 +360,43 @@ function LoanForm({
           <p className="text-[11px] font-semibold text-yellow-400/70 uppercase tracking-wider">Deferment</p>
           <span className="text-[10px] text-foreground/30">for student loans, forbearance, etc.</span>
         </div>
+        {/* Mode toggle: enter as a month count or as an end date */}
+        <div className="flex gap-1 text-[10px]">
+          {(["months", "date"] as const).map(m => (
+            <button key={m} type="button" onClick={() => setDefMode(m)}
+              className={"px-2 py-1 rounded-md font-semibold transition-colors " + (defMode === m
+                ? "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30"
+                : "bg-background border border-border/30 text-foreground/40 hover:text-foreground/70")}>
+              {m === "months" ? "By # months" : "Until a date"}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Deferred Months Remaining" helper="Enter 0 to disable">
-            <input type="number" min={0} max={60} value={value.deferral_months}
-              onChange={e => set("deferral_months", e.target.value)}
-              placeholder="0"
-              className={INPUT_CLS} />
-          </Field>
+          {defMode === "months" ? (
+            <Field label="Deferred Months Remaining" helper="Enter 0 to disable">
+              <input type="number" min={0} max={120} value={value.deferral_months}
+                onChange={e => set("deferral_months", e.target.value)}
+                placeholder="0"
+                className={INPUT_CLS} />
+            </Field>
+          ) : (
+            <Field label="Deferred Until" helper={months > 0 ? `${months} month${months !== 1 ? "s" : ""} from ${MONTHS_SHORT[anchor.getMonth()]} ${anchor.getFullYear()}` : "Pick the first payment month"}>
+              <div className="flex gap-2">
+                <select value={mStr} onChange={e => updateUntil(yStr || String(anchor.getFullYear()), e.target.value)}
+                  className={SELECT_CLS}>
+                  <option value="">—</option>
+                  {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m, i) => (
+                    <option key={i} value={String(i + 1).padStart(2, "0")}>{m}</option>
+                  ))}
+                </select>
+                <select value={yStr} onChange={e => updateUntil(e.target.value, mStr || "01")}
+                  className={SELECT_CLS}>
+                  <option value="">year</option>
+                  {yearOptions.map(y => <option key={y} value={String(y)}>{y}</option>)}
+                </select>
+              </div>
+            </Field>
+          )}
           <Field label="Interest During Deferment">
             <div className="flex gap-2">
               {(["subsidized", "unsubsidized"] as const).map(t => (
@@ -464,6 +530,13 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
     ? Math.max(0, totalInstallments - repaymentRows.length)
     : 0;
 
+  /**
+   * Elapsed calendar months between the loan's `created_at` (the deferral anchor) and now.
+   * Used to translate the form's "remaining months" input back to the stored
+   * "total months from creation" semantic.
+   */
+  const elapsedSinceCreation = loan.created_at ? monthsBetween(new Date(loan.created_at), new Date()) : 0;
+
   function startEdit() {
     setEditForm({
       name: loan.name, type: loan.type,
@@ -472,7 +545,8 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
       interest_rate: loan.interest_rate.toString(),
       monthly_payment: loan.monthly_payment.toString(),
       notes: loan.notes ?? "",
-      deferral_months: (loan.deferral_months ?? 0).toString(),
+      // Show what the user *currently sees* — months remaining — not the stored total-from-creation.
+      deferral_months: deferralMonthsRemaining(loan).toString(),
       deferral_type: (loan.deferral_type ?? "unsubsidized") as "subsidized" | "unsubsidized",
     });
     setEditing(true);
@@ -482,6 +556,9 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
     e.preventDefault();
     try {
       const supabase = createClient();
+      const remaining = parseInt(editForm.deferral_months) || 0;
+      // Re-anchor: form value is "from now", DB stores "from created_at", so add the elapsed months back.
+      const storedDeferralMonths = remaining > 0 ? remaining + Math.max(0, elapsedSinceCreation) : 0;
       await updateLoan(supabase, loan.id, {
         name: editForm.name, type: editForm.type,
         balance: parseFloat(editForm.balance) || 0,
@@ -489,7 +566,7 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
         interest_rate: parseFloat(editForm.interest_rate) || 0,
         monthly_payment: parseFloat(editForm.monthly_payment) || 0,
         notes: editForm.notes || null,
-        deferral_months: parseInt(editForm.deferral_months) || 0,
+        deferral_months: storedDeferralMonths,
         deferral_type: editForm.deferral_type as "subsidized" | "unsubsidized",
       } as any);
       setEditing(false);
