@@ -226,6 +226,49 @@ function isLoanPaidOffBy(override: string | undefined, year: number, month: numb
   return year * 12 + month >= oy * 12 + om;
 }
 
+/** True if (y, m) is exactly the payoff month set on this loan. */
+function isLoanPayoffMonth(override: string | undefined, year: number, month: number): boolean {
+  if (!override) return false;
+  const [oy, om] = override.split("-").map(Number);
+  return oy === year && om === month;
+}
+
+/**
+ * What does the loan's balance look like ENTERING the target (year, month), if we make normal
+ * monthly payments from now until then? This is the lump-sum the user would owe to pay it off in
+ * that month — interest and any in-progress deferral are baked in.
+ */
+function projectLoanBalanceAt(
+  loan: { balance: number; interest_rate: number; monthly_payment: number; deferral_months: number | null; deferral_type?: string | null; created_at: string | null },
+  targetYear: number,
+  targetMonth: number,
+  now: Date = new Date(),
+): number {
+  const monthsAhead = (targetYear - now.getFullYear()) * 12 + (targetMonth - 1 - now.getMonth());
+  if (monthsAhead <= 0 || loan.balance <= 0) return Math.max(0, loan.balance);
+
+  const r = (loan.interest_rate ?? 0) / 100 / 12;
+  const defMonths = loan.deferral_months ?? 0;
+  const subsidized = (loan.deferral_type ?? "unsubsidized") === "subsidized";
+  const created = loan.created_at ? new Date(loan.created_at) : now;
+  const firstPay = defMonths > 0 ? new Date(created.getFullYear(), created.getMonth() + defMonths, 1) : null;
+
+  let bal = loan.balance;
+  for (let i = 0; i < monthsAhead; i++) {
+    if (bal <= 0) break;
+    const step = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
+    const inDeferral = firstPay && step < firstPay;
+    if (inDeferral) {
+      if (!subsidized && r > 0) bal += bal * r;
+    } else {
+      const interest = r > 0 ? bal * r : 0;
+      const payment = Math.min(loan.monthly_payment, bal + interest);
+      bal = Math.max(0, bal - (payment - interest));
+    }
+  }
+  return Math.round(bal * 100) / 100;
+}
+
 function projectBalances(
   config: PlannerConfig,
   fromYear: number,
@@ -958,7 +1001,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [dismissedKeys,    setDismissedKeys]    = useState<Set<string>>(new Set());
   const [scanning,         setScanning]         = useState(false);
   const [scanned,          setScanned]          = useState(false);
-  const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string; deferral_months: number | null; created_at: string | null }>>([]);
+  const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string; balance: number; interest_rate: number; deferral_months: number | null; deferral_type: string | null; created_at: string | null }>>([]);
   const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(new Set());
   const [thisMonthTxKeys, setThisMonthTxKeys] = useState<Set<string>>(new Set());
 
@@ -968,7 +1011,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       const { createClient } = await import("@/lib/supabase/client");
       const sb = createClient();
       const [{ data: loansData }, { data: plannerRow }] = await Promise.all([
-        sb.from("loans").select("id, name, monthly_payment, type, deferral_months, created_at"),
+        sb.from("loans").select("id, name, monthly_payment, type, balance, interest_rate, deferral_months, deferral_type, created_at"),
         sb.from("planner_configs").select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status").maybeSingle(),
       ]);
       setLoans(loansData ?? []);
@@ -1173,7 +1216,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const getLoanPaymentsForMonth = useCallback(
     (y: number, m: number) => {
       return loans.reduce((s, l) => {
-        if (isLoanPaidOffBy(payoffOverrides[l.id], y, m)) return s;
+        const ov = payoffOverrides[l.id];
+        // Payoff month: pay the entire projected remaining balance instead of a normal payment.
+        if (isLoanPayoffMonth(ov, y, m)) return s + projectLoanBalanceAt(l, y, m);
+        if (isLoanPaidOffBy(ov, y, m)) return s;
         if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) return s;
         return s + loanPaymentForMonth(l, y, m);
       }, 0);
@@ -1185,7 +1231,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     (y: number, m: number): Array<{ id: string; name: string; amount: number }> => {
       const out: Array<{ id: string; name: string; amount: number }> = [];
       for (const l of loans) {
-        if (isLoanPaidOffBy(payoffOverrides[l.id], y, m)) continue;
+        const ov = payoffOverrides[l.id];
+        if (isLoanPayoffMonth(ov, y, m)) {
+          const remaining = projectLoanBalanceAt(l, y, m);
+          if (remaining > 0) out.push({ id: l.id, name: `${l.name} (payoff)`, amount: remaining });
+          continue;
+        }
+        if (isLoanPaidOffBy(ov, y, m)) continue;
         if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) continue;
         const amt = loanPaymentForMonth(l, y, m);
         if (amt > 0) out.push({ id: l.id, name: l.name, amount: amt });
@@ -2303,15 +2355,21 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                           <option value="">year</option>
                           {[CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3, CUR_YEAR + 4].map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
-                        {override && (
-                          <>
-                            <span className="text-[10px] text-accent/70 italic">→ payments stop after that month</span>
-                            <button onClick={() => setLoanPayoffOverride(loan.id, null)}
-                              className="text-[10px] text-foreground/40 hover:text-red transition-colors ml-auto">
-                              <X className="w-3 h-3 inline" /> clear
-                            </button>
-                          </>
-                        )}
+                        {override && (() => {
+                          const [oy, om] = override.split("-").map(Number);
+                          const payoff = projectLoanBalanceAt(loan, oy, om);
+                          return (
+                            <>
+                              <span className="text-[10px] text-accent/80 font-semibold tabular-nums">
+                                pays off ≈ {formatCurrency(payoff)}
+                              </span>
+                              <button onClick={() => setLoanPayoffOverride(loan.id, null)}
+                                className="text-[10px] text-foreground/40 hover:text-red transition-colors ml-auto">
+                                <X className="w-3 h-3 inline" /> clear
+                              </button>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   );
