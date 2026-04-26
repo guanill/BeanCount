@@ -198,7 +198,7 @@ function computeMonthlyNet(annualSalary: number, filingStatus: FilingStatus): nu
   return (annualSalary - federal - ss - medicare - waCares) / 12;
 }
 
-interface MonthData { year: number; month: number; balance: number; net: number; salary: number; }
+interface MonthData { year: number; month: number; balance: number; net: number; salary: number; netSalary: number; }
 
 // Returns the payment amount for a loan in a given calendar month, respecting deferral.
 function loanPaymentForMonth(
@@ -276,6 +276,7 @@ function projectBalances(
   numMonths: number,
   scenario: "low" | "mid" | "high" = "mid",
   loanPaymentsTotal: number | ((y: number, m: number) => number) = 0,
+  filingStatus: FilingStatus = "single",
 ): MonthData[] {
   let balance = config.startingBalance;
   const vestEvs = getVestEvents(config.vestingGrants ?? []);
@@ -284,6 +285,10 @@ function projectBalances(
     const m = ((fromMonth - 1 + i) % 12) + 1;
     const y = fromYear + Math.floor((fromMonth - 1 + i) / 12);
     const salary    = getSalaryForMonth(config.salaryPeriods, y, m);
+    // Use take-home (post-tax) salary so the projection matches what the per-month
+    // Income cell displays. Otherwise the chart silently overstates available cash by
+    // ~tax%, and the year totals would diverge from the sum of per-month values.
+    const netSalary = computeMonthlyNet(salary * 12, filingStatus);
     const evtSum    = config.events.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0);
     const vestSum   = vestEvs.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0);
     const bonusSum  = (config.recurringBonuses ?? [])
@@ -294,9 +299,9 @@ function projectBalances(
     const expenseTotal = (chargesTotal > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
-    const net = salary - expenseTotal - scenarioSum + evtSum + vestSum + bonusSum;
+    const net = netSalary - expenseTotal - scenarioSum + evtSum + vestSum + bonusSum;
     balance += net;
-    result.push({ year: y, month: m, balance, net, salary });
+    result.push({ year: y, month: m, balance, net, salary, netSalary });
   }
   return result;
 }
@@ -370,16 +375,16 @@ function detectRecurring(transactions: Array<{ name: string; merchant_name: stri
 }
 
 // ─── Projection Chart (SVG, 3 years) ─────────────────────────────────────────
-function ProjectionChart({ config, loanPaymentsTotal = 0 }: { config: PlannerConfig; loanPaymentsTotal?: number | ((y: number, m: number) => number) }) {
+function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single" }: { config: PlannerConfig; loanPaymentsTotal?: number | ((y: number, m: number) => number); filingStatus?: FilingStatus }) {
   const NUM = 36;
   const W = 900, H = 340;
   const PAD = { t: 24, r: 20, b: 40, l: 72 };
   const cW = W - PAD.l - PAD.r;
   const cH = H - PAD.t - PAD.b;
 
-  const dataMid  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "mid",  loanPaymentsTotal), [config, loanPaymentsTotal]);
-  const dataLow  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal), [config, loanPaymentsTotal]);
-  const dataHigh = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal), [config, loanPaymentsTotal]);
+  const dataMid  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "mid",  loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
+  const dataLow  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
+  const dataHigh = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
 
   const hasRange = (config.recurringBonuses ?? []).some(b =>
     b.amountMin !== undefined && b.amountMax !== undefined && b.amountMin !== b.amountMax,
@@ -1277,13 +1282,15 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     // already reflected in assetsTotal but projectBalances would subtract them
     // again unless we compensate here.
     const adjustedConfig = { ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust };
-    const all = projectBalances(adjustedConfig, CUR_YEAR, CUR_MONTH, totalMonths, "mid", getLoanPaymentsForMonth);
+    const all = projectBalances(adjustedConfig, CUR_YEAR, CUR_MONTH, totalMonths, "mid", getLoanPaymentsForMonth, taxFilingStatus);
     return all.filter(d => d.year === viewYear);
-  }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, paidAdjust]);
+  }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, paidAdjust, taxFilingStatus]);
 
   // ── summary stats for the viewed year
   const yearStats = useMemo(() => {
-    const income   = yearData.reduce((s, d) => s + Math.max(d.salary, 0), 0);
+    // Sum the post-tax salary, matching what the per-month Income cell shows. Using
+    // gross here would inflate the year total relative to what each month displays.
+    const income   = yearData.reduce((s, d) => s + Math.max(d.netSalary, 0), 0);
     const chargesTotal = (config.recurringCharges ?? []).reduce((s, c) => s + c.amount, 0);
     const monthlyExp = (chargesTotal > 0 ? chargesTotal : config.monthlyExpenses) + totalLoanPayments;
     const expenses = yearData.length * monthlyExp;
@@ -1498,7 +1505,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             )}
           </div>
         </div>
-        <ProjectionChart config={{ ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust }} loanPaymentsTotal={getLoanPaymentsForMonth} />
+        <ProjectionChart config={{ ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust }} loanPaymentsTotal={getLoanPaymentsForMonth} filingStatus={taxFilingStatus} />
       </div>
 
       {/* ── Config + Year Grid (2-col on lg) ── */}
@@ -1678,7 +1685,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             const scenarioEventsM = (config.scenarioEvents ?? []).filter(s => s.year === d.year && s.month === d.month);
             const isPast  = d.year < CUR_YEAR || (d.year === CUR_YEAR && d.month < CUR_MONTH);
             const isToday = d.year === CUR_YEAR && d.month === CUR_MONTH;
-            const netSalary = computeMonthlyNet(d.salary * 12, taxFilingStatus);
+            const netSalary = d.netSalary;
             return (
               <MonthCard
                 key={i}
