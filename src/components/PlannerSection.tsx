@@ -683,6 +683,32 @@ function VestGrantFormBody({
     }
   };
   const presets: number[][] = [[6,18,30,42],[6,18,30],[12,24,36],[6,12,18,24,30,36]];
+
+  // ── Schedule generator: turn "every Nmo for Y years (with cliff)" into a full offsets array.
+  // 1mo = monthly, 3mo = quarterly, 6mo = semi-annual, 12mo = annual.
+  const [genCadence, setGenCadence] = useState(3);
+  const [genYears, setGenYears] = useState(4);
+  const [genCliff, setGenCliff] = useState<string>("");
+
+  const generateSchedule = () => {
+    const total = genYears * 12;
+    const cad = Math.max(1, genCadence);
+    const cliff = genCliff === "" ? cad : Math.max(1, parseInt(genCliff) || cad);
+    const out: number[] = [];
+    for (let m = cliff; m <= total; m += cad) out.push(m);
+    if (out.length === 0) return;
+    onChange({ ...value, vestOffsets: out });
+  };
+
+  // For compact summary when there are many offsets
+  const offsetsSorted = [...value.vestOffsets].sort((a, b) => a - b);
+  const cadenceGuess = (() => {
+    if (offsetsSorted.length < 2) return null;
+    const diffs = offsetsSorted.slice(1).map((o, i) => o - offsetsSorted[i]);
+    const allEqual = diffs.every(d => d === diffs[0]);
+    return allEqual ? diffs[0] : null;
+  })();
+  const showAsChips = value.vestOffsets.length <= 8;
   return (
     <div className="space-y-3 bg-background/60 border border-border/30 rounded-xl p-4">
       <div className="grid grid-cols-2 gap-3">
@@ -711,6 +737,38 @@ function VestGrantFormBody({
       </div>
       <div className="flex flex-col gap-2">
         <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Vest schedule (months after award)</label>
+
+        {/* Generator: "every Nmo for Y years" — for things like quarterly refreshers */}
+        <div className="flex items-end gap-2 flex-wrap bg-card/40 border border-border/30 rounded-lg p-2.5">
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] text-foreground/40 uppercase tracking-wide">Vest every</label>
+            <select value={genCadence} onChange={e => setGenCadence(parseInt(e.target.value))}
+              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground">
+              <option value={1}>Monthly</option>
+              <option value={3}>Quarterly</option>
+              <option value={6}>Semi-annually</option>
+              <option value={12}>Annually</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] text-foreground/40 uppercase tracking-wide">For</label>
+            <select value={genYears} onChange={e => setGenYears(parseInt(e.target.value))}
+              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground">
+              {[1,2,3,4,5,6,7,8,10].map(y => <option key={y} value={y}>{y} year{y > 1 ? "s" : ""}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] text-foreground/40 uppercase tracking-wide">First vest @ month</label>
+            <input type="number" min={1} value={genCliff} onChange={e => setGenCliff(e.target.value)}
+              placeholder={String(genCadence)}
+              className="bg-card border border-border/50 rounded-md px-2 py-1 text-xs text-foreground w-20 placeholder-foreground/25" />
+          </div>
+          <button type="button" onClick={generateSchedule}
+            className="ml-auto px-3 py-1.5 bg-indigo/15 hover:bg-indigo/25 text-indigo text-xs rounded-lg transition-colors font-medium whitespace-nowrap">
+            Generate
+          </button>
+        </div>
+
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-foreground/30">Presets:</span>
           {presets.map((preset, pi) => (
@@ -722,15 +780,32 @@ function VestGrantFormBody({
           <button type="button" onClick={() => onChange({ ...value, vestOffsets: [] })}
             className="text-xs px-2 py-1 rounded-lg border border-border/30 text-foreground/25 hover:border-red-400/40 hover:text-red transition-colors">Clear</button>
         </div>
-        {value.vestOffsets.length > 0 && (
+        {value.vestOffsets.length > 0 && showAsChips && (
           <div className="flex gap-1.5 flex-wrap">
-            {[...value.vestOffsets].sort((a, b) => a - b).map((off, i) => (
+            {offsetsSorted.map((off, i) => (
               <span key={i} className="flex items-center gap-1 bg-indigo/15 text-indigo text-xs px-2 py-0.5 rounded-lg">
                 +{off}mo
                 <button type="button" onClick={() => onChange({ ...value, vestOffsets: value.vestOffsets.filter(v => v !== off) })}
                   className="hover:text-red transition-colors ml-0.5"><X className="w-2.5 h-2.5" /></button>
               </span>
             ))}
+          </div>
+        )}
+        {value.vestOffsets.length > 0 && !showAsChips && (
+          <div className="flex items-center gap-2 bg-indigo/10 border border-indigo/20 rounded-lg px-3 py-2 text-xs text-indigo">
+            <span className="font-semibold tabular-nums">{value.vestOffsets.length} vests</span>
+            <span className="text-foreground/50">·</span>
+            <span>+{offsetsSorted[0]}mo to +{offsetsSorted[offsetsSorted.length - 1]}mo</span>
+            {cadenceGuess && (
+              <>
+                <span className="text-foreground/50">·</span>
+                <span>every {cadenceGuess}mo</span>
+              </>
+            )}
+            <button type="button" onClick={() => onChange({ ...value, vestOffsets: [] })}
+              className="ml-auto text-foreground/40 hover:text-red transition-colors">
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
         <div className="flex gap-1.5">
@@ -1968,10 +2043,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   />
                 );
               }
-              const vestDates = g.vestOffsets.map(off => {
+              const sortedOffsets = [...g.vestOffsets].sort((a, b) => a - b);
+              const offsetToDate = (off: number) => {
                 const tot = (g.hireMonth - 1) + off;
                 return `${MONTHS_SHORT[(tot % 12)]} ${g.hireYear + Math.floor(tot / 12)}`;
-              });
+              };
+              const diffs = sortedOffsets.slice(1).map((o, i) => o - sortedOffsets[i]);
+              const cadence = diffs.length > 0 && diffs.every(d => d === diffs[0]) ? diffs[0] : null;
+              const cadenceLabel = cadence ? ({ 1: "monthly", 3: "quarterly", 6: "semi-annual", 12: "annual" } as Record<number, string>)[cadence] ?? `every ${cadence}mo` : null;
+              const perVest = g.totalValue / (g.vestOffsets.length || 1);
+              const compact = g.vestOffsets.length > 8;
               return (
                 <div key={g.id} className="group flex items-start gap-3 rounded-xl px-4 py-3 bg-card border border-border/40 hover:border-border/70 transition-colors">
                   <div className="w-2.5 h-2.5 rounded-full bg-indigo-light shrink-0 mt-1" />
@@ -1980,13 +2061,24 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                       <span className="text-sm font-medium text-foreground">{g.label}</span>
                       <span className="text-[11px] text-foreground/50">awarded {MONTHS_SHORT[g.hireMonth-1]} {g.hireYear}</span>
                     </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {vestDates.map((d, i) => (
-                        <span key={i} className="bg-indigo/15 text-indigo-300 text-[10px] px-2 py-0.5 rounded-md font-medium">
-                          {formatCurrency(g.totalValue / g.vestOffsets.length)} · {d}
-                        </span>
-                      ))}
-                    </div>
+                    {compact ? (
+                      <div className="mt-1.5 text-[11px] text-indigo-300">
+                        <span className="font-semibold tabular-nums">{g.vestOffsets.length} vests</span>
+                        <span className="text-foreground/40"> · </span>
+                        <span>{formatCurrency(perVest)} each</span>
+                        {cadenceLabel && <><span className="text-foreground/40"> · </span><span>{cadenceLabel}</span></>}
+                        <span className="text-foreground/40"> · </span>
+                        <span>{offsetToDate(sortedOffsets[0])} → {offsetToDate(sortedOffsets[sortedOffsets.length - 1])}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {sortedOffsets.map((off, i) => (
+                          <span key={i} className="bg-indigo/15 text-indigo-300 text-[10px] px-2 py-0.5 rounded-md font-medium">
+                            {formatCurrency(perVest)} · {offsetToDate(off)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-indigo font-semibold text-sm tabular-nums">{formatCurrency(g.totalValue)}<span className="text-foreground/45 font-normal text-xs ml-0.5">total</span></span>
