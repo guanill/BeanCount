@@ -57,6 +57,10 @@ interface RecurringCharge {
   label: string;
   amount: number;   // monthly $, always positive
   category: "housing" | "food" | "transport" | "subscriptions" | "utilities" | "debt" | "other";
+  // Schedule (all optional — legacy charges without these are treated as always active).
+  startYear?: number;             // first year the charge applies
+  startMonth?: number;            // 1-12, first month the charge applies
+  durationMonths?: number | null; // how many months it runs from the start; null/undefined = ongoing
 }
 
 interface ScenarioLineItem {
@@ -171,6 +175,30 @@ function getBonusAmount(b: RecurringBonus, salary: number, scenario: "low" | "mi
     return scenario === "low" ? min : scenario === "high" ? max : (min + max) / 2;
   }
   return toAmt(b.amount ?? 0);
+}
+
+/** True if a recurring charge is active in the given calendar month. */
+function chargeActiveInMonth(c: RecurringCharge, year: number, month: number): boolean {
+  const ord = year * 12 + month;
+  const hasStart = !!(c.startYear && c.startMonth);
+  if (hasStart && ord < c.startYear! * 12 + c.startMonth!) return false;
+  if (hasStart && c.durationMonths && c.durationMonths > 0) {
+    const end = c.startYear! * 12 + c.startMonth! + c.durationMonths - 1;
+    if (ord > end) return false;
+  }
+  return true;
+}
+
+/** Sum of the recurring charges active in a given calendar month. */
+function chargesForMonth(charges: RecurringCharge[], year: number, month: number): number {
+  return charges.reduce((s, c) => s + (chargeActiveInMonth(c, year, month) ? c.amount : 0), 0);
+}
+
+/** Month the charge stops running (its last active month), or null if ongoing / unscheduled. */
+function chargeEndMonth(c: { startYear?: number; startMonth?: number; durationMonths?: number | null }): { year: number; month: number } | null {
+  if (!c.startYear || !c.startMonth || !c.durationMonths || c.durationMonths <= 0) return null;
+  const tot = (c.startMonth - 1) + c.durationMonths - 1;
+  return { year: c.startYear + Math.floor(tot / 12), month: (tot % 12) + 1 };
 }
 
 type FilingStatus = "single" | "mfj" | "mfs" | "hoh";
@@ -341,9 +369,12 @@ function projectBalances(
     const bonusSum  = (config.recurringBonuses ?? [])
       .filter(b => b.month === m && b.startYear <= y && (b.endYear === null || b.endYear >= y))
       .reduce((s, b) => s + getBonusAmount(b, salary, scenario), 0);
-    const chargesTotal = (config.recurringCharges ?? []).reduce((s, c) => s + c.amount, 0);
+    const charges = config.recurringCharges ?? [];
+    const chargesTotal = chargesForMonth(charges, y, m);
     const loanAmt = typeof loanPaymentsTotal === "function" ? loanPaymentsTotal(y, m) : loanPaymentsTotal;
-    const expenseTotal = (chargesTotal > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
+    // When charges are configured, an out-of-range month genuinely has $0 recurring spend;
+    // only fall back to the flat monthlyExpenses estimate when no charges exist at all.
+    const expenseTotal = (charges.length > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
     const net = netSalary - expenseTotal - scenarioSum + evtSum + vestSum + bonusSum;
@@ -793,6 +824,105 @@ function Accordion({ title, icon, subtitle, defaultOpen = false, gradient = "", 
   );
 }
 
+// ─── Recurring Charge Form ─────────────────────────────────────────────────────
+const CHARGE_DURATION_PRESETS = [3, 6, 12, 24];
+
+function ChargeFormBody({
+  value, onChange, onSave, onCancel, saveLabel,
+}: {
+  value: Omit<RecurringCharge, "id">;
+  onChange: (v: Omit<RecurringCharge, "id">) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saveLabel: string;
+}) {
+  const ongoing = value.durationMonths == null;
+  const end = chargeEndMonth(value);
+  const startLabel = value.startMonth && value.startYear ? `${MONTHS_SHORT[value.startMonth - 1]} ${value.startYear}` : "";
+  const endLabel = end ? `${MONTHS_SHORT[end.month - 1]} ${end.year}` : "";
+  return (
+    <div className="space-y-3 bg-background/60 border border-border/30 rounded-xl p-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Label</label>
+          <input autoFocus value={value.label} onChange={e => onChange({ ...value, label: e.target.value })}
+            onKeyDown={e => e.key === "Enter" && onSave()}
+            placeholder="e.g. Rent" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Amount / mo</label>
+          <input type="number" value={value.amount || ""} onChange={e => onChange({ ...value, amount: parseFloat(e.target.value) || 0 })}
+            onKeyDown={e => e.key === "Enter" && onSave()}
+            placeholder="0.00" className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/30" />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Starts</label>
+          <div className="flex gap-2">
+            <select value={value.startMonth ?? CUR_MONTH} onChange={e => onChange({ ...value, startMonth: parseInt(e.target.value) })}
+              className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground flex-1 min-w-0">
+              {MONTHS_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <input type="number" value={value.startYear ?? CUR_YEAR} onChange={e => onChange({ ...value, startYear: parseInt(e.target.value) || CUR_YEAR })}
+              className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-20 shrink-0" />
+          </div>
+        </div>
+      </div>
+
+      {/* Duration */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Duration</label>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex rounded-lg border border-border/50 overflow-hidden shrink-0">
+            <button type="button" onClick={() => onChange({ ...value, durationMonths: null })}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${ongoing ? "bg-accent text-white" : "text-foreground/50 hover:text-foreground hover:bg-card"}`}>
+              Ongoing
+            </button>
+            <button type="button" onClick={() => onChange({ ...value, durationMonths: value.durationMonths ?? 12 })}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border/50 ${!ongoing ? "bg-accent text-white" : "text-foreground/50 hover:text-foreground hover:bg-card"}`}>
+              Fixed
+            </button>
+          </div>
+          {!ongoing && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <input type="number" min={1} value={value.durationMonths ?? ""}
+                  onChange={e => onChange({ ...value, durationMonths: Math.max(1, parseInt(e.target.value) || 1) })}
+                  className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-16" />
+                <span className="text-xs text-foreground/50">months</span>
+              </div>
+              <div className="flex gap-1">
+                {CHARGE_DURATION_PRESETS.map(n => (
+                  <button key={n} type="button" onClick={() => onChange({ ...value, durationMonths: n })}
+                    className={`px-2 py-1 rounded-md text-[11px] border transition-colors ${value.durationMonths === n
+                      ? "border-accent/50 text-accent bg-accent/10"
+                      : "border-border/40 text-foreground/40 hover:text-foreground hover:border-border/60"}`}>
+                    {n}mo
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <span className="text-[10px] text-foreground/40">
+          {ongoing
+            ? startLabel ? `Runs from ${startLabel} indefinitely` : "Runs indefinitely"
+            : `Runs ${startLabel} → ${endLabel} (${value.durationMonths} mo)`}
+        </span>
+      </div>
+
+      <div className="flex gap-2">
+        <button onClick={onSave} className="flex items-center gap-1.5 px-4 py-1.5 bg-accent hover:bg-accent/90 text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
+          <Check className="w-3 h-3" /> {saveLabel}
+        </button>
+        <button onClick={onCancel}
+          className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/40 hover:border-border/60 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Vesting Grant Form ────────────────────────────────────────────────────────
 function VestGrantFormBody({
   value, onChange, offsetInput, setOffsetInput, onSave, onCancel, saveLabel,
@@ -1048,7 +1178,9 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     label: "", month: 9, startYear: CUR_YEAR, endYear: null, amountType: "pct_salary", amount: 10,
   });
   const [addingCharge,     setAddingCharge]     = useState(false);
-  const [newCharge,        setNewCharge]        = useState<Omit<RecurringCharge, "id">>({ label: "", amount: 0, category: "other" });
+  const [newCharge,        setNewCharge]        = useState<Omit<RecurringCharge, "id">>({ label: "", amount: 0, category: "other", startYear: CUR_YEAR, startMonth: CUR_MONTH, durationMonths: null });
+  const [editingChargeId,  setEditingChargeId]  = useState<string | null>(null);
+  const [chargeDraft,      setChargeDraft]      = useState<Omit<RecurringCharge, "id">>({ label: "", amount: 0, category: "other", startYear: CUR_YEAR, startMonth: CUR_MONTH, durationMonths: null });
   const [suggestions,      setSuggestions]      = useState<RecurringSuggestion[]>([]);
   const [dismissedKeys,    setDismissedKeys]    = useState<Set<string>>(new Set());
   const [scanning,         setScanning]         = useState(false);
@@ -1310,14 +1442,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     [loans, paidLoanIds, payoffOverrides, naturalPayoffEnd],
   );
 
+  // Charges actually active in the current month (respects each charge's start/duration).
   const totalRecurringCharges = useMemo(
-    () => (config.recurringCharges ?? []).reduce((s, c) => s + c.amount, 0),
+    () => chargesForMonth(config.recurringCharges ?? [], CUR_YEAR, CUR_MONTH),
     [config.recurringCharges],
   );
 
   const paidChargesTotal = useMemo(() => {
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return (config.recurringCharges ?? []).reduce((s, rc) => {
+      if (!chargeActiveInMonth(rc, CUR_YEAR, CUR_MONTH)) return s;
       const rcKey = norm(rc.label);
       const seen = [...thisMonthTxKeys].some(k => k.includes(rcKey) || rcKey.includes(k));
       return seen ? s + rc.amount : s;
@@ -1349,9 +1483,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     // Sum the post-tax salary, matching what the per-month Income cell shows. Using
     // gross here would inflate the year total relative to what each month displays.
     const income   = yearData.reduce((s, d) => s + Math.max(d.netSalary, 0), 0);
-    const chargesTotal = (config.recurringCharges ?? []).reduce((s, c) => s + c.amount, 0);
-    const monthlyExp = (chargesTotal > 0 ? chargesTotal : config.monthlyExpenses) + totalLoanPayments;
-    const expenses = yearData.length * monthlyExp;
+    const charges  = config.recurringCharges ?? [];
+    // Sum each viewed month's active charges individually so scheduled start/end dates are
+    // reflected, then add the year's loan payments.
+    const chargeExpenses = charges.length > 0
+      ? yearData.reduce((s, d) => s + chargesForMonth(charges, d.year, d.month), 0)
+      : yearData.length * config.monthlyExpenses;
+    const expenses = chargeExpenses + yearData.length * totalLoanPayments;
     const events   = config.events.filter(e => e.year === viewYear);
     const eventIncome  = events.filter(e => e.amount > 0).reduce((s, e) => s + e.amount, 0);
     const eventExpense = events.filter(e => e.amount < 0).reduce((s, e) => s + e.amount, 0);
@@ -1428,8 +1566,30 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   function addRecurringCharge() {
     if (!newCharge.label.trim() || newCharge.amount <= 0) return;
     setConfig(c => ({ ...c, recurringCharges: [...(c.recurringCharges ?? []), { ...newCharge, id: uid() }] }));
-    setNewCharge({ label: "", amount: 0, category: "other" });
+    setNewCharge({ label: "", amount: 0, category: "other", startYear: CUR_YEAR, startMonth: CUR_MONTH, durationMonths: null });
     setAddingCharge(false);
+  }
+
+  function startEditCharge(rc: RecurringCharge) {
+    setAddingCharge(false);
+    setEditingChargeId(rc.id);
+    setChargeDraft({
+      label: rc.label,
+      amount: rc.amount,
+      category: rc.category,
+      startYear: rc.startYear ?? CUR_YEAR,
+      startMonth: rc.startMonth ?? CUR_MONTH,
+      durationMonths: rc.durationMonths ?? null,
+    });
+  }
+
+  function saveChargeEdit() {
+    if (!editingChargeId || !chargeDraft.label.trim() || chargeDraft.amount <= 0) return;
+    setConfig(c => ({
+      ...c,
+      recurringCharges: (c.recurringCharges ?? []).map(x => x.id === editingChargeId ? { ...x, ...chargeDraft } : x),
+    }));
+    setEditingChargeId(null);
   }
 
   function addSalaryPeriod() {
@@ -1608,11 +1768,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-semibold text-foreground/60">Monthly Expenses</span>
-                  {totalRecurringCharges > 0 && (
+                  {(config.recurringCharges ?? []).length > 0 && (
                     <span className="text-[10px] text-foreground/30">{(config.recurringCharges ?? []).length} items</span>
                   )}
                 </div>
-                {totalRecurringCharges > 0 ? (
+                {(config.recurringCharges ?? []).length > 0 ? (
                   <div className="flex items-center gap-1.5">
                     <span className="text-lg font-bold text-red">{formatCurrency(totalRecurringCharges)}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red/10 text-red/60">/mo</span>
@@ -1744,13 +1904,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             const isPast  = d.year < CUR_YEAR || (d.year === CUR_YEAR && d.month < CUR_MONTH);
             const isToday = d.year === CUR_YEAR && d.month === CUR_MONTH;
             const netSalary = d.netSalary;
+            const monthCharges = (config.recurringCharges ?? []).length > 0
+              ? chargesForMonth(config.recurringCharges ?? [], d.year, d.month)
+              : config.monthlyExpenses;
             return (
               <MonthCard
                 key={i}
                 year={d.year} month={d.month}
                 salary={d.salary} netSalary={netSalary} monthlyExpenses={isToday
-                  ? Math.max(0, (totalRecurringCharges > 0 ? totalRecurringCharges : config.monthlyExpenses) - paidChargesTotal)
-                  : (totalRecurringCharges > 0 ? totalRecurringCharges : config.monthlyExpenses)}
+                  ? Math.max(0, monthCharges - paidChargesTotal)
+                  : monthCharges}
                 events={eventsM} vestEvents={vestEventsM} recurBonuses={recurBonusM}
                 scenarioEvents={scenarioEventsM}
                 loanPaymentsTotal={getLoanPaymentsForMonth(d.year, d.month)}
@@ -1940,21 +2103,57 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           {(config.recurringCharges ?? []).length > 0 && (
             <div className="space-y-1.5">
               {(config.recurringCharges ?? []).map(rc => {
+                if (editingChargeId === rc.id) {
+                  return (
+                    <ChargeFormBody
+                      key={rc.id}
+                      value={chargeDraft}
+                      onChange={setChargeDraft}
+                      onSave={saveChargeEdit}
+                      onCancel={() => setEditingChargeId(null)}
+                      saveLabel="Save changes"
+                    />
+                  );
+                }
                 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
                 const rcKey = norm(rc.label);
                 const seenThisMonth = [...thisMonthTxKeys].some(k => k.includes(rcKey) || rcKey.includes(k));
+                const activeNow = chargeActiveInMonth(rc, CUR_YEAR, CUR_MONTH);
+                const end = chargeEndMonth(rc);
+                const scheduled = !!(rc.startYear && rc.startMonth);
+                const upcoming = scheduled && CUR_YEAR * 12 + CUR_MONTH < rc.startYear! * 12 + rc.startMonth!;
+                const ended = !!end && CUR_YEAR * 12 + CUR_MONTH > end.year * 12 + end.month;
+                const scheduleLabel = !scheduled ? null
+                  : end
+                  ? `${MONTHS_SHORT[rc.startMonth! - 1]} ${rc.startYear} → ${MONTHS_SHORT[end.month - 1]} ${end.year}`
+                  : `from ${MONTHS_SHORT[rc.startMonth! - 1]} ${rc.startYear}`;
                 return (
                   <div key={rc.id} className={`group flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
-                    seenThisMonth ? "bg-green/5 border-green/20" : "bg-card border-border/40 hover:border-border/70"
+                    !activeNow ? "bg-card/40 border-border/20 opacity-60"
+                    : seenThisMonth ? "bg-green/5 border-green/20" : "bg-card border-border/40 hover:border-border/70"
                   }`}>
-                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${seenThisMonth ? "bg-green" : "bg-red-light"}`} />
-                    <div className="flex-1 min-w-0 text-sm text-foreground font-medium truncate">{rc.label}</div>
-                    {seenThisMonth && (
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${!activeNow ? "bg-foreground/20" : seenThisMonth ? "bg-green" : "bg-red-light"}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-foreground font-medium truncate">{rc.label}</div>
+                      {scheduleLabel && <div className="text-[10px] text-foreground/40 truncate">{scheduleLabel}</div>}
+                    </div>
+                    {upcoming && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent/70 font-semibold shrink-0">upcoming</span>
+                    )}
+                    {ended && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-foreground/10 text-foreground/40 font-semibold shrink-0">ended</span>
+                    )}
+                    {activeNow && seenThisMonth && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green/10 text-green/70 font-semibold shrink-0">paid</span>
                     )}
-                    <div className={`text-sm font-semibold shrink-0 tabular-nums ${seenThisMonth ? "text-foreground/40" : "text-red"}`}>
+                    <div className={`text-sm font-semibold shrink-0 tabular-nums ${!activeNow || seenThisMonth ? "text-foreground/40" : "text-red"}`}>
                       −{formatCurrency(rc.amount)}<span className="text-foreground/45 font-normal text-xs ml-0.5">/mo</span>
                     </div>
+                    <button
+                      onClick={() => startEditCharge(rc)}
+                      className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-foreground transition-all shrink-0">
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
                     <button
                       onClick={() => setConfig(c => ({ ...c, recurringCharges: (c.recurringCharges ?? []).filter(x => x.id !== rc.id) }))}
                       className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red transition-all shrink-0">
@@ -1964,7 +2163,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 );
               })}
               <div className="flex items-center justify-between px-4 py-2 mt-0.5 border-t border-border/20">
-                <span className="text-[11px] text-foreground/50 uppercase tracking-wider font-medium">Monthly total</span>
+                <span className="text-[11px] text-foreground/50 uppercase tracking-wider font-medium">This month&apos;s total</span>
                 <span className="font-bold text-red text-sm tabular-nums">−{formatCurrency(totalRecurringCharges)}</span>
               </div>
             </div>
@@ -1975,31 +2174,15 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
           {/* Add charge form */}
           {addingCharge ? (
-            <div className="flex flex-wrap items-end gap-3 bg-background/60 border border-border/30 rounded-xl p-4">
-              <div className="flex flex-col gap-1 flex-1 min-w-32">
-                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Label</label>
-                <input autoFocus value={newCharge.label} onChange={e => setNewCharge(f => ({ ...f, label: e.target.value }))}
-                  onKeyDown={e => e.key === "Enter" && addRecurringCharge()}
-                  placeholder="e.g. Rent" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Amount / mo</label>
-                <input type="number" value={newCharge.amount || ""} onChange={e => setNewCharge(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
-                  onKeyDown={e => e.key === "Enter" && addRecurringCharge()}
-                  placeholder="0.00" className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-28 placeholder-foreground/30" />
-              </div>
-              <div className="flex gap-2">
-                <button onClick={addRecurringCharge} className="flex items-center gap-1.5 px-4 py-1.5 bg-accent hover:bg-accent/90 text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
-                  <Check className="w-3 h-3" /> Save
-                </button>
-                <button onClick={() => { setAddingCharge(false); setNewCharge({ label: "", amount: 0, category: "other" }); }}
-                  className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/40 hover:border-border/60 transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <ChargeFormBody
+              value={newCharge}
+              onChange={setNewCharge}
+              onSave={addRecurringCharge}
+              onCancel={() => { setAddingCharge(false); setNewCharge({ label: "", amount: 0, category: "other", startYear: CUR_YEAR, startMonth: CUR_MONTH, durationMonths: null }); }}
+              saveLabel="Save"
+            />
           ) : (
-            <button onClick={() => setAddingCharge(true)}
+            <button onClick={() => { setEditingChargeId(null); setAddingCharge(true); }}
               className="flex items-center gap-1 text-xs text-accent-light hover:text-accent transition-colors w-fit">
               <Plus className="w-3 h-3" /> Add charge
             </button>
