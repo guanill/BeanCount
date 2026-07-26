@@ -7,6 +7,9 @@ import {
   Building, CheckCircle2, Circle, MapPin, Calculator,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import {
+  type FilingStatus, computeAnnualTax, computeMonthlyNet, netOfSupplemental, taxTableFor,
+} from "@/lib/tax";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type EventType = "bonus" | "tax" | "expense" | "income" | "investment" | "other";
@@ -221,32 +224,13 @@ function chargeEndMonth(c: { startYear?: number; startMonth?: number; durationMo
   return { year: c.startYear + Math.floor(tot / 12), month: (tot % 12) + 1 };
 }
 
-type FilingStatus = "single" | "mfj" | "mfs" | "hoh";
-
-/** Given an annual gross salary and filing status, returns the monthly after-tax take-home. */
-function computeMonthlyNet(annualSalary: number, filingStatus: FilingStatus): number {
-  if (!annualSalary || annualSalary <= 0) return 0;
-  type Bracket = [number, number, number];
-  const brackets: Record<string, Bracket[]> = {
-    single: [[0,11925,.10],[11925,48475,.12],[48475,103350,.22],[103350,197300,.24],[197300,250525,.32],[250525,626350,.35],[626350,Infinity,.37]],
-    mfj:    [[0,23850,.10],[23850,96950,.12],[96950,206700,.22],[206700,394600,.24],[394600,501050,.32],[501050,751600,.35],[751600,Infinity,.37]],
-    mfs:    [[0,11925,.10],[11925,48475,.12],[48475,103350,.22],[103350,197300,.24],[197300,250525,.32],[250525,375800,.35],[375800,Infinity,.37]],
-    hoh:    [[0,17000,.10],[17000,64850,.12],[64850,103350,.22],[103350,197300,.24],[197300,250500,.32],[250500,626350,.35],[626350,Infinity,.37]],
-  };
-  const stdDed: Record<string, number> = { single: 15000, mfj: 30000, mfs: 15000, hoh: 22500 };
-  const taxable = Math.max(0, annualSalary - stdDed[filingStatus]);
-  let federal = 0;
-  for (const [min, max, rate] of brackets[filingStatus]) {
-    if (taxable <= min) break;
-    federal += (Math.min(taxable, max) - min) * rate;
-  }
-  const ss       = Math.min(annualSalary, 176100) * 0.062;
-  const medicare = annualSalary * 0.0145 + Math.max(0, annualSalary - (filingStatus === "mfj" ? 250000 : 200000)) * 0.009;
-  const waCares  = annualSalary * 0.0058;
-  return (annualSalary - federal - ss - medicare - waCares) / 12;
+interface MonthData {
+  year: number; month: number; balance: number; net: number; salary: number; netSalary: number;
+  /** All cash in for the month: net salary + net bonuses/vests + positive one-time events. */
+  inflow: number;
+  /** All cash out: charges/expenses + loans + scenario spends + negative one-time events. */
+  outflow: number;
 }
-
-interface MonthData { year: number; month: number; balance: number; net: number; salary: number; netSalary: number; }
 
 // Returns the payment amount for a loan in a given calendar month, respecting deferral.
 function loanPaymentForMonth(
@@ -383,12 +367,14 @@ function projectBalances(
     // Use take-home (post-tax) salary so the projection matches what the per-month
     // Income cell displays. Otherwise the chart silently overstates available cash by
     // ~tax%, and the year totals would diverge from the sum of per-month values.
-    const netSalary = computeMonthlyNet(salary * 12, filingStatus);
-    const evtSum    = config.events.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0);
-    const vestSum   = vestEvs.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0);
-    const bonusSum  = (config.recurringBonuses ?? [])
+    const netSalary = computeMonthlyNet(salary * 12, filingStatus, y);
+    const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
+    const evtNeg    = config.events.filter(e => e.year === y && e.month === m && e.amount < 0).reduce((s, e) => s - e.amount, 0);
+    // Bonuses and vests are gross comp — count what lands after supplemental withholding.
+    const vestSum   = netOfSupplemental(vestEvs.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0));
+    const bonusSum  = netOfSupplemental((config.recurringBonuses ?? [])
       .filter(b => b.month === m && b.startYear <= y && (b.endYear === null || b.endYear >= y))
-      .reduce((s, b) => s + getBonusAmount(b, salary, scenario), 0);
+      .reduce((s, b) => s + getBonusAmount(b, salary, scenario), 0));
     const charges = config.recurringCharges ?? [];
     const chargesTotal = chargesForMonth(charges, y, m);
     const loanAmt = typeof loanPaymentsTotal === "function" ? loanPaymentsTotal(y, m) : loanPaymentsTotal;
@@ -397,9 +383,11 @@ function projectBalances(
     const expenseTotal = (charges.length > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
-    const net = netSalary - expenseTotal - scenarioSum + evtSum + vestSum + bonusSum;
+    const inflow  = netSalary + vestSum + bonusSum + evtPos;
+    const outflow = expenseTotal + scenarioSum + evtNeg;
+    const net = inflow - outflow;
     balance += net;
-    result.push({ year: y, month: m, balance, net, salary, netSalary });
+    result.push({ year: y, month: m, balance, net, salary, netSalary, inflow, outflow });
   }
   return result;
 }
@@ -480,13 +468,14 @@ function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single
   const cW = W - PAD.l - PAD.r;
   const cH = H - PAD.t - PAD.b;
 
-  const dataMid  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "mid",  loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
-  const dataLow  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
-  const dataHigh = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
-
+  // Low/high only differ for legacy min/max bonuses — skip two full projections otherwise.
   const hasRange = (config.recurringBonuses ?? []).some(b =>
     b.amountMin !== undefined && b.amountMax !== undefined && b.amountMin !== b.amountMax,
   );
+
+  const dataMid  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "mid",  loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
+  const dataLow  = useMemo(() => hasRange ? projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal, filingStatus) : dataMid, [config, loanPaymentsTotal, filingStatus, hasRange, dataMid]);
+  const dataHigh = useMemo(() => hasRange ? projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal, filingStatus) : dataMid, [config, loanPaymentsTotal, filingStatus, hasRange, dataMid]);
 
   const allBals = [
     ...dataMid.map(d => d.balance),
@@ -763,7 +752,9 @@ function MonthCard({
                 <span className="shrink-0 text-[11px] sm:text-[13px]">📊</span>
                 <span className="truncate font-medium">{ev.label}</span>
               </span>
-              <span className="font-semibold text-green shrink-0 tabular-nums">+{formatCurrency(ev.amount)}</span>
+              <span className="font-semibold text-green shrink-0 tabular-nums" title={`${formatCurrency(ev.amount)} gross − estimated withholding`}>
+                +{formatCurrency(netOfSupplemental(ev.amount))}<span className="text-foreground/35 font-normal text-[9px] ml-0.5">net</span>
+              </span>
             </div>
           ))}
           {recurBonuses.map(b => {
@@ -772,17 +763,18 @@ function MonthCard({
               b.amount === undefined &&
               b.amountMin !== undefined && b.amountMax !== undefined &&
               b.amountMin !== b.amountMax;
-            const min = toAmt(b.amountMin ?? 0);
-            const max = toAmt(b.amountMax ?? 0);
-            const single = toAmt(b.amount ?? (min + max) / 2);
+            const min = netOfSupplemental(toAmt(b.amountMin ?? 0));
+            const max = netOfSupplemental(toAmt(b.amountMax ?? 0));
+            const gross = toAmt(b.amount ?? ((b.amountMin ?? 0) + (b.amountMax ?? 0)) / 2);
+            const single = netOfSupplemental(gross);
             return (
               <div key={b.id} className="flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 bg-pink-500/10">
                 <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 text-pink-400">
                   <span className="shrink-0 text-[11px] sm:text-[13px]">🎯</span>
                   <span className="truncate font-medium">{b.label}</span>
                 </span>
-                <span className="font-semibold text-green shrink-0 tabular-nums">
-                  {hasLegacyRange ? `+${formatCurrency(min)}–${formatCurrency(max)}` : `+${formatCurrency(single)}`}
+                <span className="font-semibold text-green shrink-0 tabular-nums" title={`${formatCurrency(gross)} gross − estimated withholding`}>
+                  {hasLegacyRange ? `+${formatCurrency(min)}–${formatCurrency(max)}` : `+${formatCurrency(single)}`}<span className="text-foreground/35 font-normal text-[9px] ml-0.5">net</span>
                 </span>
               </div>
             );
@@ -1275,6 +1267,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [scanning,         setScanning]         = useState(false);
   const [scanned,          setScanned]          = useState(false);
   const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string; balance: number; interest_rate: number; deferral_months: number | null; deferral_type: string | null; created_at: string | null }>>([]);
+  const [loadFailed,       setLoadFailed]       = useState(false);
+  // Ref mirror so savePlanner (called from stale closures) can always see the flag.
+  const loadFailedRef = useRef(false);
+  function markLoadFailed() { loadFailedRef.current = true; setLoadFailed(true); }
   const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(new Set());
   const [thisMonthTxKeys, setThisMonthTxKeys] = useState<Set<string>>(new Set());
 
@@ -1283,12 +1279,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     (async () => {
       const { createClient } = await import("@/lib/supabase/client");
       const sb = createClient();
-      const [{ data: loansData }, { data: plannerRow }] = await Promise.all([
+      const [{ data: loansData }, { data: plannerRow, error: plannerError }] = await Promise.all([
         sb.from("loans").select("id, name, monthly_payment, type, balance, interest_rate, deferral_months, deferral_type, created_at"),
         sb.from("planner_configs").select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status").maybeSingle(),
       ]);
       setLoans(loansData ?? []);
-      if (plannerRow) {
+      if (plannerError) {
+        // A failed read must NOT be treated as "no saved config" — later saves would
+        // overwrite the real row with defaults. Disable saving for this session instead.
+        markLoadFailed();
+      } else if (plannerRow) {
         const saved = plannerRow.config as unknown;
         if (saved && typeof saved === "object") setConfig(migrateConfig({ ...DEFAULT_CONFIG, ...(saved as PlannerConfig) }));
         if (plannerRow.paid_loan_month === THIS_MONTH_KEY && Array.isArray(plannerRow.paid_loan_ids)) {
@@ -1338,7 +1338,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         }
       }
       setDbLoaded(true);
-    })().catch(() => setDbLoaded(true));
+    })().catch(() => { markLoadFailed(); setDbLoaded(true); });
   }, []);
 
   // Load this month's transactions on mount to auto-detect paid charges
@@ -1468,22 +1468,32 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     [config, netWorth],
   );
 
-  // Persist to Supabase (debounced)
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Persist to Supabase (debounced). Partials are merged into one pending payload so a
+  // config save scheduled right after e.g. a dismissed-suggestion save can't cancel it.
+  const saveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSaveRef = useRef<Record<string, unknown>>({});
   function savePlanner(partial: Record<string, unknown>) {
+    if (loadFailedRef.current) return; // never overwrite server state we failed to read
+    pendingSaveRef.current = { ...pendingSaveRef.current, ...partial };
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
+      const payload = pendingSaveRef.current;
+      pendingSaveRef.current = {};
       try {
         const { createClient } = await import("@/lib/supabase/client");
         const sb = createClient();
         const { upsertPlannerConfig } = await import("@/lib/supabase/queries");
-        await upsertPlannerConfig(sb, partial);
+        await upsertPlannerConfig(sb, payload);
       } catch { /* ignore */ }
     }, 500);
   }
 
+  // Skip the autosave that fires when dbLoaded flips — it would just re-upsert the
+  // config we loaded (or, before the load-error guard, clobber it with defaults).
+  const initialSaveSkipped = useRef(false);
   useEffect(() => {
     if (!dbLoaded) return;
+    if (!initialSaveSkipped.current) { initialSaveSkipped.current = true; return; }
     savePlanner({ config });
   }, [config, dbLoaded]);
 
@@ -1591,24 +1601,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     return all.filter(d => d.year === viewYear);
   }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, paidAdjust, taxFilingStatus]);
 
-  // ── summary stats for the viewed year
+  // ── summary stats for the viewed year, summed straight off the projection months so
+  // the chips always reconcile with the month cards (per-month loan amounts, bonuses,
+  // vests, scenario spends and one-time events included).
   const yearStats = useMemo(() => {
-    // Sum the post-tax salary, matching what the per-month Income cell shows. Using
-    // gross here would inflate the year total relative to what each month displays.
-    const income   = yearData.reduce((s, d) => s + Math.max(d.netSalary, 0), 0);
-    const charges  = config.recurringCharges ?? [];
-    // Sum each viewed month's active charges individually so scheduled start/end dates are
-    // reflected, then add the year's loan payments.
-    const chargeExpenses = charges.length > 0
-      ? yearData.reduce((s, d) => s + chargesForMonth(charges, d.year, d.month), 0)
-      : yearData.length * config.monthlyExpenses;
-    const expenses = chargeExpenses + yearData.length * totalLoanPayments;
-    const events   = config.events.filter(e => e.year === viewYear);
-    const eventIncome  = events.filter(e => e.amount > 0).reduce((s, e) => s + e.amount, 0);
-    const eventExpense = events.filter(e => e.amount < 0).reduce((s, e) => s + e.amount, 0);
-    const endBalance   = yearData[yearData.length - 1]?.balance ?? netWorth;
-    return { income, expenses, eventIncome, eventExpense, endBalance };
-  }, [yearData, config, viewYear, netWorth, totalLoanPayments]);
+    const income     = yearData.reduce((s, d) => s + d.inflow, 0);
+    const expenses   = yearData.reduce((s, d) => s + d.outflow, 0);
+    const netChange  = yearData.reduce((s, d) => s + d.net, 0);
+    const endBalance = yearData[yearData.length - 1]?.balance ?? netWorth;
+    return { income, expenses, netChange, endBalance };
+  }, [yearData, netWorth]);
 
   const allVestEvents = useMemo(
     () => getVestEvents(effectiveConfig.vestingGrants ?? []),
@@ -1728,9 +1730,6 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
   const yearsWithData = [CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3];
 
-  // Net change projected across viewed year
-  const yearNetChange = yearStats.endBalance - (yearData[0]?.balance ?? netWorth) + yearData[0]?.net;
-
   // ── Tax estimate ──
   const taxEstimate = useMemo(() => {
     let annualGross: number;
@@ -1751,6 +1750,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           annualBonuses += getBonusAmount(b, salary, "mid");
         }
       }
+      // RSU vests are ordinary income in the year they vest
+      for (const v of getVestEvents(config.vestingGrants ?? [])) {
+        if (v.year === viewYear) annualBonuses += v.amount;
+      }
       // Add one-time bonus/income events in viewYear
       // Exclude: tax-type events (tax returns) and any income labelled as loan income
       for (const e of config.events) {
@@ -1764,51 +1767,17 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       }
       annualGross = annualSalary + annualBonuses;
     }
-    if (!annualGross || annualGross <= 0) return null;
 
-    type Bracket = [number, number, number];
-    const brackets: Record<string, Bracket[]> = {
-      single: [[0,11925,.10],[11925,48475,.12],[48475,103350,.22],[103350,197300,.24],[197300,250525,.32],[250525,626350,.35],[626350,Infinity,.37]],
-      mfj:    [[0,23850,.10],[23850,96950,.12],[96950,206700,.22],[206700,394600,.24],[394600,501050,.32],[501050,751600,.35],[751600,Infinity,.37]],
-      mfs:    [[0,11925,.10],[11925,48475,.12],[48475,103350,.22],[103350,197300,.24],[197300,250525,.32],[250525,375800,.35],[375800,Infinity,.37]],
-      hoh:    [[0,17000,.10],[17000,64850,.12],[64850,103350,.22],[103350,197300,.24],[197300,250500,.32],[250500,626350,.35],[626350,Infinity,.37]],
-    };
-    const stdDed: Record<string, number> = { single: 15000, mfj: 30000, mfs: 15000, hoh: 22500 };
-    const taxable = Math.max(0, annualGross - stdDed[taxFilingStatus]);
-    let federal = 0;
-    const federalBrackets: { rate: number; from: number; to: number | null; taxed: number; tax: number }[] = [];
-    for (const [min, max, rate] of brackets[taxFilingStatus]) {
-      if (taxable <= min) break;
-      const taxed = Math.min(taxable, max) - min;
-      const tax   = taxed * rate;
-      federal += tax;
-      federalBrackets.push({ rate, from: min, to: max === Infinity ? null : max, taxed, tax });
-    }
-    const ssWageBase = 176100;
-    const ss = Math.min(annualGross, ssWageBase) * 0.062;
-    const medicareThreshold = taxFilingStatus === "mfj" ? 250000 : 200000;
-    const medicare = annualGross * 0.0145 + Math.max(0, annualGross - medicareThreshold) * 0.009;
-    const waCares = annualGross * 0.0058; // WA Cares Fund (LTC)
-    const total = federal + ss + medicare + waCares;
-    const marginal = [...brackets[taxFilingStatus]].reverse().find(([min]) => taxable > min)?.[2] ?? 0.10;
+    const breakdown = computeAnnualTax(annualGross || 0, taxFilingStatus, viewYear);
+    if (!breakdown) return null;
 
-    // Compute salary-only taxes for the "monthly take-home" hero (excludes lump-sum bonuses)
-    const effAnnualSalary = taxIncomeOverride ? annualGross : annualSalary;
-    const salTaxable = Math.max(0, effAnnualSalary - stdDed[taxFilingStatus]);
-    let salFederal = 0;
-    for (const [min, max, rate] of brackets[taxFilingStatus]) {
-      if (salTaxable <= min) break;
-      salFederal += (Math.min(salTaxable, max) - min) * rate;
-    }
-    const salSS       = Math.min(effAnnualSalary, ssWageBase) * 0.062;
-    const salMedicare = effAnnualSalary * 0.0145 + Math.max(0, effAnnualSalary - medicareThreshold) * 0.009;
-    const salWaCares  = effAnnualSalary * 0.0058;
-    const salTotal    = salFederal + salSS + salMedicare + salWaCares;
-    const monthlySalaryNet = (effAnnualSalary - salTotal) / 12;
+    // Salary-only take-home for the "monthly take-home" hero (excludes lump-sum bonuses/vests)
+    const effAnnualSalary  = taxIncomeOverride ? annualGross : annualSalary;
+    const monthlySalaryNet = computeMonthlyNet(effAnnualSalary, taxFilingStatus, viewYear);
     const monthlyGross     = effAnnualSalary / 12;
 
-    return { annualGross, annualSalary, annualBonuses, taxable, federal, federalBrackets, ss, medicare, waCares, total, effectiveRate: total / annualGross, marginal, net: annualGross - total, monthlySalaryNet, monthlyGross };
-  }, [taxFilingStatus, taxIncomeOverride, viewYear, config.salaryPeriods, config.recurringBonuses, config.events]);
+    return { annualGross, annualSalary, annualBonuses, ...breakdown, monthlySalaryNet, monthlyGross };
+  }, [taxFilingStatus, taxIncomeOverride, viewYear, config.salaryPeriods, config.recurringBonuses, config.vestingGrants, config.events]);
 
   return (
     <div className="space-y-6">
@@ -1819,6 +1788,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           <p className="text-foreground/40 text-sm mt-1">Simulate your financial future — salary changes, bonuses, taxes, big expenses.</p>
         </div>
       </div>
+
+      {loadFailed && (
+        <div className="flex items-center gap-2.5 bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs rounded-xl px-4 py-2.5">
+          <X className="w-3.5 h-3.5 shrink-0" />
+          <span>Couldn&apos;t load your saved planner. Changes won&apos;t be saved this session — reload the page to retry.</span>
+        </div>
+      )}
 
       {/* ── 3-Year Projection (Hero) ── */}
       <div className="bg-card border border-border/40 rounded-2xl p-4 sm:p-5 space-y-3 overflow-hidden">
@@ -1929,20 +1905,22 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
           {/* Year stats (sidebar, visible on lg) */}
           <div className="hidden lg:flex flex-col gap-2 bg-card border border-border/40 rounded-2xl p-3">
-            <span className="text-[10px] text-foreground/30 uppercase tracking-wider font-semibold">{viewYear} Summary</span>
+            <span className="text-[10px] text-foreground/30 uppercase tracking-wider font-semibold">
+              {viewYear} Summary{viewYear === CUR_YEAR && CUR_MONTH > 1 ? ` · from ${MONTHS_SHORT[CUR_MONTH - 1]}` : ""}
+            </span>
             <div className="flex items-center gap-1.5 bg-green/10 border border-green/20 text-green px-3 py-1.5 rounded-xl text-xs font-medium">
               <TrendingUp className="w-3 h-3 shrink-0" />
-              <span className="tabular-nums">+{formatCurrency(yearStats.income + yearStats.eventIncome)}</span>
+              <span className="tabular-nums">+{formatCurrency(yearStats.income)}</span>
             </div>
             <div className="flex items-center gap-1.5 bg-red/10 border border-red/20 text-red px-3 py-1.5 rounded-xl text-xs font-medium">
               <Zap className="w-3 h-3 shrink-0" />
-              <span className="tabular-nums">−{formatCurrency(yearStats.expenses + Math.abs(yearStats.eventExpense))}</span>
+              <span className="tabular-nums">−{formatCurrency(yearStats.expenses)}</span>
             </div>
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border ${
-              yearNetChange >= 0 ? "bg-green/10 border-green/20 text-green" : "bg-red/10 border-red/20 text-red"
+              yearStats.netChange >= 0 ? "bg-green/10 border-green/20 text-green" : "bg-red/10 border-red/20 text-red"
             }`}>
-              <span>{yearNetChange >= 0 ? "▲" : "▼"}</span>
-              <span className="tabular-nums">{formatCurrency(Math.abs(yearNetChange))} net</span>
+              <span>{yearStats.netChange >= 0 ? "▲" : "▼"}</span>
+              <span className="tabular-nums">{formatCurrency(Math.abs(yearStats.netChange))} net</span>
             </div>
             <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border ${
               yearStats.endBalance >= 0 ? "bg-accent/10 border-accent/20 text-accent" : "bg-red/10 border-red/20 text-red"
@@ -1987,17 +1965,17 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             <div className="flex lg:hidden items-center gap-1.5 sm:gap-2 flex-wrap text-xs">
               <div className="flex items-center gap-1 sm:gap-1.5 bg-green/10 border border-green/20 text-green px-2 sm:px-3 py-1.5 rounded-xl font-medium">
                 <TrendingUp className="w-3 h-3 shrink-0" />
-                <span className="tabular-nums">+{formatCurrency(yearStats.income + yearStats.eventIncome)}</span>
+                <span className="tabular-nums">+{formatCurrency(yearStats.income)}</span>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 bg-red/10 border border-red/20 text-red px-2 sm:px-3 py-1.5 rounded-xl font-medium">
                 <Zap className="w-3 h-3 shrink-0" />
-                <span className="tabular-nums">−{formatCurrency(yearStats.expenses + Math.abs(yearStats.eventExpense))}</span>
+                <span className="tabular-nums">−{formatCurrency(yearStats.expenses)}</span>
               </div>
               <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl font-medium border ${
-                yearNetChange >= 0 ? "bg-green/10 border-green/20 text-green" : "bg-red/10 border-red/20 text-red"
+                yearStats.netChange >= 0 ? "bg-green/10 border-green/20 text-green" : "bg-red/10 border-red/20 text-red"
               }`}>
-                <span>{yearNetChange >= 0 ? "▲" : "▼"}</span>
-                <span className="tabular-nums">{formatCurrency(Math.abs(yearNetChange))} net</span>
+                <span>{yearStats.netChange >= 0 ? "▲" : "▼"}</span>
+                <span className="tabular-nums">{formatCurrency(Math.abs(yearStats.netChange))} net</span>
               </div>
               <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl font-medium border ${
                 yearStats.endBalance >= 0 ? "bg-accent/10 border-accent/20 text-accent" : "bg-red/10 border-red/20 text-red"
@@ -2103,7 +2081,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   <div className="text-xs text-foreground/40 mt-1">
                     from {formatCurrency(taxEstimate.monthlyGross)}/mo gross
                     {!taxIncomeOverride && taxEstimate.annualBonuses > 0 && (
-                      <span className="ml-2 text-amber-400/70">+ {formatCurrency(taxEstimate.annualBonuses)} bonus/yr</span>
+                      <span className="ml-2 text-amber-400/70">+ {formatCurrency(taxEstimate.annualBonuses)} bonus &amp; vests/yr</span>
                     )}
                   </div>
                 </div>
@@ -2121,7 +2099,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   <span className="text-sm font-bold text-foreground tabular-nums">{formatCurrency(taxEstimate.annualGross)}</span>
                   {!taxIncomeOverride && taxEstimate.annualBonuses > 0 && (
                     <span className="text-[10px] text-foreground/30 tabular-nums">
-                      salary {formatCurrency(taxEstimate.annualSalary)} + bonus {formatCurrency(taxEstimate.annualBonuses)}
+                      salary {formatCurrency(taxEstimate.annualSalary)} + bonus/vests {formatCurrency(taxEstimate.annualBonuses)}
                     </span>
                   )}
                 </div>
@@ -2169,7 +2147,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   ))}
                   {/* Other FICA rows */}
                   {[
-                    { label: "Social Security",        color: "text-orange-400",  val: taxEstimate.ss,       note: "6.2% up to $176,100" },
+                    { label: "Social Security",        color: "text-orange-400",  val: taxEstimate.ss,       note: `6.2% up to ${formatCurrency(taxTableFor(viewYear).ssWageBase)}` },
                     { label: "Medicare",               color: "text-amber-400",   val: taxEstimate.medicare, note: "1.45% + 0.9% above threshold" },
                     { label: "WA Cares Fund (LTC)",    color: "text-blue-400",    val: taxEstimate.waCares,  note: "0.58% of wages" },
                   ].map(row => (
