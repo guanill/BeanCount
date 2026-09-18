@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus, Trash2, ChevronLeft, ChevronRight, ChevronDown,
   TrendingUp, Zap, DollarSign, Edit2, Check, X, Calendar, ScanSearch, BarChart2, Sparkles,
-  Building, CheckCircle2, Circle, MapPin, Calculator,
+  Building, CheckCircle2, Circle, MapPin, Calculator, RefreshCw,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import {
@@ -34,10 +34,24 @@ interface SalaryPeriod {
 interface VestingGrant {
   id: string;
   label: string;          // e.g. "Initial RSU Grant"
-  totalValue: number;     // total $ value of the full grant
+  totalValue: number;     // total $ value of the full grant at award time
   hireYear: number;
   hireMonth: number;      // 1-12
   vestOffsets: number[];  // months from hire date, e.g. [6, 18, 30]
+  // ── Share-denominated grants (optional; dollar-only grants leave these unset).
+  // When `shares` is set the grant is revalued live: shares × the ticker's tracked
+  // price, so every future vest follows the real stock price.
+  ticker?: string;        // e.g. "NVDA" — links the grant to a tracked price
+  shares?: number;        // total shares in the grant
+  grantPrice?: number;    // $/share on the award date
+}
+
+/** Latest known price for a ticker, tracked in the planner config. */
+interface StockQuote {
+  price: number;
+  updatedAt: string;              // ISO timestamp of when the price was set
+  source: "manual" | "live";
+  previousClose?: number;         // for the day-change chip, when fetched live
 }
 
 type BonusAmountType = "fixed" | "pct_salary";
@@ -89,6 +103,8 @@ interface PlannerConfig {
   monthlyExpenses: number;    // fallback when recurringCharges is empty
   salaryPeriods: SalaryPeriod[];
   vestingGrants: VestingGrant[];
+  /** Tracked share price per ticker (uppercase key) — drives live grant valuation. */
+  stockPrices?: Record<string, StockQuote>;
   recurringBonuses: RecurringBonus[];
   recurringCharges: RecurringCharge[];
   scenarioEvents: ScenarioEvent[];
@@ -133,6 +149,7 @@ const DEFAULT_CONFIG: PlannerConfig = {
     { id: "s0", startYear: CUR_YEAR, startMonth: 1, monthlySalary: 5000, label: "Current Salary" },
   ],
   vestingGrants: [],
+  stockPrices: {},
   recurringBonuses: [],
   recurringCharges: [],
   scenarioEvents: [],
@@ -154,6 +171,7 @@ function migrateConfig(c: PlannerConfig): PlannerConfig {
     ...c,
     recurringBonuses: (c.recurringBonuses ?? []).map(normalizeBonus),
     loanPayoffOverrides: c.loanPayoffOverrides ?? {},
+    stockPrices: c.stockPrices ?? {},
   };
 }
 
@@ -165,15 +183,91 @@ function getSalaryForMonth(periods: SalaryPeriod[], year: number, month: number)
   return applicable.length > 0 ? applicable[applicable.length - 1].monthlySalary : 0;
 }
 
-/** Computes all vest events (month + year + amount) derived from vesting grants. */
-function getVestEvents(grants: VestingGrant[]): Array<{ year: number; month: number; label: string; amount: number }> {
-  const out: Array<{ year: number; month: number; label: string; amount: number }> = [];
+// ─── Stock grant valuation ────────────────────────────────────────────────────
+type PriceMap = Record<string, StockQuote>;
+
+/** Normalized lookup key for a ticker ("nvda " → "NVDA"); "" when unset. */
+function tickerKey(t: string | undefined | null): string {
+  return (t ?? "").trim().toUpperCase();
+}
+
+/** True when the grant is denominated in shares rather than a flat dollar amount. */
+function isShareGrant(g: Pick<VestingGrant, "shares">): boolean {
+  return (g.shares ?? 0) > 0;
+}
+
+/** Current $/share used to value a grant: the tracked price, else its award price. */
+function priceForGrant(g: Pick<VestingGrant, "ticker" | "grantPrice">, prices: PriceMap): number | null {
+  const q = prices[tickerKey(g.ticker)];
+  if (q && q.price > 0) return q.price;
+  return (g.grantPrice ?? 0) > 0 ? g.grantPrice! : null;
+}
+
+/** What the grant was worth on its award date (shares × award price, or the flat value). */
+function grantAwardValue(g: Pick<VestingGrant, "shares" | "grantPrice" | "totalValue">): number {
+  if (isShareGrant(g) && (g.grantPrice ?? 0) > 0) return g.shares! * g.grantPrice!;
+  return g.totalValue || 0;
+}
+
+/** What the grant is worth today — share grants revalue at the tracked stock price. */
+function grantCurrentValue(g: Pick<VestingGrant, "shares" | "grantPrice" | "totalValue" | "ticker">, prices: PriceMap): number {
+  if (!isShareGrant(g)) return g.totalValue || 0;
+  const px = priceForGrant(g, prices);
+  return px != null ? g.shares! * px : grantAwardValue(g);
+}
+
+/** A grant has everything it needs to be projected. Share grants also need the
+ *  ticker + award price, since those are what the live revaluation keys off. */
+function grantIsComplete(g: Omit<VestingGrant, "id">): boolean {
+  if (!g.label.trim() || !g.vestOffsets.length) return false;
+  return isShareGrant(g)
+    ? tickerKey(g.ticker) !== "" && (g.grantPrice ?? 0) > 0
+    : g.totalValue > 0;
+}
+
+/** Canonicalizes a grant on save — uppercase ticker, and totalValue kept in sync with
+ *  the award valuation so the stored dollar figure never drifts from the share fields. */
+function normalizeGrant<T extends Omit<VestingGrant, "id">>(g: T): T {
+  if (!isShareGrant(g)) return { ...g, ticker: undefined, shares: undefined, grantPrice: undefined };
+  return { ...g, ticker: tickerKey(g.ticker), totalValue: Math.round(grantAwardValue(g) * 100) / 100 };
+}
+
+interface VestEvent {
+  year: number;
+  month: number;
+  label: string;
+  amount: number;              // gross $ at the current valuation
+  shares?: number;             // shares vesting, for share-denominated grants
+  ticker?: string;
+  pricePerShare?: number;      // price the amount was computed at
+  awardAmount?: number;        // same vest valued at the award price (for gain/loss)
+}
+
+/** Computes all vest events (month + year + amount) derived from vesting grants.
+ *  Share-denominated grants are valued at the tracked price, so updating a ticker's
+ *  price automatically restates every vest the projection depends on. */
+function getVestEvents(grants: VestingGrant[], prices: PriceMap = {}): VestEvent[] {
+  const out: VestEvent[] = [];
   for (const g of grants) {
     if (!g.vestOffsets.length) continue;
-    const perVest = g.totalValue / g.vestOffsets.length;
+    const n = g.vestOffsets.length;
+    const perVest = grantCurrentValue(g, prices) / n;
+    const shareGrant = isShareGrant(g);
+    const px = shareGrant ? priceForGrant(g, prices) : null;
     for (const off of g.vestOffsets) {
       const tot = (g.hireMonth - 1) + off;
-      out.push({ year: g.hireYear + Math.floor(tot / 12), month: (tot % 12) + 1, label: `${g.label}`, amount: perVest });
+      out.push({
+        year: g.hireYear + Math.floor(tot / 12),
+        month: (tot % 12) + 1,
+        label: g.label,
+        amount: perVest,
+        ...(shareGrant ? {
+          shares: g.shares! / n,
+          ticker: tickerKey(g.ticker) || undefined,
+          pricePerShare: px ?? undefined,
+          awardAmount: grantAwardValue(g) / n,
+        } : {}),
+      });
     }
   }
   return out;
@@ -358,7 +452,7 @@ function projectBalances(
   filingStatus: FilingStatus = "single",
 ): MonthData[] {
   let balance = config.startingBalance;
-  const vestEvs = getVestEvents(config.vestingGrants ?? []);
+  const vestEvs = getVestEvents(config.vestingGrants ?? [], config.stockPrices ?? {});
   const result: MonthData[] = [];
   for (let i = 0; i < numMonths; i++) {
     const m = ((fromMonth - 1 + i) % 12) + 1;
@@ -504,7 +598,7 @@ function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single
     return acc;
   }, []);
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => minB + t * range);
-  const vestEvs = useMemo(() => getVestEvents(config.vestingGrants ?? []), [config.vestingGrants]);
+  const vestEvs = useMemo(() => getVestEvents(config.vestingGrants ?? [], config.stockPrices ?? {}), [config.vestingGrants, config.stockPrices]);
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-h-[200px] sm:min-h-[260px] lg:min-h-[320px]" preserveAspectRatio="xMidYMid meet">
@@ -569,7 +663,7 @@ function MonthCard({
 }: {
   year: number; month: number; salary: number; netSalary: number; monthlyExpenses: number;
   events: PlannerEvent[];
-  vestEvents: Array<{ label: string; amount: number }>;
+  vestEvents: VestEvent[];
   recurBonuses: RecurringBonus[];
   loanPaymentsTotal: number;
   loanBreakdown: Array<{ id: string; name: string; amount: number }>;
@@ -748,9 +842,17 @@ function MonthCard({
           })}
           {vestEvents.map((ev, i) => (
             <div key={i} className="flex items-center justify-between rounded-xl px-2 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs gap-1.5 sm:gap-2 bg-indigo-500/10">
-              <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 text-indigo-400">
-                <span className="shrink-0 text-[11px] sm:text-[13px]">📊</span>
-                <span className="truncate font-medium">{ev.label}</span>
+              <span className="flex flex-col min-w-0 text-indigo-400">
+                <span className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+                  <span className="shrink-0 text-[11px] sm:text-[13px]">📊</span>
+                  <span className="truncate font-medium">{ev.label}</span>
+                </span>
+                {ev.shares != null && (
+                  <span className="text-[9px] text-foreground/35 tabular-nums pl-5 sm:pl-6">
+                    {ev.shares.toLocaleString(undefined, { maximumFractionDigits: 2 })} sh
+                    {ev.pricePerShare != null && ` @ ${formatCurrency(ev.pricePerShare)}`}
+                  </span>
+                )}
               </span>
               <span className="font-semibold text-green shrink-0 tabular-nums" title={`${formatCurrency(ev.amount)} gross − estimated withholding`}>
                 +{formatCurrency(netOfSupplemental(ev.amount))}<span className="text-foreground/35 font-normal text-[9px] ml-0.5">net</span>
@@ -1006,7 +1108,7 @@ function ChargeFormBody({
 
 // ─── Vesting Grant Form ────────────────────────────────────────────────────────
 function VestGrantFormBody({
-  value, onChange, offsetInput, setOffsetInput, onSave, onCancel, saveLabel,
+  value, onChange, offsetInput, setOffsetInput, onSave, onCancel, saveLabel, prices,
 }: {
   value: Omit<VestingGrant, "id">;
   onChange: (v: Omit<VestingGrant, "id">) => void;
@@ -1015,7 +1117,27 @@ function VestGrantFormBody({
   onSave: () => void;
   onCancel: () => void;
   saveLabel: string;
+  prices: PriceMap;
 }) {
+  // Dollar grants store a flat totalValue; share grants store shares + award price and
+  // revalue against the tracked ticker price.
+  const [mode, setMode] = useState<"dollar" | "shares">(
+    isShareGrant(value) || tickerKey(value.ticker) ? "shares" : "dollar",
+  );
+  const trackedPrice = prices[tickerKey(value.ticker)]?.price ?? null;
+  const awardValue   = grantAwardValue(value);
+  const liveValue    = grantCurrentValue(value, prices);
+  const gain         = awardValue > 0 ? (liveValue - awardValue) / awardValue : 0;
+
+  function switchMode(next: "dollar" | "shares") {
+    setMode(next);
+    if (next === "dollar") {
+      // Freeze the current valuation into totalValue, then drop the share fields.
+      onChange({ ...value, totalValue: Math.round(liveValue * 100) / 100, shares: undefined, grantPrice: undefined, ticker: undefined });
+    } else if (!isShareGrant(value)) {
+      onChange({ ...value, shares: undefined, grantPrice: undefined, ticker: value.ticker ?? "" });
+    }
+  }
   const addOffset = () => {
     const mo = parseInt(offsetInput);
     if (mo > 0 && !value.vestOffsets.includes(mo)) {
@@ -1058,10 +1180,18 @@ function VestGrantFormBody({
           <input value={value.label} onChange={e => onChange({ ...value, label: e.target.value })}
             placeholder="e.g. Initial RSU Grant" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Total value ($)</label>
-          <input type="number" value={value.totalValue || ""} onChange={e => onChange({ ...value, totalValue: parseFloat(e.target.value) || 0 })}
-            placeholder="50000" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Granted as</label>
+          <div className="flex rounded-lg border border-border/50 overflow-hidden w-fit">
+            <button type="button" onClick={() => switchMode("dollar")}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === "dollar" ? "bg-indigo text-white" : "text-foreground/50 hover:text-foreground hover:bg-card"}`}>
+              $ amount
+            </button>
+            <button type="button" onClick={() => switchMode("shares")}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border/50 ${mode === "shares" ? "bg-indigo text-white" : "text-foreground/50 hover:text-foreground hover:bg-card"}`}>
+              Shares
+            </button>
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Award month</label>
@@ -1076,6 +1206,54 @@ function VestGrantFormBody({
             className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-full" />
         </div>
       </div>
+
+      {mode === "dollar" ? (
+        <div className="flex flex-col gap-1 max-w-[220px]">
+          <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Total value ($)</label>
+          <input type="number" value={value.totalValue || ""} onChange={e => onChange({ ...value, totalValue: parseFloat(e.target.value) || 0 })}
+            placeholder="50000" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+        </div>
+      ) : (
+        <div className="space-y-2.5 bg-card/40 border border-border/30 rounded-lg p-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Ticker</label>
+              <input value={value.ticker ?? ""} onChange={e => onChange({ ...value, ticker: e.target.value.toUpperCase() })}
+                placeholder="NVDA" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25 uppercase" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-foreground/40 uppercase tracking-wide"># of shares</label>
+              <input type="number" step="any" value={value.shares ?? ""} onChange={e => onChange({ ...value, shares: parseFloat(e.target.value) || undefined })}
+                placeholder="500" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Price at grant</label>
+              <input type="number" step="any" value={value.grantPrice ?? ""} onChange={e => onChange({ ...value, grantPrice: parseFloat(e.target.value) || undefined })}
+                placeholder="100.00" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+            </div>
+          </div>
+          {isShareGrant(value) && (value.grantPrice ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] pt-0.5 border-t border-border/25">
+              <span className="text-foreground/45">
+                Granted at <span className="text-foreground/75 font-semibold tabular-nums">{formatCurrency(awardValue)}</span>
+              </span>
+              {trackedPrice != null ? (
+                <>
+                  <span className="text-foreground/45">
+                    Worth today <span className="text-indigo-300 font-semibold tabular-nums">{formatCurrency(liveValue)}</span>
+                    <span className="text-foreground/30"> @ {formatCurrency(trackedPrice)}/sh</span>
+                  </span>
+                  <span className={`font-semibold tabular-nums ${gain >= 0 ? "text-green" : "text-red"}`}>
+                    {gain >= 0 ? "+" : ""}{(gain * 100).toFixed(1)}%
+                  </span>
+                </>
+              ) : (
+                <span className="text-foreground/30 italic">Set a live price below to revalue this grant</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex flex-col gap-2">
         <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Vest schedule (months after award)</label>
 
@@ -1157,17 +1335,138 @@ function VestGrantFormBody({
             className="px-3 py-1.5 bg-indigo/15 hover:bg-indigo/25 text-indigo text-xs rounded-lg transition-colors font-medium whitespace-nowrap">+ Add</button>
         </div>
         <p className="text-[10px] text-foreground/30">
-          {value.vestOffsets.length} vest{value.vestOffsets.length !== 1 ? "s" : ""} · {formatCurrency(value.totalValue / (value.vestOffsets.length || 1))} each
+          {value.vestOffsets.length} vest{value.vestOffsets.length !== 1 ? "s" : ""} · {formatCurrency(liveValue / (value.vestOffsets.length || 1))} each
+          {isShareGrant(value) && value.vestOffsets.length > 0 && (
+            <> · {(value.shares! / value.vestOffsets.length).toLocaleString(undefined, { maximumFractionDigits: 2 })} shares each</>
+          )}
         </p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center flex-wrap">
         <button type="button" onClick={onSave} className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo hover:bg-indigo-light text-white text-xs rounded-lg font-semibold transition-colors shadow-sm">
           <Check className="w-3 h-3" /> {saveLabel}
         </button>
         <button type="button" onClick={onCancel} className="px-3 py-1.5 bg-card hover:bg-card-hover text-foreground/60 hover:text-foreground text-xs rounded-lg border border-border/50 transition-colors">
           Cancel
         </button>
+        {!grantIsComplete(value) && (
+          <span className="text-[10px] text-amber-400/70">
+            Needs a label, {mode === "shares" ? "ticker, shares and grant price" : "a total value"}, and at least one vest date.
+          </span>
+        )}
       </div>
+    </div>
+  );
+}
+
+// ─── Stock price tracker ──────────────────────────────────────────────────────
+/** "just now" / "14m ago" / "3d ago" / "Sep 4" for a price timestamp. */
+function timeAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "";
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(then).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function PriceRow({ symbol, quote, shares, onSet, onRefresh, busy }: {
+  symbol: string;
+  quote: StockQuote | undefined;
+  shares: number;               // total shares across grants using this ticker
+  onSet: (symbol: string, price: number) => void;
+  onRefresh: (symbol: string) => void;
+  busy: boolean;
+}) {
+  const [draft, setDraft] = useState(quote ? String(quote.price) : "");
+  // Re-sync the input when a fetch changes the stored price (adjust-on-render rather
+  // than an effect, so a refresh mid-edit doesn't cost an extra render pass).
+  const [syncedPrice, setSyncedPrice] = useState(quote?.price);
+  if (quote?.price !== syncedPrice) {
+    setSyncedPrice(quote?.price);
+    setDraft(quote ? String(quote.price) : "");
+  }
+
+  const commit = () => {
+    const v = parseFloat(draft);
+    if (v > 0) onSet(symbol, v);
+    else setDraft(quote ? String(quote.price) : "");
+  };
+
+  const dayChange = quote?.previousClose ? (quote.price - quote.previousClose) / quote.previousClose : null;
+
+  return (
+    <div className="flex items-center gap-2.5 flex-wrap bg-card border border-border/40 rounded-lg px-3 py-2">
+      <span className="text-xs font-bold text-indigo-300 tracking-wide w-14 shrink-0">{symbol}</span>
+      <div className="flex items-center gap-1">
+        <span className="text-foreground/30 text-xs">$</span>
+        <input
+          type="number" step="any" value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); } }}
+          placeholder="0.00"
+          className="bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground placeholder-foreground/25 w-24 tabular-nums"
+        />
+      </div>
+      {dayChange != null && (
+        <span className={`text-[11px] font-semibold tabular-nums ${dayChange >= 0 ? "text-green" : "text-red"}`}>
+          {dayChange >= 0 ? "+" : ""}{(dayChange * 100).toFixed(2)}%
+        </span>
+      )}
+      {shares > 0 && quote && (
+        <span className="text-[11px] text-foreground/40 tabular-nums">
+          {shares.toLocaleString(undefined, { maximumFractionDigits: 2 })} sh ={" "}
+          <span className="text-foreground/70 font-semibold">{formatCurrency(shares * quote.price)}</span>
+        </span>
+      )}
+      <div className="flex items-center gap-2 ml-auto shrink-0">
+        {quote && (
+          <span className="text-[10px] text-foreground/30">
+            {quote.source === "live" ? "live" : "manual"} · {timeAgo(quote.updatedAt)}
+          </span>
+        )}
+        <button onClick={() => onRefresh(symbol)} disabled={busy} title={`Fetch latest ${symbol} price`}
+          className="text-foreground/30 hover:text-indigo transition-colors disabled:opacity-40">
+          <RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StockPriceTracker({ tickers, prices, onSetPrice, onRefresh, busySymbols, error }: {
+  tickers: Array<{ symbol: string; shares: number }>;
+  prices: PriceMap;
+  onSetPrice: (symbol: string, price: number) => void;
+  onRefresh: (symbols: string[]) => void;
+  busySymbols: Set<string>;
+  error: string | null;
+}) {
+  if (tickers.length === 0) return null;
+  const allBusy = tickers.some(t => busySymbols.has(t.symbol));
+  return (
+    <div className="space-y-2 bg-background/40 border border-border/30 rounded-xl p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] text-foreground/45 uppercase tracking-wider font-semibold">Share prices</span>
+        <button onClick={() => onRefresh(tickers.map(t => t.symbol))} disabled={allBusy}
+          className="flex items-center gap-1.5 text-[11px] text-indigo hover:text-indigo-light transition-colors disabled:opacity-40">
+          <RefreshCw className={`w-3 h-3 ${allBusy ? "animate-spin" : ""}`} /> Refresh all
+        </button>
+      </div>
+      <div className="space-y-1.5">
+        {tickers.map(t => (
+          <PriceRow key={t.symbol} symbol={t.symbol} quote={prices[t.symbol]} shares={t.shares}
+            onSet={onSetPrice} onRefresh={s => onRefresh([s])} busy={busySymbols.has(t.symbol)} />
+        ))}
+      </div>
+      {error && <p className="text-[11px] text-amber-400/90">{error}</p>}
+      <p className="text-[10px] text-foreground/25">
+        Every future vest is valued at these prices — update one and the whole projection follows.
+      </p>
     </div>
   );
 }
@@ -1248,6 +1547,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [newVest,      setNewVest]      = useState<Omit<VestingGrant, "id">>({
     label: "", totalValue: 0, hireYear: CUR_YEAR, hireMonth: CUR_MONTH, vestOffsets: [],
   });
+  const [quoteBusy,    setQuoteBusy]    = useState<Set<string>>(new Set());
+  const [quoteError,   setQuoteError]   = useState<string | null>(null);
   const [addingBonus,  setAddingBonus]  = useState(false);
   const [editingBonusId, setEditingBonusId] = useState<string | null>(null);
   const [vestOffsetInput, setVestOffsetInput] = useState("");
@@ -1613,8 +1914,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   }, [yearData, netWorth]);
 
   const allVestEvents = useMemo(
-    () => getVestEvents(effectiveConfig.vestingGrants ?? []),
-    [effectiveConfig.vestingGrants],
+    () => getVestEvents(effectiveConfig.vestingGrants ?? [], effectiveConfig.stockPrices ?? {}),
+    [effectiveConfig.vestingGrants, effectiveConfig.stockPrices],
   );
 
   function addEvent(ev: Omit<PlannerEvent, "id">) {
@@ -1625,12 +1926,106 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   }
 
   function addVestingGrant() {
-    if (!newVest.label.trim() || !newVest.totalValue || !newVest.vestOffsets.length) return;
-    setConfig(c => ({ ...c, vestingGrants: [...(c.vestingGrants ?? []), { ...newVest, id: uid() }] }));
+    if (!grantIsComplete(newVest)) return;
+    const grant = { ...normalizeGrant(newVest), id: uid() };
+    setConfig(c => ({ ...c, vestingGrants: [...(c.vestingGrants ?? []), grant] }));
     setNewVest({ label: "", totalValue: 0, hireYear: CUR_YEAR, hireMonth: CUR_MONTH, vestOffsets: [] });
     setVestOffsetInput("");
     setAddingVest(false);
+    // A brand-new ticker has no tracked price yet — go get one.
+    const t = tickerKey(grant.ticker);
+    if (t && !(config.stockPrices ?? {})[t]) refreshQuotes([t]);
   }
+
+  // ── Stock price tracking ──
+  /** Grant value at today's prices vs. at the award prices — the unrealized swing. */
+  const grantsValue = useMemo(
+    () => (config.vestingGrants ?? []).reduce((s, g) => s + grantCurrentValue(g, config.stockPrices ?? {}), 0),
+    [config.vestingGrants, config.stockPrices],
+  );
+  const grantsAwardValue = useMemo(
+    () => (config.vestingGrants ?? []).reduce((s, g) => s + grantAwardValue(g), 0),
+    [config.vestingGrants],
+  );
+
+  /** Distinct tickers across share-denominated grants, with total shares each. */
+  const trackedTickers = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of config.vestingGrants ?? []) {
+      if (!isShareGrant(g)) continue;
+      const k = tickerKey(g.ticker);
+      if (!k) continue;
+      m.set(k, (m.get(k) ?? 0) + (g.shares ?? 0));
+    }
+    return [...m.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([symbol, shares]) => ({ symbol, shares }));
+  }, [config.vestingGrants]);
+
+  function setStockPrice(symbol: string, price: number) {
+    const key = tickerKey(symbol);
+    if (!key || !(price > 0)) return;
+    setConfig(c => ({
+      ...c,
+      stockPrices: {
+        ...(c.stockPrices ?? {}),
+        // A hand-typed price supersedes the fetched one, day-change included.
+        [key]: { price, updatedAt: new Date().toISOString(), source: "manual" },
+      },
+    }));
+    setQuoteError(null);
+  }
+
+  const refreshQuotes = useCallback(async (symbols: string[]) => {
+    const list = [...new Set(symbols.map(tickerKey).filter(Boolean))];
+    if (list.length === 0) return;
+    setQuoteBusy(prev => new Set([...prev, ...list]));
+    setQuoteError(null);
+    try {
+      const { fetchQuotes } = await import("@/lib/quotes");
+      const quotes = await fetchQuotes(list);
+      const found = Object.keys(quotes);
+      if (found.length > 0) {
+        const now = new Date().toISOString();
+        setConfig(c => {
+          const next = { ...(c.stockPrices ?? {}) };
+          for (const [sym, q] of Object.entries(quotes)) {
+            next[sym] = { price: q.price, previousClose: q.previousClose, updatedAt: now, source: "live" };
+          }
+          return { ...c, stockPrices: next };
+        });
+      }
+      const missing = list.filter(s => !found.includes(s));
+      if (missing.length > 0) {
+        setQuoteError(`No price found for ${missing.join(", ")} — check the ticker or type the price in yourself.`);
+      }
+    } catch (err) {
+      setQuoteError(`Couldn't fetch live prices (${(err as Error).message}). You can still enter them manually.`);
+    } finally {
+      setQuoteBusy(prev => {
+        const n = new Set(prev);
+        for (const s of list) n.delete(s);
+        return n;
+      });
+    }
+  }, []);
+
+  // Refresh prices that are missing or stale once per session, so grant values are
+  // current the moment the planner opens. Hand-typed prices are left alone — an
+  // explicit override shouldn't be silently overwritten by a fetch.
+  const autoQuotedRef = useRef(false);
+  useEffect(() => {
+    if (!dbLoaded || autoQuotedRef.current || trackedTickers.length === 0) return;
+    autoQuotedRef.current = true;
+    const prices = config.stockPrices ?? {};
+    const stale = trackedTickers.map(t => t.symbol).filter(s => {
+      const q = prices[s];
+      if (!q) return true;
+      if (q.source === "manual") return false;
+      return Date.now() - new Date(q.updatedAt).getTime() > 6 * 60 * 60 * 1000;
+    });
+    if (stale.length > 0) refreshQuotes(stale);
+  }, [dbLoaded, trackedTickers, config.stockPrices, refreshQuotes]);
 
   function addRecurringBonus() {
     if (!newBonus.label.trim() || (newBonus.amount ?? 0) <= 0) return;
@@ -1660,14 +2055,17 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   }
 
   function saveEditedVest() {
-    if (!editVest || !editVest.label.trim() || !editVest.totalValue || !editVest.vestOffsets.length) return;
+    if (!editVest || !grantIsComplete(editVest)) return;
+    const grant = normalizeGrant(editVest);
     setConfig(c => ({
       ...c,
-      vestingGrants: (c.vestingGrants ?? []).map(g => g.id === editVest.id ? editVest : g),
+      vestingGrants: (c.vestingGrants ?? []).map(g => g.id === grant.id ? grant : g),
     }));
     setEditingVestId(null);
     setEditVest(null);
     setEditVestOffsetInput("");
+    const t = tickerKey(grant.ticker);
+    if (t && !(config.stockPrices ?? {})[t]) refreshQuotes([t]);
   }
 
   function setLoanPayoffOverride(loanId: string, ymOrNull: string | null) {
@@ -1750,8 +2148,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           annualBonuses += getBonusAmount(b, salary, "mid");
         }
       }
-      // RSU vests are ordinary income in the year they vest
-      for (const v of getVestEvents(config.vestingGrants ?? [])) {
+      // RSU vests are ordinary income in the year they vest, at their current valuation
+      for (const v of getVestEvents(config.vestingGrants ?? [], config.stockPrices ?? {})) {
         if (v.year === viewYear) annualBonuses += v.amount;
       }
       // Add one-time bonus/income events in viewYear
@@ -1777,7 +2175,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     const monthlyGross     = effAnnualSalary / 12;
 
     return { annualGross, annualSalary, annualBonuses, ...breakdown, monthlySalaryNet, monthlyGross };
-  }, [taxFilingStatus, taxIncomeOverride, viewYear, config.salaryPeriods, config.recurringBonuses, config.vestingGrants, config.events]);
+  }, [taxFilingStatus, taxIncomeOverride, viewYear, config.salaryPeriods, config.recurringBonuses, config.vestingGrants, config.stockPrices, config.events]);
 
   return (
     <div className="space-y-6">
@@ -2470,14 +2868,34 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             <span className="text-foreground/30 text-sm font-light">+</span>
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] text-foreground/50 uppercase tracking-wider font-medium">Grants</span>
-              <span className="text-sm font-semibold text-indigo tabular-nums">{formatCurrency((config.vestingGrants ?? []).reduce((s, g) => s + g.totalValue, 0))}</span>
+              <span className="text-sm font-semibold text-indigo tabular-nums">{formatCurrency(grantsValue)}</span>
             </div>
             <span className="text-foreground/30 text-sm font-light">=</span>
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] text-foreground/50 uppercase tracking-wider font-medium">Stock total</span>
-              <span className="text-sm font-bold text-indigo-300 tabular-nums">{formatCurrency(stockTotal + (config.vestingGrants ?? []).reduce((s, g) => s + g.totalValue, 0))}</span>
+              <span className="text-sm font-bold text-indigo-300 tabular-nums">{formatCurrency(stockTotal + grantsValue)}</span>
             </div>
+            {grantsAwardValue > 0 && Math.abs(grantsValue - grantsAwardValue) >= 0.01 && (
+              <div className="flex flex-col gap-0.5 ml-auto">
+                <span className="text-[10px] text-foreground/50 uppercase tracking-wider font-medium">vs. granted</span>
+                <span className={`text-sm font-bold tabular-nums ${grantsValue >= grantsAwardValue ? "text-green" : "text-red"}`}>
+                  {grantsValue >= grantsAwardValue ? "+" : "−"}{formatCurrency(Math.abs(grantsValue - grantsAwardValue))}
+                  <span className="font-medium text-xs ml-1">
+                    ({grantsValue >= grantsAwardValue ? "+" : ""}{((grantsValue - grantsAwardValue) / grantsAwardValue * 100).toFixed(1)}%)
+                  </span>
+                </span>
+              </div>
+            )}
           </div>
+
+          <StockPriceTracker
+            tickers={trackedTickers}
+            prices={config.stockPrices ?? {}}
+            onSetPrice={setStockPrice}
+            onRefresh={refreshQuotes}
+            busySymbols={quoteBusy}
+            error={quoteError}
+          />
 
           {(config.vestingGrants ?? []).length === 0 && !addingVest && (
             <p className="text-xs text-foreground/40 text-center py-2">No grants yet. Add your RSU or stock option grants.</p>
@@ -2496,6 +2914,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     onSave={saveEditedVest}
                     onCancel={() => { setEditingVestId(null); setEditVest(null); setEditVestOffsetInput(""); }}
                     saveLabel="Save changes"
+                    prices={config.stockPrices ?? {}}
                   />
                 );
               }
@@ -2507,16 +2926,40 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               const diffs = sortedOffsets.slice(1).map((o, i) => o - sortedOffsets[i]);
               const cadence = diffs.length > 0 && diffs.every(d => d === diffs[0]) ? diffs[0] : null;
               const cadenceLabel = cadence ? ({ 1: "monthly", 3: "quarterly", 6: "semi-annual", 12: "annual" } as Record<number, string>)[cadence] ?? `every ${cadence}mo` : null;
-              const perVest = g.totalValue / (g.vestOffsets.length || 1);
-              const compact = g.vestOffsets.length > 8;
+              const nVests    = g.vestOffsets.length || 1;
+              const curValue  = grantCurrentValue(g, config.stockPrices ?? {});
+              const awardVal  = grantAwardValue(g);
+              const perVest   = curValue / nVests;
+              const livePrice = isShareGrant(g) ? priceForGrant(g, config.stockPrices ?? {}) : null;
+              const gain      = awardVal > 0 ? (curValue - awardVal) / awardVal : 0;
+              const compact   = g.vestOffsets.length > 8;
               return (
                 <div key={g.id} className="group flex items-start gap-3 rounded-xl px-4 py-3 bg-card border border-border/40 hover:border-border/70 transition-colors">
                   <div className="w-2.5 h-2.5 rounded-full bg-indigo-light shrink-0 mt-1" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium text-foreground">{g.label}</span>
+                      {isShareGrant(g) && tickerKey(g.ticker) && (
+                        <span className="text-[10px] font-bold text-indigo-300 bg-indigo/15 px-1.5 py-0.5 rounded-md tracking-wide">{tickerKey(g.ticker)}</span>
+                      )}
                       <span className="text-[11px] text-foreground/50">awarded {MONTHS_SHORT[g.hireMonth-1]} {g.hireYear}</span>
                     </div>
+                    {isShareGrant(g) && (
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-foreground/45">
+                        <span className="tabular-nums">{g.shares!.toLocaleString(undefined, { maximumFractionDigits: 2 })} shares</span>
+                        <span className="text-foreground/25">·</span>
+                        <span className="tabular-nums">granted @ {formatCurrency(g.grantPrice ?? 0)}</span>
+                        {livePrice != null && livePrice !== g.grantPrice && (
+                          <>
+                            <span className="text-foreground/25">→</span>
+                            <span className="tabular-nums text-foreground/70">now {formatCurrency(livePrice)}</span>
+                            <span className={`tabular-nums font-semibold ${gain >= 0 ? "text-green" : "text-red"}`}>
+                              ({gain >= 0 ? "+" : ""}{(gain * 100).toFixed(1)}%)
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {compact ? (
                       <div className="mt-1.5 text-[11px] text-indigo-300">
                         <span className="font-semibold tabular-nums">{g.vestOffsets.length} vests</span>
@@ -2537,7 +2980,14 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-indigo font-semibold text-sm tabular-nums">{formatCurrency(g.totalValue)}<span className="text-foreground/45 font-normal text-xs ml-0.5">total</span></span>
+                    <div className="flex flex-col items-end">
+                      <span className="text-indigo font-semibold text-sm tabular-nums">
+                        {formatCurrency(curValue)}<span className="text-foreground/45 font-normal text-xs ml-0.5">total</span>
+                      </span>
+                      {isShareGrant(g) && Math.abs(curValue - awardVal) >= 0.01 && (
+                        <span className="text-[10px] text-foreground/35 tabular-nums">was {formatCurrency(awardVal)}</span>
+                      )}
+                    </div>
                     <button onClick={() => startEditVest(g)}
                       className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-accent transition-all" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
                     <button onClick={() => setConfig(c => ({ ...c, vestingGrants: (c.vestingGrants ?? []).filter(v => v.id !== g.id) }))}
@@ -2557,6 +3007,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               onSave={addVestingGrant}
               onCancel={() => { setAddingVest(false); setVestOffsetInput(""); }}
               saveLabel="Save grant"
+              prices={config.stockPrices ?? {}}
             />
           ) : (
             <button onClick={() => { setAddingVest(true); setEditingVestId(null); setEditVest(null); }}
