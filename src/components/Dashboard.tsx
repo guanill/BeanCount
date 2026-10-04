@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { DashboardData } from "@/lib/types";
 import NetWorthHero from "./NetWorthHero";
 import AccountSection from "./AccountSection";
+import StockHoldings from "./StockHoldings";
 import CreditCardsSection from "./CreditCardsSection";
 import DebtsSection from "./DebtsSection";
 import AssetBreakdown from "./AssetBreakdown";
@@ -215,7 +216,11 @@ export default function Dashboard() {
                 accounts={data.accounts.stock}
                 total={data.totals.stockTotal}
                 onRefresh={handleRefresh}
-              />
+              >
+                <StockHoldings
+                  accounts={[...data.accounts.stock, ...data.accounts.bank, ...data.accounts.crypto, ...data.accounts.cash]}
+                />
+              </AccountSection>
               <AccountSection
                 type="crypto"
                 accounts={data.accounts.crypto}
