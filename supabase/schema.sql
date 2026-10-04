@@ -42,6 +42,23 @@ CREATE INDEX idx_accounts_plaid_account_id ON accounts(plaid_account_id) WHERE p
 CREATE INDEX idx_accounts_teller_account_id ON accounts(teller_account_id) WHERE teller_account_id IS NOT NULL;
 
 -- ============================================================
+-- STOCK HOLDINGS
+-- ============================================================
+CREATE TABLE stock_holdings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  ticker text NOT NULL CHECK (ticker ~ '^[A-Z0-9.-]{1,12}$'),
+  shares numeric NOT NULL CHECK (shares > 0),
+  latest_price numeric CHECK (latest_price IS NULL OR latest_price > 0),
+  previous_close numeric CHECK (previous_close IS NULL OR previous_close > 0),
+  quote_source text,
+  quote_updated_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, ticker)
+);
+
+-- ============================================================
 -- CREDIT CARDS
 -- ============================================================
 CREATE TABLE credit_cards (
@@ -218,6 +235,26 @@ BEGIN
   END LOOP;
 END $$;
 
+ALTER TABLE stock_holdings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can manage own stock holdings" ON stock_holdings
+  FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM accounts
+      WHERE accounts.id = stock_holdings.account_id
+        AND accounts.user_id = auth.uid()
+        AND accounts.type = 'stock'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM accounts
+      WHERE accounts.id = stock_holdings.account_id
+        AND accounts.user_id = auth.uid()
+        AND accounts.type = 'stock'
+    )
+  );
+
 -- Integration tokens: only service_role can read/write (API routes use service role key)
 ALTER TABLE integration_tokens ENABLE ROW LEVEL SECURITY;
 -- No anon/authenticated policies = only service_role can access
@@ -238,7 +275,7 @@ DECLARE
   tbl text;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'accounts', 'credit_cards', 'debts_owed', 'liabilities', 'loans', 'planner_configs'
+    'accounts', 'stock_holdings', 'credit_cards', 'debts_owed', 'liabilities', 'loans', 'planner_configs'
   ])
   LOOP
     EXECUTE format(
