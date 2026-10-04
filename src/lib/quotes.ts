@@ -6,6 +6,9 @@
 
 import { callEdgeFunction } from "@/lib/supabase/functions";
 
+/** Which provider family to try first. Crypto and equities share no source. */
+export type AssetClass = "stock" | "crypto";
+
 export interface LiveQuote {
   symbol: string;
   price: number;
@@ -22,13 +25,19 @@ export function normalizeTicker(t: string): string {
  * Fetches the latest price for each symbol. Symbols that can't be resolved are
  * simply absent from the result — callers keep whatever price they already had.
  * Throws only when the whole request fails (offline, function not deployed).
+ *
+ * `assetClass` picks which provider family to try first; the function falls back
+ * to the other one, so a mislabelled symbol still resolves.
  */
-export async function fetchQuotes(symbols: string[]): Promise<Record<string, LiveQuote>> {
+export async function fetchQuotes(
+  symbols: string[],
+  assetClass: AssetClass = "stock",
+): Promise<Record<string, LiveQuote>> {
   const list = [...new Set(symbols.map(normalizeTicker).filter(Boolean))];
   if (list.length === 0) return {};
 
   const res = await callEdgeFunction<{ quotes?: LiveQuote[] }>("stock-quote", {
-    body: { symbols: list },
+    body: { symbols: list, assetClass },
   });
 
   const out: Record<string, LiveQuote> = {};

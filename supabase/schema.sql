@@ -42,15 +42,17 @@ CREATE INDEX idx_accounts_plaid_account_id ON accounts(plaid_account_id) WHERE p
 CREATE INDEX idx_accounts_teller_account_id ON accounts(teller_account_id) WHERE teller_account_id IS NOT NULL;
 
 -- ============================================================
--- STOCK HOLDINGS — individual positions (ticker + shares) under an account.
--- Quotes are fetched live and held client-side, so no price is stored here.
+-- STOCK HOLDINGS — individual positions (ticker + units) under an account.
+-- Holds crypto as well as equities; the parent account's type decides which
+-- quote provider is used. Quotes are fetched live and held client-side, so no
+-- price is stored here. 8 dp because bitcoin is conventionally satoshi-precise.
 -- ============================================================
 CREATE TABLE stock_holdings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   ticker text NOT NULL CHECK (ticker ~ '^[A-Z0-9.-]{1,12}$'),
-  shares numeric(18,6) NOT NULL CHECK (shares > 0),
+  shares numeric(28,8) NOT NULL CHECK (shares > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, ticker)

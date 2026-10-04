@@ -211,22 +211,25 @@ export default function Dashboard() {
                 total={data.totals.cashTotal}
                 onRefresh={handleRefresh}
               />
+              {/* Each panel is scoped to its own accounts: that keeps the two from
+                  rendering each other's positions, and means the parent account's
+                  type reliably picks the right quote provider. */}
               <AccountSection
                 type="stock"
                 accounts={data.accounts.stock}
                 total={data.totals.stockTotal}
                 onRefresh={handleRefresh}
               >
-                <StockHoldings
-                  accounts={[...data.accounts.stock, ...data.accounts.bank, ...data.accounts.crypto, ...data.accounts.cash]}
-                />
+                <StockHoldings accounts={data.accounts.stock} assetClass="stock" />
               </AccountSection>
               <AccountSection
                 type="crypto"
                 accounts={data.accounts.crypto}
                 total={data.totals.cryptoTotal}
                 onRefresh={handleRefresh}
-              />
+              >
+                <StockHoldings accounts={data.accounts.crypto} assetClass="crypto" />
+              </AccountSection>
             </div>
 
             {/* Asset Breakdown Donut */}
