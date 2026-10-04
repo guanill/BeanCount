@@ -1,12 +1,13 @@
 -- ============================================================
--- Stock holdings: individual positions (ticker + shares) linked to an account
+-- Stock holdings: individual positions (ticker + shares) linked to an account.
+-- Quotes are fetched live and held client-side, so no price is stored here.
 -- ============================================================
 
 CREATE TABLE stock_holdings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  ticker text NOT NULL,
+  ticker text NOT NULL CHECK (ticker ~ '^[A-Z0-9.-]{1,12}$'),
   shares numeric(18,6) NOT NULL CHECK (shares > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),

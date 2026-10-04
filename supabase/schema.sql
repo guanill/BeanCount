@@ -42,21 +42,22 @@ CREATE INDEX idx_accounts_plaid_account_id ON accounts(plaid_account_id) WHERE p
 CREATE INDEX idx_accounts_teller_account_id ON accounts(teller_account_id) WHERE teller_account_id IS NOT NULL;
 
 -- ============================================================
--- STOCK HOLDINGS
+-- STOCK HOLDINGS — individual positions (ticker + shares) under an account.
+-- Quotes are fetched live and held client-side, so no price is stored here.
 -- ============================================================
 CREATE TABLE stock_holdings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   ticker text NOT NULL CHECK (ticker ~ '^[A-Z0-9.-]{1,12}$'),
-  shares numeric NOT NULL CHECK (shares > 0),
-  latest_price numeric CHECK (latest_price IS NULL OR latest_price > 0),
-  previous_close numeric CHECK (previous_close IS NULL OR previous_close > 0),
-  quote_source text,
-  quote_updated_at timestamptz,
+  shares numeric(18,6) NOT NULL CHECK (shares > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, ticker)
 );
+
+CREATE INDEX idx_stock_holdings_user_id ON stock_holdings(user_id);
+CREATE INDEX idx_stock_holdings_account_id ON stock_holdings(account_id);
 
 -- ============================================================
 -- CREDIT CARDS
@@ -219,7 +220,7 @@ DECLARE
   tbl text;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'accounts', 'credit_cards', 'debts_owed', 'transactions',
+    'accounts', 'stock_holdings', 'credit_cards', 'debts_owed', 'transactions',
     'liabilities', 'loans', 'plaid_sync_cursors', 'planner_configs'
   ])
   LOOP
@@ -234,26 +235,6 @@ BEGIN
       'CREATE POLICY "Users can delete own rows" ON %I FOR DELETE USING (auth.uid() = user_id)', tbl);
   END LOOP;
 END $$;
-
-ALTER TABLE stock_holdings ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can manage own stock holdings" ON stock_holdings
-  FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM accounts
-      WHERE accounts.id = stock_holdings.account_id
-        AND accounts.user_id = auth.uid()
-        AND accounts.type = 'stock'
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM accounts
-      WHERE accounts.id = stock_holdings.account_id
-        AND accounts.user_id = auth.uid()
-        AND accounts.type = 'stock'
-    )
-  );
 
 -- Integration tokens: only service_role can read/write (API routes use service role key)
 ALTER TABLE integration_tokens ENABLE ROW LEVEL SECURITY;
@@ -292,32 +273,3 @@ ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
 ALTER PUBLICATION supabase_realtime ADD TABLE debts_owed;
 ALTER PUBLICATION supabase_realtime ADD TABLE liabilities;
 ALTER PUBLICATION supabase_realtime ADD TABLE loans;
-
--- Stock holdings (also in migrations/20260404000000_stock_holdings.sql)
-CREATE TABLE stock_holdings (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  ticker text NOT NULL,
-  shares numeric(18,6) NOT NULL CHECK (shares > 0),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (account_id, ticker)
-);
-
-CREATE INDEX idx_stock_holdings_user_id ON stock_holdings(user_id);
-CREATE INDEX idx_stock_holdings_account_id ON stock_holdings(account_id);
-
-ALTER TABLE stock_holdings ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users can select own rows" ON stock_holdings
-  FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert own rows" ON stock_holdings
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can update own rows" ON stock_holdings
-  FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "Users can delete own rows" ON stock_holdings
-  FOR DELETE USING (auth.uid() = user_id);
-
-CREATE TRIGGER set_updated_at BEFORE UPDATE ON stock_holdings
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
