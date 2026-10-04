@@ -64,9 +64,10 @@ interface Props {
   accounts: Account[];
   total: number;
   onRefresh: () => void;
+  children?: React.ReactNode;
 }
 
-export default function AccountSection({ type, accounts, total, onRefresh }: Props) {
+export default function AccountSection({ type, accounts, total, onRefresh, children }: Props) {
   const { label, gradient, iconBg, Icon } = typeConfig[type];
   const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -415,6 +416,7 @@ export default function AccountSection({ type, accounts, total, onRefresh }: Pro
           <p className="text-center text-foreground/30 text-sm py-4">No accounts yet</p>
         )}
       </div>
+      {children}
     </div>
   );
 }

@@ -140,3 +140,13 @@ export interface DashboardData {
     netWorth: number;
   };
 }
+
+export interface StockHolding {
+  id: string;
+  user_id: string;
+  account_id: string;
+  ticker: string;
+  shares: number;
+  created_at: string;
+  updated_at: string;
+}
