@@ -6,6 +6,7 @@ import type {
   Transaction,
   Loan,
   Liability,
+  StockHolding,
   DashboardData,
   TransactionSummary,
 } from "@/lib/types";
@@ -169,6 +170,59 @@ export async function updateAccount(
 
 export async function deleteAccount(supabase: SupabaseClient, id: string) {
   const { error } = await supabase.from("accounts").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ─── Stock Holdings ─────────────────────────────────────────────────────────
+
+export async function getStockHoldings(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("stock_holdings")
+    .select("*")
+    .order("ticker");
+  if (error) throw error;
+  return (data ?? []).map((h) => ({ ...h, shares: Number(h.shares) })) as StockHolding[];
+}
+
+export async function createStockHolding(
+  supabase: SupabaseClient,
+  holding: { account_id: string; ticker: string; shares: number }
+) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+  const { data, error } = await supabase
+    .from("stock_holdings")
+    .insert({
+      user_id: user.id,
+      account_id: holding.account_id,
+      ticker: holding.ticker.trim().toUpperCase(),
+      shares: holding.shares,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as StockHolding;
+}
+
+export async function updateStockHolding(
+  supabase: SupabaseClient,
+  id: string,
+  updates: Partial<{ ticker: string; shares: number }>
+) {
+  const next = { ...updates };
+  if (next.ticker !== undefined) next.ticker = next.ticker.trim().toUpperCase();
+  const { data, error } = await supabase
+    .from("stock_holdings")
+    .update(next)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as StockHolding;
+}
+
+export async function deleteStockHolding(supabase: SupabaseClient, id: string) {
+  const { error } = await supabase.from("stock_holdings").delete().eq("id", id);
   if (error) throw error;
 }
 
