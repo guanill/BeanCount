@@ -32,3 +32,21 @@ test("old quotes are flagged stale but still valued", () => {
   assert.equal(v[0].stale, true);
   assert.equal(isStale("garbage", now), true);
 });
+
+test("values satoshi-precision crypto amounts", () => {
+  const prices = { BTC: { price: 85319.405, updatedAt: fresh }, DOGE: { price: 0.095475, updatedAt: fresh } };
+  const v = valueHoldings(
+    [{ ticker: "BTC", shares: 0.12345678 }, { ticker: "BTC", shares: 0.00000001 }, { ticker: "DOGE", shares: 1_250_000 }],
+    prices,
+    now
+  );
+  // Full 8 dp has to reach the arithmetic intact. What guarantees the *stored*
+  // amount keeps those digits is the numeric(28,8) column — at 6 dp Postgres
+  // rounded 0.12345678 to 0.123457 and one satoshi to 0, which then failed
+  // CHECK (shares > 0). See 20261004000000_widen_holdings_shares.sql.
+  assert.ok(Math.abs(v[0].value! - 10533.2590128159) < 1e-9);
+  assert.ok(v[1].value! > 0, "one satoshi must not round away to zero");
+  assert.ok(Math.abs(v[2].value! - 119343.75) < 1e-9);
+  // Large unit counts (meme coins) must not lose the fractional price either.
+  assert.equal(v[2].holding.ticker, "DOGE");
+});

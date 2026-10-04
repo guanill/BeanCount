@@ -12,6 +12,8 @@ import { getSupabaseClient } from "../_shared/supabase.ts";
 const JSON_HEADERS = { ...corsHeaders, "Content-Type": "application/json" };
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
+type AssetClass = "stock" | "crypto";
+
 interface Quote {
   symbol: string;
   price: number;
@@ -76,17 +78,36 @@ function nasdaq(assetclass: "stocks" | "etf") {
   };
 }
 
-// Nasdaq first: it answers server-side clients reliably, while Yahoo rate-limits
-// them hard. Yahoo still covers anything Nasdaq doesn't list.
-const PROVIDERS = [
+/** Coinbase spot price — keyless, takes plain tickers (BTC, ETH, SOL, DOGE).
+ *  The stock providers have no crypto coverage at all, hence a separate family. */
+async function coinbase(symbol: string): Promise<Quote | null> {
+  const url = `https://api.coinbase.com/v2/prices/${encodeURIComponent(symbol)}-USD/spot`;
+  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+  if (!res.ok) return null;
+  const json = await res.json();
+  const price = Number(json?.data?.amount);
+  if (!price || !isFinite(price)) return null;
+  // Spot has no previous close; nothing in the UI shows a day change for crypto.
+  return { symbol, price, source: "coinbase" };
+}
+
+// Nasdaq first for equities: it answers server-side clients reliably, while Yahoo
+// rate-limits them hard. Yahoo still covers anything Nasdaq doesn't list.
+const STOCK_PROVIDERS = [
   nasdaq("stocks"),
   yahoo("query1.finance.yahoo.com"),
   yahoo("query2.finance.yahoo.com"),
   nasdaq("etf"),
 ];
+const CRYPTO_PROVIDERS = [coinbase];
 
-async function quoteFor(symbol: string): Promise<Quote | null> {
-  for (const provider of PROVIDERS) {
+/** Tries the hinted family first, then the other — so a position filed under the
+ *  wrong account type still resolves instead of silently showing "no quote". */
+async function quoteFor(symbol: string, assetClass: AssetClass): Promise<Quote | null> {
+  const providers = assetClass === "crypto"
+    ? [...CRYPTO_PROVIDERS, ...STOCK_PROVIDERS]
+    : [...STOCK_PROVIDERS, ...CRYPTO_PROVIDERS];
+  for (const provider of providers) {
     try {
       const q = await provider(symbol);
       if (q) return q;
@@ -111,6 +132,8 @@ serve(async (req) => {
     const symbols: string[] = Array.isArray(body?.symbols)
       ? body.symbols
       : body?.symbol ? [body.symbol] : [];
+    // Hint only — quoteFor falls back to the other provider family either way.
+    const assetClass: AssetClass = body?.assetClass === "crypto" ? "crypto" : "stock";
 
     const clean = [...new Set(
       symbols
@@ -123,7 +146,8 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "No valid symbols provided" }), { status: 400, headers: JSON_HEADERS });
     }
 
-    const settled = await Promise.all(clean.map(quoteFor));
+    // Pass assetClass explicitly — a bare `.map(quoteFor)` would hand it the index.
+    const settled = await Promise.all(clean.map((s) => quoteFor(s, assetClass)));
     const quotes = settled.filter((q): q is Quote => q !== null);
     const failed = clean.filter((s) => !quotes.some((q) => q.symbol === s));
 

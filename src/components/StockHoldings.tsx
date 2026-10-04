@@ -10,19 +10,26 @@ import {
   updateStockHolding,
   deleteStockHolding,
 } from "@/lib/supabase/queries";
-import { fetchQuotes, normalizeTicker } from "@/lib/quotes";
+import { fetchQuotes, normalizeTicker, type AssetClass } from "@/lib/quotes";
 import { valueHoldings, totalValue, PriceInfo } from "@/lib/holdings";
 import { Pencil, Trash2, Plus, RefreshCw, AlertTriangle } from "lucide-react";
 import { useToast } from "./Toast";
 
 const REFRESH_MS = 5 * 60 * 1000;
 
-interface Props {
-  /** Every account the user owns — holdings can be attached to any of them. */
-  accounts: Account[];
+/** Crypto is satoshi-precise; equities are whole-or-fractional shares. */
+function formatUnits(n: number, assetClass: AssetClass): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: assetClass === "crypto" ? 8 : 6 });
 }
 
-export default function StockHoldings({ accounts }: Props) {
+interface Props {
+  /** The accounts this panel manages — holdings are scoped to them. */
+  accounts: Account[];
+  /** Picks the quote provider family and the unit wording. */
+  assetClass: AssetClass;
+}
+
+export default function StockHoldings({ accounts, assetClass }: Props) {
   const { toast } = useToast();
   const [holdings, setHoldings] = useState<StockHolding[]>([]);
   const [prices, setPrices] = useState<Record<string, PriceInfo>>({});
@@ -35,9 +42,18 @@ export default function StockHoldings({ accounts }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ ticker: "", shares: "" });
 
+  // getStockHoldings returns every holding the user owns; this panel only governs
+  // the ones under its own accounts. Scoping here keeps a second panel from
+  // quoting this one's tickers against the wrong provider family.
+  const accountIds = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts]);
+  const ownHoldings = useMemo(
+    () => holdings.filter((h) => accountIds.has(h.account_id)),
+    [holdings, accountIds]
+  );
+
   const tickerKey = useMemo(
-    () => [...new Set(holdings.map((h) => normalizeTicker(h.ticker)))].sort().join(","),
-    [holdings]
+    () => [...new Set(ownHoldings.map((h) => normalizeTicker(h.ticker)))].sort().join(","),
+    [ownHoldings]
   );
 
   const load = useCallback(async () => {
@@ -55,7 +71,7 @@ export default function StockHoldings({ accounts }: Props) {
     if (!tickerKey) return;
     setRefreshing(true);
     try {
-      const quotes = await fetchQuotes(tickerKey.split(","));
+      const quotes = await fetchQuotes(tickerKey.split(","), assetClass);
       const now = new Date().toISOString();
       setPrices((prev) => {
         const next = { ...prev };
@@ -71,7 +87,7 @@ export default function StockHoldings({ accounts }: Props) {
     } finally {
       setRefreshing(false);
     }
-  }, [tickerKey]);
+  }, [tickerKey, assetClass]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -81,7 +97,7 @@ export default function StockHoldings({ accounts }: Props) {
     return () => clearInterval(id);
   }, [refreshQuotes]);
 
-  const valued = valueHoldings(holdings, prices);
+  const valued = valueHoldings(ownHoldings, prices);
   const total = totalValue(valued);
 
   const byAccount = accounts
@@ -144,7 +160,7 @@ export default function StockHoldings({ accounts }: Props) {
         <div>
           <h3 className="text-sm font-bold text-foreground">Holdings</h3>
           <p className="text-[10px] sm:text-xs text-foreground/50">
-            {holdings.length === 0 ? "No positions yet" : `Total ${formatCurrency(total)}`}
+            {ownHoldings.length === 0 ? "No positions yet" : `Total ${formatCurrency(total)}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -189,7 +205,7 @@ export default function StockHoldings({ accounts }: Props) {
           <div className="flex items-center gap-2">
             <input
               type="text"
-              placeholder="Ticker"
+              placeholder={assetClass === "crypto" ? "BTC" : "Ticker"}
               value={form.ticker}
               onChange={(e) => setForm({ ...form, ticker: e.target.value })}
               className={`flex-1 uppercase ${input}`}
@@ -198,7 +214,7 @@ export default function StockHoldings({ accounts }: Props) {
               type="number"
               step="any"
               min="0"
-              placeholder="Shares"
+              placeholder={assetClass === "crypto" ? "Amount" : "Shares"}
               value={form.shares}
               onChange={(e) => setForm({ ...form, shares: e.target.value })}
               className={`flex-1 ${input}`}
@@ -232,7 +248,7 @@ export default function StockHoldings({ accounts }: Props) {
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-foreground">{h.ticker}</p>
                         <p className="text-xs text-foreground/50">
-                          {h.shares} sh ×{" "}
+                          {formatUnits(h.shares, assetClass)}{assetClass === "stock" ? " sh" : ""} ×{" "}
                           {price === null ? "no quote" : formatCurrency(price)}
                           {price !== null && stale && <span className="ml-1 text-yellow-400/80">· stale</span>}
                         </p>
