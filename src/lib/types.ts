@@ -83,6 +83,7 @@ export interface Loan {
   original_amount: number | null;
   interest_rate: number;
   monthly_payment: number;
+  payment_day: number | null;
   notes: string | null;
   deferral_months: number;          // 0 = not deferred
   deferral_type: "subsidized" | "unsubsidized";
@@ -127,6 +128,7 @@ export interface DashboardData {
   creditCards: CreditCard[];
   debtsOwed: DebtOwed[];
   liabilities: Liability[];
+  loans: Loan[];
   totals: {
     bankTotal: number;
     stockTotal: number;

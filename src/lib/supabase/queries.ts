@@ -52,6 +52,7 @@ export async function getDashboardData(
       .from("liabilities")
       .select("*")
       .order("amount", { ascending: false }),
+    supabase.from("loans").select("*").order("balance", { ascending: false }),
   ]);
   const queryNames = [
     "bank accounts",
@@ -60,7 +61,7 @@ export async function getDashboardData(
     "cash accounts",
     "credit cards",
     "debts owed",
-    "liabilities",
+    "liabilities", "loans",
   ];
   const [
     { data: bankAccounts },
@@ -70,6 +71,7 @@ export async function getDashboardData(
     { data: creditCards },
     { data: debtsOwed },
     { data: liabilities },
+    { data: loans },
   ] = results;
   for (const [index, result] of results.entries()) {
     if (result.error) {
@@ -86,6 +88,7 @@ export async function getDashboardData(
   const cards = (creditCards ?? []) as CreditCard[];
   const debts = (debtsOwed ?? []) as DebtOwed[];
   const liabs = (liabilities ?? []) as Liability[];
+  const dashboardLoans = (loans ?? []) as Loan[];
 
   const bankTotal = bank.reduce((s, a) => s + Number(a.balance), 0);
   const stockTotal = stock.reduce((s, a) => s + Number(a.balance), 0);
@@ -107,6 +110,7 @@ export async function getDashboardData(
     creditCards: cards,
     debtsOwed: debts,
     liabilities: liabs,
+    loans: dashboardLoans,
     totals: {
       bankTotal,
       stockTotal,
@@ -487,6 +491,7 @@ export async function createLoan(
     notes?: string;
     deferral_months?: number;
     deferral_type?: string;
+    payment_day?: number;
   }
 ) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -504,6 +509,7 @@ export async function createLoan(
       notes: loan.notes ?? null,
       deferral_months: loan.deferral_months ?? 0,
       deferral_type: loan.deferral_type ?? "unsubsidized",
+      payment_day: loan.payment_day ?? null,
     })
     .select()
     .single();
