@@ -9,6 +9,7 @@ import type {
   StockHolding,
   DashboardData,
   TransactionSummary,
+  NetWorthSnapshot,
 } from "@/lib/types";
 import { CATEGORIES, getCategoryMeta, guessCategory } from "@/lib/categories";
 
@@ -17,15 +18,7 @@ import { CATEGORIES, getCategoryMeta, guessCategory } from "@/lib/categories";
 export async function getDashboardData(
   supabase: SupabaseClient
 ): Promise<DashboardData> {
-  const [
-    { data: bankAccounts },
-    { data: stockAccounts },
-    { data: cryptoAccounts },
-    { data: cashAccounts },
-    { data: creditCards },
-    { data: debtsOwed },
-    { data: liabilities },
-  ] = await Promise.all([
+  const results = await Promise.all([
     supabase
       .from("accounts")
       .select("*")
@@ -60,6 +53,31 @@ export async function getDashboardData(
       .select("*")
       .order("amount", { ascending: false }),
   ]);
+  const queryNames = [
+    "bank accounts",
+    "stock accounts",
+    "crypto accounts",
+    "cash accounts",
+    "credit cards",
+    "debts owed",
+    "liabilities",
+  ];
+  const [
+    { data: bankAccounts },
+    { data: stockAccounts },
+    { data: cryptoAccounts },
+    { data: cashAccounts },
+    { data: creditCards },
+    { data: debtsOwed },
+    { data: liabilities },
+  ] = results;
+  for (const [index, result] of results.entries()) {
+    if (result.error) {
+      throw new Error(
+        `Failed to load dashboard ${queryNames[index]}: ${result.error.message}`
+      );
+    }
+  }
 
   const bank = (bankAccounts ?? []) as Account[];
   const stock = (stockAccounts ?? []) as Account[];
@@ -102,6 +120,48 @@ export async function getDashboardData(
       netWorth,
     },
   };
+}
+
+// ─── Net Worth History ─────────────────────────────────────────────────────
+
+export async function getNetWorthHistory(
+  supabase: SupabaseClient,
+  limit = 90
+): Promise<NetWorthSnapshot[]> {
+  const { data, error } = await supabase
+    .from("net_worth_snapshots")
+    .select("*")
+    .order("snapshot_date", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Failed to load net worth history: ${error.message}`);
+  return (data ?? []).reverse().map((snapshot) => ({
+    ...snapshot,
+    net_worth: Number(snapshot.net_worth),
+    assets_total: Number(snapshot.assets_total),
+    stock_total: Number(snapshot.stock_total),
+    crypto_total: Number(snapshot.crypto_total),
+  })) as NetWorthSnapshot[];
+}
+
+export async function saveNetWorthSnapshot(
+  supabase: SupabaseClient,
+  snapshot: Pick<NetWorthSnapshot, "net_worth" | "assets_total" | "stock_total" | "crypto_total">
+): Promise<NetWorthSnapshot> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+  const { data, error } = await supabase
+    .from("net_worth_snapshots")
+    .upsert({ user_id: user.id, ...snapshot }, { onConflict: "user_id,snapshot_date" })
+    .select()
+    .single();
+  if (error) throw new Error(`Failed to save net worth snapshot: ${error.message}`);
+  return {
+    ...data,
+    net_worth: Number(data.net_worth),
+    assets_total: Number(data.assets_total),
+    stock_total: Number(data.stock_total),
+    crypto_total: Number(data.crypto_total),
+  } as NetWorthSnapshot;
 }
 
 // ─── Accounts ───────────────────────────────────────────────────────────────
@@ -186,7 +246,7 @@ export async function getStockHoldings(supabase: SupabaseClient) {
 
 export async function createStockHolding(
   supabase: SupabaseClient,
-  holding: { account_id: string; ticker: string; shares: number }
+  holding: { account_id: string; ticker: string; shares: number; cost_basis?: number | null }
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
@@ -197,6 +257,7 @@ export async function createStockHolding(
       account_id: holding.account_id,
       ticker: holding.ticker.trim().toUpperCase(),
       shares: holding.shares,
+      cost_basis: holding.cost_basis ?? null,
     })
     .select()
     .single();
@@ -207,7 +268,7 @@ export async function createStockHolding(
 export async function updateStockHolding(
   supabase: SupabaseClient,
   id: string,
-  updates: Partial<{ ticker: string; shares: number }>
+  updates: Partial<{ ticker: string; shares: number; cost_basis: number | null }>
 ) {
   const next = { ...updates };
   if (next.ticker !== undefined) next.ticker = next.ticker.trim().toUpperCase();
@@ -713,10 +774,11 @@ export interface PlannerRow {
 }
 
 export async function getPlannerConfig(supabase: SupabaseClient): Promise<PlannerRow | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("planner_configs")
     .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status")
     .maybeSingle();
+  if (error) throw error;
   return data as PlannerRow | null;
 }
 

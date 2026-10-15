@@ -7,6 +7,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createDebt, updateDebt, deleteDebt } from "@/lib/supabase/queries";
 import { useToast } from "./Toast";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface Props {
   debts: DebtOwed[];
@@ -24,6 +25,7 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
     person_name: "", amount: "", reason: "", due_date: "",
   });
   const { toast } = useToast();
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -66,7 +68,6 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Remove this debt?")) return;
     try {
       const supabase = createClient();
       await deleteDebt(supabase, id);
@@ -269,7 +270,7 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
                       <button onClick={() => startEdit(debt)} className="p-1 text-foreground/30 hover:text-accent transition-colors">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => handleDelete(debt.id)} className="p-1 text-foreground/30 hover:text-red transition-colors">
+                      <button onClick={() => setDeleteId(debt.id)} className="p-1 text-foreground/30 hover:text-red transition-colors" aria-label="Remove debt">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -282,6 +283,14 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
         {debts.length === 0 && (
           <p className="text-center text-foreground/30 text-sm py-4">No one owes you anything</p>
         )}
+        <ConfirmDialog
+          open={deleteId !== null}
+          title="Remove debt?"
+          description="This will permanently remove this debt record."
+          confirmLabel="Remove"
+          onCancel={() => setDeleteId(null)}
+          onConfirm={() => { const id = deleteId; setDeleteId(null); if (id) void handleDelete(id); }}
+        />
       </div>
     </div>
   );

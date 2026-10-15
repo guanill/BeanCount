@@ -28,8 +28,13 @@ import {
   Filter,
 } from "lucide-react";
 import { Transaction, TransactionSummary } from "@/lib/types";
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 import { CATEGORIES, getCategoryMeta } from "@/lib/categories";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import {
   getTransactions as fetchTransactionsFromSupabase,
@@ -40,16 +45,7 @@ import {
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
 import { useToast } from "./Toast";
-
-const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-];
-
-function formatDate(d: string) {
-  const [y, m, day] = d.split("-");
-  return `${MONTHS[parseInt(m) - 1].slice(0, 3)} ${parseInt(day)}, ${y}`;
-}
+import ConfirmDialog from "./ConfirmDialog";
 
 /* â"€â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 interface DonutSegment { category: string; label: string; color: string; emoji: string; amount: number; }
@@ -219,7 +215,7 @@ function TxRow({
           {isIncome ? "+" : "-"}{formatCurrency(displayAmt)}
         </span>
         {tx.is_manual && (
-          <button onClick={() => onDelete(tx.id)} className="hidden group-hover:flex p-1 text-foreground/20 hover:text-red-400 transition-colors">
+          <button onClick={() => onDelete(tx.id)} aria-label={`Delete ${tx.name}`} className="flex sm:hidden sm:group-hover:flex p-1 text-foreground/20 hover:text-red-400 transition-colors">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
@@ -521,6 +517,7 @@ const emptyForm: AddForm = {
 /* â"€â"€â"€ Main component â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 export default function TransactionsSection() {
   const { toast } = useToast();
+  const [deleteId, setDeleteId] = useState<string | null>(null);
   const now = new Date();
   const [year,     setYear]    = useState(now.getFullYear());
   const [month,    setMonth]   = useState(now.getMonth() + 1);
@@ -678,7 +675,6 @@ export default function TransactionsSection() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this transaction?")) return;
     try {
       const supabase = createClient();
       await deleteTransaction(supabase, id);
@@ -1160,9 +1156,17 @@ export default function TransactionsSection() {
           onSave={handlePatch}
           onIgnore={handleIgnore}
           onSplit={handleSplit}
-          onDelete={id => { handleDelete(id); setSelectedTx(null); }}
+          onDelete={id => { setDeleteId(id); setSelectedTx(null); }}
         />
       )}
+      <ConfirmDialog
+        open={deleteId !== null}
+        title="Delete transaction?"
+        description="This will permanently remove this transaction."
+        confirmLabel="Delete"
+        onCancel={() => setDeleteId(null)}
+        onConfirm={() => { const id = deleteId; setDeleteId(null); if (id) void handleDelete(id); }}
+      />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { Loan } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import { getLoans, createLoan, updateLoan, deleteLoan } from "@/lib/supabase/queries";
+import ConfirmDialog from "./ConfirmDialog";
 import { useToast } from "./Toast";
 
 // ─── Loan type metadata ────────────────────────────────────────────────────────
@@ -500,6 +501,7 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing]   = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [editForm, setEditForm] = useState<LoanFormValues>(EMPTY_FORM);
   const [simOpen, setSimOpen]   = useState(false);
 
@@ -580,11 +582,11 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete "${loan.name}"? This cannot be undone.`)) return;
     try {
       const supabase = createClient();
       await deleteLoan(supabase, loan.id);
       toast("Loan deleted");
+      setConfirmDelete(false);
       onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -651,11 +653,19 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
                   className="p-1 rounded-lg text-foreground/25 hover:text-accent hover:bg-accent/10 transition-all">
                   <Pencil className="w-3 h-3" />
                 </button>
-                <button onClick={handleDelete}
+                <button onClick={() => setConfirmDelete(true)}
                   className="p-1 rounded-lg text-foreground/25 hover:text-red-400 hover:bg-red-400/10 transition-all">
                   <Trash2 className="w-3 h-3" />
                 </button>
               </div>
+              <ConfirmDialog
+                open={confirmDelete}
+                title={`Delete ${loan.name}?`}
+                description="This removes the loan and its payment projection. This action cannot be undone."
+                confirmLabel="Delete loan"
+                onCancel={() => setConfirmDelete(false)}
+                onConfirm={handleDelete}
+              />
             </div>
 
             {/* Progress bar (compact) */}

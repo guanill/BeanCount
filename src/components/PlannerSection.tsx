@@ -10,6 +10,11 @@ import { formatCurrency } from "@/lib/format";
 import {
   type FilingStatus, computeAnnualTax, computeMonthlyNet, netOfSupplemental, taxTableFor,
 } from "@/lib/tax";
+import {
+  chargeActiveInMonth, chargeEndMonth, chargePaidThisMonth, chargesForMonth,
+  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth,
+  loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt, salaryPaidThisMonth,
+} from "@/lib/planner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type EventType = "bonus" | "tax" | "expense" | "income" | "investment" | "other";
@@ -29,6 +34,12 @@ interface SalaryPeriod {
   startMonth: number; // 1-12
   monthlySalary: number;
   label: string;
+  payFrequency?: "monthly" | "semimonthly" | "biweekly" | "weekly";
+  payDay1?: number;
+  payDay2?: number;
+  withholdingRate?: number;
+  yearToDateGrossPay?: number;
+  yearToDateWithholding?: number;
 }
 
 interface VestingGrant {
@@ -80,6 +91,7 @@ interface RecurringCharge {
   durationMonths?: number | null; // how many months it runs from the start; null/undefined = ongoing
   chargeDay?: number;             // 1-31, day of month it's usually billed; on/after it, auto-counts as paid
   paidOverride?: { month: string; paid: boolean }; // manual paid/unpaid mark for a YYYY-MM (most recent only)
+  merchantKey?: string;          // confirmed normalized merchant match
 }
 
 interface ScenarioLineItem {
@@ -173,14 +185,6 @@ function migrateConfig(c: PlannerConfig): PlannerConfig {
     loanPayoffOverrides: c.loanPayoffOverrides ?? {},
     stockPrices: c.stockPrices ?? {},
   };
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function getSalaryForMonth(periods: SalaryPeriod[], year: number, month: number): number {
-  const applicable = periods
-    .filter(p => p.startYear < year || (p.startYear === year && p.startMonth <= month))
-    .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth));
-  return applicable.length > 0 ? applicable[applicable.length - 1].monthlySalary : 0;
 }
 
 // ─── Stock grant valuation ────────────────────────────────────────────────────
@@ -284,162 +288,12 @@ function getBonusAmount(b: RecurringBonus, salary: number, scenario: "low" | "mi
   return toAmt(b.amount ?? 0);
 }
 
-/** True if a recurring charge is active in the given calendar month. */
-function chargeActiveInMonth(c: RecurringCharge, year: number, month: number): boolean {
-  const ord = year * 12 + month;
-  const hasStart = !!(c.startYear && c.startMonth);
-  if (hasStart && ord < c.startYear! * 12 + c.startMonth!) return false;
-  if (hasStart && c.durationMonths && c.durationMonths > 0) {
-    const end = c.startYear! * 12 + c.startMonth! + c.durationMonths - 1;
-    if (ord > end) return false;
-  }
-  return true;
-}
-
-/** Sum of the recurring charges active in a given calendar month. */
-function chargesForMonth(charges: RecurringCharge[], year: number, month: number): number {
-  return charges.reduce((s, c) => s + (chargeActiveInMonth(c, year, month) ? c.amount : 0), 0);
-}
-
-/** Whether a charge should count as already paid in the *current* calendar month.
- *  A manual mark for this month wins; otherwise a matching transaction or being on/past
- *  the charge's usual billing day marks it paid automatically. */
-function chargePaidThisMonth(c: RecurringCharge, txSeen: boolean): boolean {
-  if (c.paidOverride && c.paidOverride.month === THIS_MONTH_KEY) return c.paidOverride.paid;
-  if (txSeen) return true;
-  if (c.chargeDay != null && CUR_DAY >= c.chargeDay) return true;
-  return false;
-}
-
-/** Month the charge stops running (its last active month), or null if ongoing / unscheduled. */
-function chargeEndMonth(c: { startYear?: number; startMonth?: number; durationMonths?: number | null }): { year: number; month: number } | null {
-  if (!c.startYear || !c.startMonth || !c.durationMonths || c.durationMonths <= 0) return null;
-  const tot = (c.startMonth - 1) + c.durationMonths - 1;
-  return { year: c.startYear + Math.floor(tot / 12), month: (tot % 12) + 1 };
-}
-
 interface MonthData {
   year: number; month: number; balance: number; net: number; salary: number; netSalary: number;
   /** All cash in for the month: net salary + net bonuses/vests + positive one-time events. */
   inflow: number;
   /** All cash out: charges/expenses + loans + scenario spends + negative one-time events. */
   outflow: number;
-}
-
-// Returns the payment amount for a loan in a given calendar month, respecting deferral.
-function loanPaymentForMonth(
-  loan: { monthly_payment: number; deferral_months: number | null; created_at: string | null },
-  year: number,
-  month: number,
-): number {
-  const defMonths = loan.deferral_months ?? 0;
-  if (!defMonths) return loan.monthly_payment;
-  const created = loan.created_at ? new Date(loan.created_at) : null;
-  if (!created || isNaN(created.getTime())) return loan.monthly_payment;
-  // First payment month = created date + deferral_months calendar months
-  const firstPayYear  = created.getFullYear() + Math.floor((created.getMonth() + defMonths) / 12);
-  const firstPayMonth = ((created.getMonth() + defMonths) % 12) + 1; // 1-indexed
-  return (year > firstPayYear || (year === firstPayYear && month >= firstPayMonth))
-    ? loan.monthly_payment
-    : 0;
-}
-
-/** True if a payoff override is set and the (year, month) is at or after the override month. */
-function isLoanPaidOffBy(override: string | undefined, year: number, month: number): boolean {
-  if (!override) return false;
-  const [oy, om] = override.split("-").map(Number);
-  if (!oy || !om) return false;
-  return year * 12 + month >= oy * 12 + om;
-}
-
-/** True if (y, m) is exactly the payoff month set on this loan. */
-function isLoanPayoffMonth(override: string | undefined, year: number, month: number): boolean {
-  if (!override) return false;
-  const [oy, om] = override.split("-").map(Number);
-  return oy === year && om === month;
-}
-
-/**
- * Walks the loan forward from "now" with normal monthly payments and returns the (year, month)
- * of the FINAL payment — i.e. the month the loan is fully paid off. Returns null if the loan
- * doesn't naturally amortize (no payment / no balance / minimum payment can't cover interest).
- */
-function loanNaturalPayoffMonth(
-  loan: { balance: number; interest_rate: number; monthly_payment: number; deferral_months: number | null; deferral_type?: string | null; created_at: string | null },
-  now: Date = new Date(),
-): { year: number; month: number } | null {
-  if (loan.balance <= 0 || loan.monthly_payment <= 0) return null;
-  const r = (loan.interest_rate ?? 0) / 100 / 12;
-  const subsidized = (loan.deferral_type ?? "unsubsidized") === "subsidized";
-  const created = loan.created_at ? new Date(loan.created_at) : now;
-  const defMonths = loan.deferral_months ?? 0;
-  const firstPay = defMonths > 0 ? new Date(created.getFullYear(), created.getMonth() + defMonths, 1) : null;
-
-  let bal = loan.balance;
-  let y = now.getFullYear();
-  let m = now.getMonth() + 1;
-  let last: { year: number; month: number } | null = null;
-  for (let i = 0; i < 720; i++) { // 60-year safety
-    if (bal <= 0.005) break;
-    const stepDate = new Date(y, m - 1, 1);
-    const inDeferral = firstPay && stepDate < firstPay;
-    if (inDeferral) {
-      if (!subsidized && r > 0) bal += bal * r;
-    } else {
-      const interest = r > 0 ? bal * r : 0;
-      // Payment can't cover interest → loan never amortizes.
-      if (loan.monthly_payment <= interest && bal > 0) return null;
-      const payment = Math.min(loan.monthly_payment, bal + interest);
-      bal = Math.max(0, bal - (payment - interest));
-      last = { year: y, month: m };
-      if (bal <= 0.005) break;
-    }
-    m++;
-    if (m > 12) { m = 1; y++; }
-  }
-  return last;
-}
-
-/** True if (y, m) is strictly after the loan's natural last-payment month. */
-function isAfterPayoff(end: { year: number; month: number } | null, year: number, month: number): boolean {
-  if (!end) return false;
-  return year * 12 + month > end.year * 12 + end.month;
-}
-
-/**
- * What does the loan's balance look like ENTERING the target (year, month), if we make normal
- * monthly payments from now until then? This is the lump-sum the user would owe to pay it off in
- * that month — interest and any in-progress deferral are baked in.
- */
-function projectLoanBalanceAt(
-  loan: { balance: number; interest_rate: number; monthly_payment: number; deferral_months: number | null; deferral_type?: string | null; created_at: string | null },
-  targetYear: number,
-  targetMonth: number,
-  now: Date = new Date(),
-): number {
-  const monthsAhead = (targetYear - now.getFullYear()) * 12 + (targetMonth - 1 - now.getMonth());
-  if (monthsAhead <= 0 || loan.balance <= 0) return Math.max(0, loan.balance);
-
-  const r = (loan.interest_rate ?? 0) / 100 / 12;
-  const defMonths = loan.deferral_months ?? 0;
-  const subsidized = (loan.deferral_type ?? "unsubsidized") === "subsidized";
-  const created = loan.created_at ? new Date(loan.created_at) : now;
-  const firstPay = defMonths > 0 ? new Date(created.getFullYear(), created.getMonth() + defMonths, 1) : null;
-
-  let bal = loan.balance;
-  for (let i = 0; i < monthsAhead; i++) {
-    if (bal <= 0) break;
-    const step = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
-    const inDeferral = firstPay && step < firstPay;
-    if (inDeferral) {
-      if (!subsidized && r > 0) bal += bal * r;
-    } else {
-      const interest = r > 0 ? bal * r : 0;
-      const payment = Math.min(loan.monthly_payment, bal + interest);
-      bal = Math.max(0, bal - (payment - interest));
-    }
-  }
-  return Math.round(bal * 100) / 100;
 }
 
 function projectBalances(
@@ -461,7 +315,13 @@ function projectBalances(
     // Use take-home (post-tax) salary so the projection matches what the per-month
     // Income cell displays. Otherwise the chart silently overstates available cash by
     // ~tax%, and the year totals would diverge from the sum of per-month values.
-    const netSalary = computeMonthlyNet(salary * 12, filingStatus, y);
+    const activeSalaries = config.salaryPeriods
+      .filter(p => getSalaryForMonth([p], y, m) > 0)
+      .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth));
+    const activeSalary = activeSalaries[activeSalaries.length - 1];
+    const netSalary = activeSalary?.withholdingRate != null
+      ? salary * (1 - Math.max(0, Math.min(100, activeSalary.withholdingRate)) / 100)
+      : computeMonthlyNet(salary * 12, filingStatus, y);
     const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
     const evtNeg    = config.events.filter(e => e.year === y && e.month === m && e.amount < 0).reduce((s, e) => s - e.amount, 0);
     // Bonuses and vests are gross comp — count what lands after supplemental withholding.
@@ -658,10 +518,10 @@ interface AddEventForm { label: string; amount: string; type: EventType; }
 const EMPTY_FORM: AddEventForm = { label: "", amount: "", type: "bonus" };
 
 function MonthCard({
-  year, month, salary, netSalary, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
+  year, month, salary, netSalary, salaryPaid, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
   onAddEvent, onRemoveEvent,
 }: {
-  year: number; month: number; salary: number; netSalary: number; monthlyExpenses: number;
+  year: number; month: number; salary: number; netSalary: number; salaryPaid: boolean; monthlyExpenses: number;
   events: PlannerEvent[];
   vestEvents: VestEvent[];
   recurBonuses: RecurringBonus[];
@@ -735,6 +595,7 @@ function MonthCard({
         <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
           <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(netSalary)}</div>
+          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryPaid ? "text-green" : "text-foreground/35"}`}>{salaryPaid ? "Pay received" : "Pay expected later"}</div>}
           {salary > 0 && (
             <div className="invisible group-hover/inc:visible opacity-0 group-hover/inc:opacity-100 transition-opacity absolute z-30 left-1/2 -translate-x-1/2 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[170px] space-y-1 pointer-events-none">
               <div className="flex items-center justify-between gap-3 text-[10px]">
@@ -1542,6 +1403,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [addingSalary, setAddingSalary] = useState(false);
   const [newSP,        setNewSP]        = useState<Omit<SalaryPeriod, "id">>({
     startYear: CUR_YEAR, startMonth: CUR_MONTH, monthlySalary: 0, label: "",
+    payFrequency: "monthly", payDay1: 15, payDay2: 30, withholdingRate: undefined,
+    yearToDateGrossPay: undefined, yearToDateWithholding: undefined,
   });
   const [addingVest,   setAddingVest]   = useState(false);
   const [newVest,      setNewVest]      = useState<Omit<VestingGrant, "id">>({
@@ -1574,6 +1437,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   function markLoadFailed() { loadFailedRef.current = true; setLoadFailed(true); }
   const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(new Set());
   const [thisMonthTxKeys, setThisMonthTxKeys] = useState<Set<string>>(new Set());
+  const [calendarDay, setCalendarDay] = useState<number | null>(CUR_DAY);
 
   // Load planner config + loans on mount
   useEffect(() => {
@@ -1759,7 +1623,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   }
 
   function acceptSuggestion(s: RecurringSuggestion) {
-    setConfig(c => ({ ...c, recurringCharges: [...(c.recurringCharges ?? []), { id: uid(), label: s.label, amount: s.amount, category: "other" }] }));
+    setConfig(c => ({ ...c, recurringCharges: [...(c.recurringCharges ?? []), { id: uid(), label: s.label, amount: s.amount, category: "other", merchantKey: s.key }] }));
     dismissSuggestion(s.key);
   }
 
@@ -1876,7 +1740,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return (config.recurringCharges ?? []).reduce((s, rc) => {
       if (!chargeActiveInMonth(rc, CUR_YEAR, CUR_MONTH)) return s;
-      const rcKey = norm(rc.label);
+      const rcKey = rc.merchantKey ?? norm(rc.label);
       const seen = [...thisMonthTxKeys].some(k => k.includes(rcKey) || rcKey.includes(k));
       return chargePaidThisMonth(rc, seen) ? s + rc.amount : s;
     }, 0);
@@ -2094,6 +1958,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       startMonth: rc.startMonth ?? CUR_MONTH,
       durationMonths: rc.durationMonths ?? null,
       chargeDay: rc.chargeDay,
+      merchantKey: rc.merchantKey,
     });
   }
 
@@ -2200,6 +2065,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           <div className="flex items-center gap-2">
             <div className="p-1.5 bg-accent/10 rounded-lg"><Calendar className="w-4 h-4 text-accent" /></div>
             <h3 className="font-semibold text-sm">3-Year Projection</h3>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px] text-foreground/45">
+            <span className="rounded-md bg-green/10 px-2 py-1 text-green/80">Actual: imported and confirmed</span>
+            <span className="rounded-md bg-accent/10 px-2 py-1 text-accent-light">Projected: scheduled estimate</span>
+            <span className="rounded-md bg-yellow-500/10 px-2 py-1 text-yellow-300/80">Estimated: tax or quote assumption</span>
           </div>
           <div className="flex items-center gap-3 flex-wrap text-xs text-foreground/35">
             <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> one-time</span>
@@ -2384,6 +2254,38 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             </div>
           </div>
 
+          {/* A compact day-level view complements the month projection with the
+              dates that are most useful for checking the current month. */}
+          <div className="mb-3 rounded-2xl border border-border/30 bg-card/30 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-foreground/70">Payment calendar · {MONTHS_FULL[CUR_MONTH - 1]}</span>
+              <span className="text-[10px] text-foreground/35">bills and paydays</span>
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: new Date(CUR_YEAR, CUR_MONTH, 0).getDate() }, (_, i) => i + 1).map(day => {
+                const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, CUR_YEAR, CUR_MONTH) && c.chargeDay === day);
+                const pay = config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
+                const today = day === CUR_DAY;
+                return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`min-h-9 rounded-lg border p-1 text-center ${calendarDay === day ? "border-accent/60 bg-accent/10" : "border-border/20 bg-background/30"}`}>
+                  <div className="text-[9px] text-foreground/40">{day}</div>
+                  {bills.length > 0 && <div className="text-[10px] text-red" title={bills.map(b => b.label).join(", ")}>●</div>}
+                  {pay && <div className="text-[10px] text-green" title="Payday">◆</div>}
+                </button>;
+              })}
+            </div>
+            {calendarDay !== null && (() => {
+              const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, CUR_YEAR, CUR_MONTH) && c.chargeDay === calendarDay);
+              const pay = config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay));
+              return <div className="mt-2 rounded-lg border border-border/20 bg-background/30 px-3 py-2 text-[10px] text-foreground/55">
+                <span className="font-semibold text-foreground/70">{MONTHS_SHORT[CUR_MONTH - 1]} {calendarDay}</span>
+                {bills.length === 0 && pay.length === 0 && <span className="ml-2">Nothing scheduled</span>}
+                {bills.map(b => <span key={b.id} className="ml-2 text-red">Bill: {b.label} ({formatCurrency(b.amount)})</span>)}
+                {pay.map(p => <span key={p.id} className="ml-2 text-green">Payday: {p.label || "Salary"}</span>)}
+              </div>;
+            })()}
+            <div className="mt-2 flex gap-3 text-[10px] text-foreground/40"><span><b className="text-red">●</b> bill</span><span><b className="text-green">◆</b> payday</span></div>
+          </div>
+
           {/* Month grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
           {yearData.map((d, i) => {
@@ -2401,7 +2303,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               <MonthCard
                 key={i}
                 year={d.year} month={d.month}
-                salary={d.salary} netSalary={netSalary} monthlyExpenses={isToday
+                salary={d.salary} netSalary={netSalary} salaryPaid={isToday && config.salaryPeriods.some(sp => getSalaryForMonth([sp], d.year, d.month) > 0 && salaryPaidThisMonth(sp))}
+                monthlyExpenses={isToday
                   ? Math.max(0, monthCharges - paidChargesTotal)
                   : monthCharges}
                 events={eventsM} vestEvents={vestEventsM} recurBonuses={recurBonusM}
@@ -2607,7 +2510,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   );
                 }
                 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-                const rcKey = norm(rc.label);
+                const rcKey = rc.merchantKey ?? norm(rc.label);
                 const seenThisMonth = [...thisMonthTxKeys].some(k => k.includes(rcKey) || rcKey.includes(k));
                 const activeNow = chargeActiveInMonth(rc, CUR_YEAR, CUR_MONTH);
                 const end = chargeEndMonth(rc);
@@ -2655,12 +2558,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     </div>
                     <button
                       onClick={() => startEditCharge(rc)}
-                      className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-foreground transition-all shrink-0">
+                      className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/30 hover:text-foreground transition-all shrink-0" aria-label={`Edit ${rc.label}`}>
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => setConfig(c => ({ ...c, recurringCharges: (c.recurringCharges ?? []).filter(x => x.id !== rc.id) }))}
-                      className="opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red transition-all shrink-0">
+                      className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/30 hover:text-red transition-all shrink-0" aria-label={`Delete ${rc.label}`}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -2786,6 +2689,25 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     <input type="number" value={salaryDraft.monthlySalary ?? sp.monthlySalary}
                       onChange={e => setSalaryDraft(d => ({ ...d, monthlySalary: parseFloat(e.target.value) || 0 }))}
                       placeholder="/mo" className="w-28 shrink-0 bg-background border border-border/50 rounded-lg px-2.5 py-1 text-xs text-foreground" />
+                    <select value={salaryDraft.payFrequency ?? sp.payFrequency ?? "monthly"} onChange={e => setSalaryDraft(d => ({ ...d, payFrequency: e.target.value as SalaryPeriod["payFrequency"] }))}
+                      className="bg-background border border-border/50 rounded-lg px-2.5 py-1 text-xs text-foreground shrink-0">
+                      <option value="monthly">Monthly</option><option value="semimonthly">Twice monthly</option><option value="biweekly">Biweekly</option><option value="weekly">Weekly</option>
+                    </select>
+                    <input type="number" min={1} max={31} value={salaryDraft.payDay1 ?? sp.payDay1 ?? 15}
+                      onChange={e => setSalaryDraft(d => ({ ...d, payDay1: Math.min(31, Math.max(1, parseInt(e.target.value) || 1)) }))}
+                      className="w-14 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="First payday" />
+                    {(salaryDraft.payFrequency ?? sp.payFrequency ?? "monthly") === "semimonthly" && <input type="number" min={1} max={31} value={salaryDraft.payDay2 ?? sp.payDay2 ?? 30}
+                      onChange={e => setSalaryDraft(d => ({ ...d, payDay2: Math.min(31, Math.max(1, parseInt(e.target.value) || 1)) }))}
+                      className="w-14 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Second payday" />}
+                    <input type="number" min={0} max={100} step="0.01" value={salaryDraft.withholdingRate ?? sp.withholdingRate ?? ""}
+                      onChange={e => setSalaryDraft(d => ({ ...d, withholdingRate: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+                      placeholder="Tax %" className="w-16 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Actual paycheck withholding rate" />
+                    <input type="number" min={0} step="0.01" value={salaryDraft.yearToDateGrossPay ?? sp.yearToDateGrossPay ?? ""}
+                      onChange={e => setSalaryDraft(d => ({ ...d, yearToDateGrossPay: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+                      placeholder="YTD gross" className="w-20 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Year-to-date gross pay" />
+                    <input type="number" min={0} step="0.01" value={salaryDraft.yearToDateWithholding ?? sp.yearToDateWithholding ?? ""}
+                      onChange={e => setSalaryDraft(d => ({ ...d, yearToDateWithholding: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+                      placeholder="YTD tax" className="w-20 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Year-to-date tax withheld" />
                     <button onClick={() => saveSalaryEdit(sp.id)} className="text-green hover:text-green-300 shrink-0"><Check className="w-4 h-4" /></button>
                     <button onClick={() => setEditingId(null)} className="text-foreground/30 hover:text-foreground shrink-0"><X className="w-4 h-4" /></button>
                   </>
@@ -2798,6 +2720,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     </div>
                     <span className="text-green font-semibold text-sm shrink-0 tabular-nums">
                       +{formatCurrency(sp.monthlySalary)}<span className="text-foreground/45 font-normal text-xs ml-0.5">/mo</span>
+                    </span>
+                    <span className="text-[10px] text-foreground/40 shrink-0">
+                      {sp.payFrequency === "semimonthly" ? `2x/mo · ${sp.payDay1 ?? 15}/${sp.payDay2 ?? 30}` : `${sp.payFrequency ?? "monthly"} · ${sp.payDay1 ?? 15}`}
+                      {sp.withholdingRate != null ? ` · ${sp.withholdingRate}% withheld` : ""}
                     </span>
                     <button onClick={() => { setEditingId(sp.id); setSalaryDraft({ ...sp }); }}
                       className="opacity-0 group-hover:opacity-100 text-foreground/40 hover:text-foreground transition-all shrink-0"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -2817,6 +2743,39 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Label</label>
                 <input autoFocus value={newSP.label} onChange={e => setNewSP(f => ({ ...f, label: e.target.value }))}
                   placeholder="e.g. After promotion" className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25 w-40" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Pay frequency</label>
+                <select value={newSP.payFrequency} onChange={e => setNewSP(f => ({ ...f, payFrequency: e.target.value as SalaryPeriod["payFrequency"] }))}
+                  className="bg-card border border-border/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground">
+                  <option value="monthly">Monthly</option><option value="semimonthly">Twice monthly</option><option value="biweekly">Biweekly</option><option value="weekly">Weekly</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Pay day(s)</label>
+                <div className="flex gap-1">
+                  <input type="number" min={1} max={31} value={newSP.payDay1 ?? 15} onChange={e => setNewSP(f => ({ ...f, payDay1: parseInt(e.target.value) || 15 }))}
+                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-14" />
+                  {newSP.payFrequency === "semimonthly" && <input type="number" min={1} max={31} value={newSP.payDay2 ?? 30} onChange={e => setNewSP(f => ({ ...f, payDay2: parseInt(e.target.value) || 30 }))}
+                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-14" />}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Actual tax withheld %</label>
+                <input type="number" min={0} max={100} step="0.01" placeholder="Use estimate" value={newSP.withholdingRate ?? ""}
+                  onChange={e => setNewSP(f => ({ ...f, withholdingRate: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+                  className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-28" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Year-to-date tracking</label>
+                <div className="flex gap-1">
+                  <input type="number" min={0} step="0.01" placeholder="Gross" value={newSP.yearToDateGrossPay ?? ""}
+                    onChange={e => setNewSP(f => ({ ...f, yearToDateGrossPay: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-24" aria-label="Year-to-date gross pay" />
+                  <input type="number" min={0} step="0.01" placeholder="Tax" value={newSP.yearToDateWithholding ?? ""}
+                    onChange={e => setNewSP(f => ({ ...f, yearToDateWithholding: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
+                    className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-24" aria-label="Year-to-date tax withheld" />
+                </div>
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Starting month</label>
@@ -3155,16 +3114,15 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                           {MONTHS_FULL.map((m, i) => <option key={i} value={String(i + 1).padStart(2, "0")}>{m}</option>)}
                         </select>
                         <select value={override ? override.split("-")[0] : ""}
-                          disabled={!override}
                           onChange={e => {
                             const y = e.target.value;
-                            if (!override) return;
-                            const m = override.split("-")[1];
+                            if (!y) { setLoanPayoffOverride(loan.id, null); return; }
+                            const m = override?.split("-")[1] ?? String(CUR_MONTH).padStart(2, "0");
                             setLoanPayoffOverride(loan.id, `${y}-${m}`);
                           }}
-                          className="bg-background border border-border/40 rounded-md px-1.5 py-0.5 text-[11px] text-foreground/80 disabled:opacity-40">
+                          className="bg-background border border-border/40 rounded-md px-1.5 py-0.5 text-[11px] text-foreground/80">
                           <option value="">year</option>
-                          {[CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3, CUR_YEAR + 4].map(y => <option key={y} value={y}>{y}</option>)}
+                          {[CUR_YEAR - 1, CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3, CUR_YEAR + 4].map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
                         {override && (() => {
                           const [oy, om] = override.split("-").map(Number);

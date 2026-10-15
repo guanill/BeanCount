@@ -50,4 +50,17 @@ The Overview's **Stock & Investments** card has a **Holdings** panel. Pick any e
   No API key or extra configuration is needed beyond deploying the function:
   `supabase functions deploy stock-quote`.
 
+Each stock position can also store its total cost paid. The Holdings panel shows
+market gain/loss from that cost basis, and the live stock valuation feeds the
+Overview asset totals and net worth while quotes are available. Apply
+`supabase/migrations/20261014000000_stock_cost_basis.sql` before using the field.
+
+Planner salary periods support monthly, twice-monthly, biweekly, and weekly
+pay schedules, optional payday numbers, actual paycheck withholding, and optional
+year-to-date gross pay and tax-withheld tracking
+percentage. The current-month planner card indicates whether the configured
+payday has arrived; the percentage is used for take-home projections. Recurring
+charges can likewise be auto-marked paid after their configured billing day,
+and the planner includes a day-level payment calendar.
+
 Run the unit tests with `npm test` (Node 22+).

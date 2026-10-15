@@ -53,6 +53,7 @@ CREATE TABLE stock_holdings (
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   ticker text NOT NULL CHECK (ticker ~ '^[A-Z0-9.-]{1,12}$'),
   shares numeric(28,8) NOT NULL CHECK (shares > 0),
+  cost_basis numeric(18,2),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, ticker)
@@ -60,6 +61,37 @@ CREATE TABLE stock_holdings (
 
 CREATE INDEX idx_stock_holdings_user_id ON stock_holdings(user_id);
 CREATE INDEX idx_stock_holdings_account_id ON stock_holdings(account_id);
+
+-- ============================================================
+-- NET WORTH SNAPSHOTS — one daily snapshot per user for trend history.
+-- Stock and crypto totals remain separate so the overview can show each
+-- asset class independently.
+-- ============================================================
+CREATE TABLE net_worth_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  snapshot_date date NOT NULL DEFAULT CURRENT_DATE,
+  net_worth numeric(18,2) NOT NULL,
+  assets_total numeric(18,2) NOT NULL,
+  stock_total numeric(18,2) NOT NULL DEFAULT 0,
+  crypto_total numeric(18,2) NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, snapshot_date)
+);
+
+CREATE INDEX idx_net_worth_snapshots_user_date
+  ON net_worth_snapshots(user_id, snapshot_date DESC);
+
+-- The composite relationship below prevents linking a holding to another
+-- user's account (the account_id-only FK is replaced in the migration).
+ALTER TABLE accounts
+  ADD CONSTRAINT accounts_user_id_id_key UNIQUE (user_id, id);
+ALTER TABLE stock_holdings
+  DROP CONSTRAINT IF EXISTS stock_holdings_account_id_fkey;
+ALTER TABLE stock_holdings
+  ADD CONSTRAINT stock_holdings_user_account_fkey
+  FOREIGN KEY (user_id, account_id) REFERENCES accounts (user_id, id)
+  ON DELETE CASCADE;
 
 -- ============================================================
 -- CREDIT CARDS
@@ -222,7 +254,7 @@ DECLARE
   tbl text;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'accounts', 'stock_holdings', 'credit_cards', 'debts_owed', 'transactions',
+    'accounts', 'stock_holdings', 'net_worth_snapshots', 'credit_cards', 'debts_owed', 'transactions',
     'liabilities', 'loans', 'plaid_sync_cursors', 'planner_configs'
   ])
   LOOP
@@ -275,3 +307,5 @@ ALTER PUBLICATION supabase_realtime ADD TABLE transactions;
 ALTER PUBLICATION supabase_realtime ADD TABLE debts_owed;
 ALTER PUBLICATION supabase_realtime ADD TABLE liabilities;
 ALTER PUBLICATION supabase_realtime ADD TABLE loans;
+ALTER PUBLICATION supabase_realtime ADD TABLE stock_holdings;
+ALTER PUBLICATION supabase_realtime ADD TABLE planner_configs;
