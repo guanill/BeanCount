@@ -324,6 +324,14 @@ function projectBalances(
     const netSalary = activeSalary?.withholdingRate != null
       ? salary * (1 - Math.max(0, Math.min(100, activeSalary.withholdingRate)) / 100)
       : computeMonthlyNet(salary * 12, filingStatus, y);
+    const monthKey = `${y}-${String(m).padStart(2, "0")}`;
+    const payDays = activeSalary
+      ? (activeSalary.payFrequency === "semimonthly" ? [activeSalary.payDay1 ?? 15, activeSalary.payDay2 ?? 30] : [activeSalary.payDay1 ?? 15])
+      : [];
+    const paidSalary = y === CUR_YEAR && m === CUR_MONTH
+      ? payDays.filter(day => (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
+        (payDays.length > 0 ? netSalary / payDays.length : 0)
+      : 0;
     const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
     const evtNeg    = config.events.filter(e => e.year === y && e.month === m && e.amount < 0).reduce((s, e) => s - e.amount, 0);
     // Bonuses and vests are gross comp — count what lands after supplemental withholding.
@@ -339,7 +347,7 @@ function projectBalances(
     const expenseTotal = (charges.length > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
-    const inflow  = netSalary + vestSum + bonusSum + evtPos;
+    const inflow  = Math.max(0, netSalary - paidSalary) + vestSum + bonusSum + evtPos;
     const outflow = expenseTotal + scenarioSum + evtNeg;
     const net = inflow - outflow;
     balance += net;
@@ -607,8 +615,8 @@ function MonthCard({
         {/* Income (with breakdown popover) */}
         <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
-          <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(netSalary)}</div>
-          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived >= netSalary ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? "Pay received" : salaryDue > salaryReceived ? `${formatCurrency(Math.max(0, salaryDue - salaryReceived))} left to receive` : "Pay expected later"}</div>}
+          <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(Math.max(0, netSalary - salaryReceived))}</div>
+          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived >= netSalary ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? `Paid ${formatCurrency(salaryReceived)}` : salaryDue > salaryReceived ? `${formatCurrency(Math.max(0, salaryDue - salaryReceived))} income left` : "Income expected later"}</div>}
           {isToday && paychecks.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {paychecks.map(paycheck => (
