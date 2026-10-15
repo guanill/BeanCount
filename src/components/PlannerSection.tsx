@@ -2685,7 +2685,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           )}
           <div className="space-y-1.5">
             {config.salaryPeriods.map((sp, idx) => (
-              <div key={sp.id} className={`group flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
+              <div key={sp.id} className={`group flex min-w-0 flex-wrap items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${
                 editingId === sp.id
                   ? "bg-card border-border/60"
                   : "bg-card border-border/40 hover:border-border/70"
@@ -2723,20 +2723,22 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     <input type="number" min={0} step="0.01" value={salaryDraft.yearToDateWithholding ?? sp.yearToDateWithholding ?? ""}
                       onChange={e => setSalaryDraft(d => ({ ...d, yearToDateWithholding: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
                       placeholder="YTD tax" className="w-20 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Year-to-date tax withheld" />
-                    <button onClick={() => saveSalaryEdit(sp.id)} className="text-green hover:text-green-300 shrink-0"><Check className="w-4 h-4" /></button>
-                    <button onClick={() => setEditingId(null)} className="text-foreground/30 hover:text-foreground shrink-0"><X className="w-4 h-4" /></button>
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                      <button onClick={() => saveSalaryEdit(sp.id)} className="text-green hover:text-green-300" aria-label="Save income schedule"><Check className="w-4 h-4" /></button>
+                      <button onClick={() => setEditingId(null)} className="text-foreground/30 hover:text-foreground" aria-label="Cancel income schedule edit"><X className="w-4 h-4" /></button>
+                    </div>
                   </>
                 ) : (
                   <>
                     <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${idx === 0 ? "bg-green" : "bg-green-light"}`} />
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <span className="text-sm text-foreground font-medium">{sp.label || "Salary period"}</span>
                       <span className="text-[11px] text-foreground/50 ml-2">from {MONTHS_FULL[sp.startMonth - 1]} {sp.startYear}</span>
                     </div>
                     <span className="text-green font-semibold text-sm shrink-0 tabular-nums">
                       +{formatCurrency(sp.monthlySalary)}<span className="text-foreground/45 font-normal text-xs ml-0.5">/mo</span>
                     </span>
-                    <span className="text-[10px] text-foreground/40 shrink-0">
+                    <span className="max-w-full text-[10px] text-foreground/40 shrink-0">
                       {sp.payFrequency === "semimonthly" ? `2x/mo · ${sp.payDay1 ?? 15}/${sp.payDay2 ?? 30}` : `${sp.payFrequency ?? "monthly"} · ${sp.payDay1 ?? 15}`}
                       {sp.withholdingRate != null ? ` · ${sp.withholdingRate}% withheld` : ""}
                     </span>
