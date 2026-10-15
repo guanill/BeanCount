@@ -14,7 +14,7 @@ import {
 import {
   chargeActiveInMonth, chargeEndMonth, chargePaidThisMonth, chargesForMonth,
   getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth,
-  loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt, salaryPaidThisMonth,
+  loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt,
 } from "@/lib/planner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,6 +41,7 @@ interface SalaryPeriod {
   withholdingRate?: number;
   yearToDateGrossPay?: number;
   yearToDateWithholding?: number;
+  paidPaydays?: Record<string, number[]>;
 }
 
 interface VestingGrant {
@@ -152,16 +153,6 @@ function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
   return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
-}
-
-function salaryReceivedSoFar(period: SalaryPeriod, date = NOW): number {
-  if (date.getFullYear() !== CUR_YEAR || date.getMonth() + 1 !== CUR_MONTH) return 0;
-  const frequency = period.payFrequency ?? "monthly";
-  const day = date.getDate();
-  if (frequency === "semimonthly") {
-    return period.monthlySalary * ((day >= (period.payDay2 ?? 30) ? 1 : day >= (period.payDay1 ?? 15) ? 0.5 : 0));
-  }
-  return day >= (period.payDay1 ?? 15) ? period.monthlySalary : 0;
 }
 
 const DEFAULT_CONFIG: PlannerConfig = {
@@ -528,11 +519,21 @@ function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single
 interface AddEventForm { label: string; amount: string; type: EventType; }
 const EMPTY_FORM: AddEventForm = { label: "", amount: "", type: "bonus" };
 
+interface PaycheckMarker {
+  id: string;
+  label: string;
+  day: number;
+  amount: number;
+  due: boolean;
+  paid: boolean;
+}
+
 function MonthCard({
-  year, month, salary, netSalary, salaryPaid, salaryReceived, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
+  year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
   onAddEvent, onRemoveEvent,
+  onTogglePaycheck,
 }: {
-  year: number; month: number; salary: number; netSalary: number; salaryPaid: boolean; salaryReceived: number; monthlyExpenses: number;
+  year: number; month: number; salary: number; netSalary: number; salaryReceived: number; salaryDue: number; paychecks: PaycheckMarker[]; monthlyExpenses: number;
   events: PlannerEvent[];
   vestEvents: VestEvent[];
   recurBonuses: RecurringBonus[];
@@ -544,6 +545,7 @@ function MonthCard({
   isPast: boolean; isToday: boolean;
   onAddEvent: (ev: Omit<PlannerEvent, "id">) => void;
   onRemoveEvent: (id: string) => void;
+  onTogglePaycheck: (id: string, day: number) => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm]     = useState<AddEventForm>(EMPTY_FORM);
@@ -606,7 +608,18 @@ function MonthCard({
         <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
           <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(netSalary)}</div>
-          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived > 0 ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? "Pay received" : salaryReceived > 0 ? `${formatCurrency(Math.max(0, netSalary - salaryReceived))} left to receive` : "Pay expected later"}</div>}
+          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived >= netSalary ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? "Pay received" : salaryDue > salaryReceived ? `${formatCurrency(Math.max(0, salaryDue - salaryReceived))} left to receive` : "Pay expected later"}</div>}
+          {isToday && paychecks.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {paychecks.map(paycheck => (
+                <button key={paycheck.id} type="button" disabled={!paycheck.due}
+                  onClick={() => onTogglePaycheck(paycheck.id, paycheck.day)}
+                  className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
+                  {paycheck.paid ? `Paid ${paycheck.day}` : paycheck.due ? `Mark ${paycheck.day} paid` : `${paycheck.day} upcoming`}
+                </button>
+              ))}
+            </div>
+          )}
           {salary > 0 && (
             <div className="invisible group-hover/inc:visible opacity-0 group-hover/inc:opacity-100 transition-opacity absolute z-30 left-1/2 -translate-x-1/2 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[170px] space-y-1 pointer-events-none">
               <div className="flex items-center justify-between gap-3 text-[10px]">
@@ -2002,6 +2015,29 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     setEditingId(null);
   }
 
+  function togglePaycheck(periodId: string, day: number) {
+    const monthKey = THIS_MONTH_KEY;
+    setConfig(c => ({
+      ...c,
+      salaryPeriods: c.salaryPeriods.map(period => {
+        if (period.id !== periodId) return period;
+        const current = period.paidPaydays?.[monthKey] ?? [];
+        const next = current.includes(day) ? current.filter(value => value !== day) : [...current, day];
+        return { ...period, paidPaydays: { ...(period.paidPaydays ?? {}), [monthKey]: next } };
+      }),
+    }));
+  }
+
+  function paycheckDays(period: SalaryPeriod): number[] {
+    if (period.payFrequency === "semimonthly") return [period.payDay1 ?? 15, period.payDay2 ?? 30];
+    return [period.payDay1 ?? 15];
+  }
+
+  function paycheckNet(period: SalaryPeriod, count: number): number {
+    const rate = Math.max(0, Math.min(100, period.withholdingRate ?? 0)) / 100;
+    return (period.monthlySalary / count) * (1 - rate);
+  }
+
   const yearsWithData = [CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3];
 
   // ── Tax estimate ──
@@ -2311,6 +2347,22 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             const isPast  = d.year < CUR_YEAR || (d.year === CUR_YEAR && d.month < CUR_MONTH);
             const isToday = d.year === CUR_YEAR && d.month === CUR_MONTH;
             const netSalary = d.netSalary;
+            const currentMonthPaychecks: PaycheckMarker[] = isToday
+              ? config.salaryPeriods.flatMap(period => {
+                  const days = paycheckDays(period);
+                  const paid = period.paidPaydays?.[THIS_MONTH_KEY] ?? [];
+                  return days.map(day => ({
+                    id: `${period.id}-${day}`,
+                    label: period.label || "Salary",
+                    day,
+                    amount: paycheckNet(period, days.length),
+                    due: CUR_DAY >= day,
+                    paid: paid.includes(day),
+                  }));
+                })
+              : [];
+            const salaryReceived = currentMonthPaychecks.filter(p => p.paid).reduce((sum, p) => sum + p.amount, 0);
+            const salaryDue = currentMonthPaychecks.filter(p => p.due).reduce((sum, p) => sum + p.amount, 0);
             const monthCharges = (config.recurringCharges ?? []).length > 0
               ? chargesForMonth(config.recurringCharges ?? [], d.year, d.month)
               : config.monthlyExpenses;
@@ -2318,7 +2370,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               <MonthCard
                 key={i}
                 year={d.year} month={d.month}
-                salary={d.salary} netSalary={netSalary} salaryReceived={config.salaryPeriods.reduce((sum, sp) => sum + salaryReceivedSoFar(sp), 0)} salaryPaid={isToday && config.salaryPeriods.some(sp => getSalaryForMonth([sp], d.year, d.month) > 0 && salaryPaidThisMonth(sp))}
+                salary={d.salary} netSalary={netSalary} salaryReceived={salaryReceived} salaryDue={salaryDue} paychecks={currentMonthPaychecks} onTogglePaycheck={togglePaycheck}
                 monthlyExpenses={isToday
                   ? Math.max(0, monthCharges - paidChargesTotal)
                   : monthCharges}
