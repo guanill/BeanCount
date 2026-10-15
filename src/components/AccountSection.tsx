@@ -66,9 +66,10 @@ interface Props {
   total: number;
   onRefresh: () => void;
   children?: React.ReactNode;
+  automaticHoldings?: boolean;
 }
 
-export default function AccountSection({ type, accounts, total, onRefresh, children }: Props) {
+export default function AccountSection({ type, accounts, total, onRefresh, children, automaticHoldings = false }: Props) {
   const { label, gradient, iconBg, Icon } = typeConfig[type];
   const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -219,12 +220,12 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                 {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
               </button>
             )}
-            <button
+            {!automaticHoldings && <button
               onClick={() => { setAdding(!adding); setEditingId(null); setAddValues({ name: "", balance: "" }); }}
               className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1"
             >
               <Plus className="w-3 h-3" /> Add
-            </button>
+            </button>}
           </div>
         </div>
       </div>
@@ -364,7 +365,7 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-sm font-bold text-foreground">{formatCurrency(account.balance, account.currency)}</span>
                       <div className="hidden group-hover:flex items-center gap-1">
-                        {!isLinked && (
+                        {!automaticHoldings && !isLinked && (
                           <button onClick={() => startEdit(account)} className="p-1 text-foreground/30 hover:text-accent transition-colors" title="Edit">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
@@ -374,9 +375,9 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                             <Unlink className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button onClick={() => { setConfirmAction("delete"); setConfirmId(account.id); }} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
+                        {!automaticHoldings && <button onClick={() => { setConfirmAction("delete"); setConfirmId(account.id); }} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
                           <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        </button>}
                       </div>
                     </div>
                   </div>

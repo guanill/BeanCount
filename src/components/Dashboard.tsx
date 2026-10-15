@@ -272,6 +272,7 @@ export default function Dashboard() {
                 accounts={data.accounts.stock}
                 total={effectiveStockTotal}
                 onRefresh={handleRefresh}
+                automaticHoldings
               >
                 <StockHoldings accounts={data.accounts.stock} assetClass="stock" onValuationChange={setStockHoldingsValue} />
               </AccountSection>
@@ -280,6 +281,7 @@ export default function Dashboard() {
                 accounts={data.accounts.crypto}
                 total={effectiveCryptoTotal}
                 onRefresh={handleRefresh}
+                automaticHoldings
               >
                 <StockHoldings accounts={data.accounts.crypto} assetClass="crypto" onValuationChange={setCryptoHoldingsValue} />
               </AccountSection>
