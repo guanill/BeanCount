@@ -2355,8 +2355,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             const isPast  = d.year < CUR_YEAR || (d.year === CUR_YEAR && d.month < CUR_MONTH);
             const isToday = d.year === CUR_YEAR && d.month === CUR_MONTH;
             const netSalary = d.netSalary;
+            const activeSalaryPeriod = config.salaryPeriods
+              .filter(period => period.startYear < CUR_YEAR || (period.startYear === CUR_YEAR && period.startMonth <= CUR_MONTH))
+              .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth))
+              .slice(-1)[0];
             const currentMonthPaychecks: PaycheckMarker[] = isToday
-              ? config.salaryPeriods.flatMap(period => {
+              ? (activeSalaryPeriod ? [activeSalaryPeriod] : []).flatMap(period => {
                   const days = paycheckDays(period);
                   const paid = period.paidPaydays?.[THIS_MONTH_KEY] ?? [];
                   return days.map(day => ({
