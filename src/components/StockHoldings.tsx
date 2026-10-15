@@ -14,6 +14,7 @@ import { fetchQuotes, normalizeTicker, type AssetClass } from "@/lib/quotes";
 import { valueHoldings, totalValue, PriceInfo } from "@/lib/holdings";
 import { Pencil, Trash2, Plus, RefreshCw, AlertTriangle } from "lucide-react";
 import { useToast } from "./Toast";
+import ConfirmDialog from "./ConfirmDialog";
 
 const REFRESH_MS = 5 * 60 * 1000;
 
@@ -27,9 +28,10 @@ interface Props {
   accounts: Account[];
   /** Picks the quote provider family and the unit wording. */
   assetClass: AssetClass;
+  onValuationChange?: (value: number) => void;
 }
 
-export default function StockHoldings({ accounts, assetClass }: Props) {
+export default function StockHoldings({ accounts, assetClass, onValuationChange }: Props) {
   const { toast } = useToast();
   const [holdings, setHoldings] = useState<StockHolding[]>([]);
   const [prices, setPrices] = useState<Record<string, PriceInfo>>({});
@@ -38,9 +40,10 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ account_id: "", ticker: "", shares: "" });
+  const [form, setForm] = useState({ account_id: "", ticker: "", shares: "", cost_basis: "" });
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ ticker: "", shares: "" });
+  const [editForm, setEditForm] = useState({ ticker: "", shares: "", cost_basis: "" });
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   // getStockHoldings returns every holding the user owns; this panel only governs
   // the ones under its own accounts. Scoping here keeps a second panel from
@@ -99,6 +102,7 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
 
   const valued = valueHoldings(ownHoldings, prices);
   const total = totalValue(valued);
+  useEffect(() => { onValuationChange?.(total); }, [total, onValuationChange]);
 
   const byAccount = accounts
     .map((a) => ({ account: a, items: valued.filter((v) => v.holding.account_id === a.id) }))
@@ -128,8 +132,10 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
       return;
     }
     await run(async () => {
-      await createStockHolding(createClient(), { account_id: form.account_id, ticker, shares });
-      setForm({ account_id: form.account_id, ticker: "", shares: "" });
+      const costBasis = form.cost_basis.trim() === "" ? null : Number(form.cost_basis);
+      if (costBasis !== null && (!Number.isFinite(costBasis) || costBasis < 0)) throw new Error("Enter a valid cost basis");
+      await createStockHolding(createClient(), { account_id: form.account_id, ticker, shares, cost_basis: costBasis });
+      setForm({ account_id: form.account_id, ticker: "", shares: "", cost_basis: "" });
       setAdding(false);
     }, "Holding added");
   }
@@ -142,13 +148,14 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
       return;
     }
     await run(async () => {
-      await updateStockHolding(createClient(), id, { ticker, shares });
+      const costBasis = editForm.cost_basis.trim() === "" ? null : Number(editForm.cost_basis);
+      if (costBasis !== null && (!Number.isFinite(costBasis) || costBasis < 0)) throw new Error("Enter a valid cost basis");
+      await updateStockHolding(createClient(), id, { ticker, shares, cost_basis: costBasis });
       setEditingId(null);
     }, "Holding updated");
   }
 
   async function remove(id: string) {
-    if (!confirm("Remove this holding?")) return;
     await run(() => deleteStockHolding(createClient(), id), "Holding removed");
   }
 
@@ -219,6 +226,9 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
               onChange={(e) => setForm({ ...form, shares: e.target.value })}
               className={`flex-1 ${input}`}
             />
+            {assetClass === "stock" && <input type="number" min="0" step="0.01" placeholder="Cost paid"
+              value={form.cost_basis} onChange={(e) => setForm({ ...form, cost_basis: e.target.value })}
+              className={`flex-1 ${input}`} />}
             <button type="button" onClick={saveNew} className="px-3 py-1.5 bg-accent text-white rounded-lg text-xs hover:bg-accent-light">Save</button>
             <button type="button" onClick={() => setAdding(false)} className="px-2 py-1.5 text-foreground/50 hover:text-foreground text-xs">Cancel</button>
           </div>
@@ -240,6 +250,7 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
                     <div className="flex items-center gap-2">
                       <input value={editForm.ticker} onChange={(e) => setEditForm({ ...editForm, ticker: e.target.value })} className={`w-20 uppercase ${input}`} />
                       <input type="number" step="any" min="0" value={editForm.shares} onChange={(e) => setEditForm({ ...editForm, shares: e.target.value })} className={`flex-1 ${input}`} />
+                      {assetClass === "stock" && <input type="number" min="0" step="0.01" placeholder="Cost paid" value={editForm.cost_basis} onChange={(e) => setEditForm({ ...editForm, cost_basis: e.target.value })} className={`flex-1 ${input}`} />}
                       <button type="button" onClick={() => saveEdit(h.id)} className="px-2 py-1 bg-accent text-white rounded-lg text-xs">Save</button>
                       <button type="button" onClick={() => setEditingId(null)} className="text-foreground/50 text-xs">Cancel</button>
                     </div>
@@ -252,17 +263,35 @@ export default function StockHoldings({ accounts, assetClass }: Props) {
                           {price === null ? "no quote" : formatCurrency(price)}
                           {price !== null && stale && <span className="ml-1 text-yellow-400/80">· stale</span>}
                         </p>
+                        {assetClass === "stock" && h.cost_basis != null && value !== null && (
+                          <p className={`text-[10px] ${value - h.cost_basis >= 0 ? "text-green" : "text-red"}`}>
+                            {value - h.cost_basis >= 0 ? "+" : ""}{formatCurrency(value - h.cost_basis)} gain/loss · {formatCurrency(h.cost_basis)} cost
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-sm font-bold text-foreground">{value === null ? "—" : formatCurrency(value)}</span>
-                        <div className="hidden group-hover:flex items-center gap-1">
-                          <button onClick={() => { setEditingId(h.id); setEditForm({ ticker: h.ticker, shares: String(h.shares) }); }} className="p-1 text-foreground/30 hover:text-accent" title="Edit">
+                        <div className="flex sm:hidden sm:group-hover:flex items-center gap-1">
+                          <button onClick={() => { setEditingId(h.id); setEditForm({ ticker: h.ticker, shares: String(h.shares), cost_basis: h.cost_basis == null ? "" : String(h.cost_basis) }); }} className="p-1 text-foreground/30 hover:text-accent" title="Edit">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => remove(h.id)} className="p-1 text-foreground/30 hover:text-red" title="Remove">
+                          <button onClick={() => setPendingDelete(h.id)} className="p-1 text-foreground/30 hover:text-red" title="Remove" aria-label={`Remove ${h.ticker}`}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
+                        <ConfirmDialog
+                          open={pendingDelete !== null}
+                          title="Remove holding?"
+                          description="This removes the position from your tracked portfolio. Historical transactions are not affected."
+                          confirmLabel="Remove"
+                          onCancel={() => setPendingDelete(null)}
+                          onConfirm={async () => {
+                            if (!pendingDelete) return;
+                            const id = pendingDelete;
+                            setPendingDelete(null);
+                            await remove(id);
+                          }}
+                        />
                       </div>
                     </div>
                   )}

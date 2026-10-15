@@ -1,12 +1,13 @@
 "use client";
 
 import { Liability } from "@/lib/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDate, daysUntil } from "@/lib/format";
 import { Landmark, Plus, Pencil, Trash2, Clock } from "lucide-react";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { createLiability, updateLiability, deleteLiability } from "@/lib/supabase/queries";
 import { useToast } from "./Toast";
+import ConfirmDialog from "./ConfirmDialog";
 
 const CATEGORIES = [
   { value: "pending",    label: "Pending Charge",  emoji: "⏳" },
@@ -19,18 +20,6 @@ const CATEGORIES = [
 
 function getCat(value: string) {
   return CATEGORIES.find(c => c.value === value) ?? CATEGORIES[CATEGORIES.length - 1];
-}
-
-function formatDate(d: string) {
-  const [y, m, day] = d.split("-");
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  return `${months[parseInt(m) - 1]} ${parseInt(day)}, ${y}`;
-}
-
-function daysUntil(d: string | null) {
-  if (!d) return null;
-  const diff = new Date(d).getTime() - new Date().setHours(0, 0, 0, 0);
-  return Math.ceil(diff / 86400000);
 }
 
 const EMPTY_FORM = { name: "", amount: "", category: "other", notes: "", due_date: "" };
@@ -47,6 +36,7 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
   const [addForm, setAddForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId]   = useState<string | null>(null);
   const [editForm, setEditForm]     = useState(EMPTY_FORM);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -91,7 +81,6 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Remove this liability?")) return;
     try {
       const supabase = createClient();
       await deleteLiability(supabase, id);
@@ -287,7 +276,7 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
                       <button onClick={() => startEdit(l)} className="p-1 text-foreground/30 hover:text-accent transition-colors">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => handleDelete(l.id)} className="p-1 text-foreground/30 hover:text-red-400 transition-colors">
+                      <button onClick={() => setDeleteId(l.id)} className="p-1 text-foreground/30 hover:text-red-400 transition-colors" aria-label="Remove liability">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -300,6 +289,14 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
         {liabilities.length === 0 && (
           <p className="text-center text-foreground/30 text-sm py-4">Nothing pending or owed</p>
         )}
+        <ConfirmDialog
+          open={deleteId !== null}
+          title="Remove liability?"
+          description="This will permanently remove this liability record."
+          confirmLabel="Remove"
+          onCancel={() => setDeleteId(null)}
+          onConfirm={() => { const id = deleteId; setDeleteId(null); if (id) void handleDelete(id); }}
+        />
       </div>
     </div>
   );

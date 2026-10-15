@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { createCreditCard, updateCreditCard, deleteCreditCard } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
 import { useToast } from "./Toast";
+import ConfirmDialog from "./ConfirmDialog";
 
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
 
@@ -44,6 +45,8 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   const [syncErrors, setSyncErrors] = useState<Record<string, SyncError>>({});
   const [editingPointsId, setEditingPointsId] = useState<string | null>(null);
   const [pointsForm, setPointsForm] = useState({ points_balance: "", points_value_cents: "" });
+  const [confirmAction, setConfirmAction] = useState<"disconnect" | "delete" | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const linkedCards = cards.filter((c) => c.teller_account_id);
   const hasLinked = linkedCards.length > 0;
@@ -74,7 +77,6 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   }
 
   async function handleDisconnectCard(id: string) {
-    if (!confirm("Disconnect from Teller? The card stays but won't auto-sync.")) return;
     await callEdgeFunction("teller-disconnect", { method: "POST", body: { id } });
     onRefresh();
   }
@@ -135,7 +137,6 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this credit card?")) return;
     try {
       const supabase = createClient();
       await deleteCreditCard(supabase, id);
@@ -439,11 +440,11 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                             </button>
                           )}
                           {card.teller_account_id && (
-                            <button onClick={() => handleDisconnectCard(card.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
+                            <button onClick={() => { setConfirmAction("disconnect"); setConfirmId(card.id); }} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller" aria-label="Disconnect credit card">
                               <Unlink className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button onClick={() => handleDelete(card.id)} className="p-1 text-foreground/30 hover:text-red transition-colors">
+                          <button onClick={() => { setConfirmAction("delete"); setConfirmId(card.id); }} className="p-1 text-foreground/30 hover:text-red transition-colors" aria-label="Delete credit card">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -579,6 +580,21 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
           {cards.length === 0 && (
             <p className="text-xs text-foreground/30">No cards yet</p>
           )}
+          <ConfirmDialog
+            open={confirmAction !== null}
+            title={confirmAction === "delete" ? "Delete credit card?" : "Disconnect credit card?"}
+            description={confirmAction === "delete" ? "This will permanently remove the credit card." : "The card will stay but stop syncing from Teller."}
+            confirmLabel={confirmAction === "delete" ? "Delete" : "Disconnect"}
+            onCancel={() => { setConfirmAction(null); setConfirmId(null); }}
+            onConfirm={() => {
+              const id = confirmId;
+              const action = confirmAction;
+              setConfirmAction(null);
+              setConfirmId(null);
+              if (id && action === "delete") void handleDelete(id);
+              if (id && action === "disconnect") void handleDisconnectCard(id);
+            }}
+          />
         </div>
       </div>
     </div>

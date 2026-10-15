@@ -27,6 +27,7 @@ import { createClient } from "@/lib/supabase/client";
 import { createAccount, updateAccount, deleteAccount } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
 import { useToast } from "./Toast";
+import ConfirmDialog from "./ConfirmDialog";
 
 // Teller Connect contains browser-only code — load client-side only
 const TellerConnectButton = dynamic(() => import("./TellerConnectButton"), { ssr: false });
@@ -77,12 +78,13 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [syncErrors, setSyncErrors] = useState<Record<string, SyncError>>({});
+  const [confirmAction, setConfirmAction] = useState<"delete" | "disconnect" | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const linkedAccounts = accounts.filter((a) => a.teller_account_id);
   const hasLinked = linkedAccounts.length > 0;
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this account?")) return;
     try {
       const supabase = createClient();
       await deleteAccount(supabase, id);
@@ -163,7 +165,6 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
   }
 
   async function handleDisconnect(id: string) {
-    if (!confirm("Disconnect from Teller? The account stays but won't auto-sync.")) return;
     await callEdgeFunction("teller-disconnect", { method: "POST", body: { id } });
     onRefresh();
   }
@@ -361,7 +362,7 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-sm font-bold text-foreground">{formatCurrency(account.balance)}</span>
+                      <span className="text-sm font-bold text-foreground">{formatCurrency(account.balance, account.currency)}</span>
                       <div className="hidden group-hover:flex items-center gap-1">
                         {!isLinked && (
                           <button onClick={() => startEdit(account)} className="p-1 text-foreground/30 hover:text-accent transition-colors" title="Edit">
@@ -369,11 +370,11 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                           </button>
                         )}
                         {isLinked && (
-                          <button onClick={() => handleDisconnect(account.id)} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
+                          <button onClick={() => { setConfirmAction("disconnect"); setConfirmId(account.id); }} className="p-1 text-foreground/30 hover:text-yellow-400 transition-colors" title="Disconnect Teller">
                             <Unlink className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button onClick={() => handleDelete(account.id)} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
+                        <button onClick={() => { setConfirmAction("delete"); setConfirmId(account.id); }} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -415,6 +416,21 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
         {accounts.length === 0 && (
           <p className="text-center text-foreground/30 text-sm py-4">No accounts yet</p>
         )}
+        <ConfirmDialog
+          open={confirmAction !== null}
+          title={confirmAction === "delete" ? "Delete account?" : "Disconnect account?"}
+          description={confirmAction === "delete" ? "This will permanently remove the account." : "The account will stay but stop syncing from Teller."}
+          confirmLabel={confirmAction === "delete" ? "Delete" : "Disconnect"}
+          onCancel={() => { setConfirmAction(null); setConfirmId(null); }}
+          onConfirm={() => {
+            const id = confirmId;
+            const action = confirmAction;
+            setConfirmAction(null);
+            setConfirmId(null);
+            if (id && action === "delete") void handleDelete(id);
+            if (id && action === "disconnect") void handleDisconnect(id);
+          }}
+        />
       </div>
       {children}
     </div>

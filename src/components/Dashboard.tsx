@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { DashboardData } from "@/lib/types";
+import { DashboardData, NetWorthSnapshot } from "@/lib/types";
 import NetWorthHero from "./NetWorthHero";
 import AccountSection from "./AccountSection";
 import StockHoldings from "./StockHoldings";
@@ -16,6 +16,8 @@ import LiabilitiesSection from "./LiabilitiesSection";
 import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, LogOut, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getDashboardData } from "@/lib/supabase/queries";
+import { getNetWorthHistory, saveNetWorthSnapshot } from "@/lib/supabase/queries";
+import NetWorthHistory from "./NetWorthHistory";
 
 type View = "overview" | "spending" | "planner" | "loans";
 const VIEWS: View[] = ["overview", "spending", "planner", "loans"];
@@ -33,6 +35,9 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState<View>(readViewFromHash);
   const [showSignOut, setShowSignOut] = useState(false);
+  const [stockHoldingsValue, setStockHoldingsValue] = useState<number | null>(null);
+  const [cryptoHoldingsValue, setCryptoHoldingsValue] = useState<number | null>(null);
+  const [netWorthHistory, setNetWorthHistory] = useState<NetWorthSnapshot[]>([]);
 
   // Sync view → URL hash, and respond to back/forward navigation.
   useEffect(() => {
@@ -54,6 +59,17 @@ export default function Dashboard() {
       const supabase = createClient();
       const dashboardData = await getDashboardData(supabase);
       setData(dashboardData);
+      try {
+        await saveNetWorthSnapshot(supabase, {
+          net_worth: dashboardData.totals.netWorth,
+          assets_total: dashboardData.totals.assetsTotal,
+          stock_total: dashboardData.totals.stockTotal,
+          crypto_total: dashboardData.totals.cryptoTotal,
+        });
+        setNetWorthHistory(await getNetWorthHistory(supabase));
+      } catch (historyError) {
+        console.error("Failed to update net worth history:", historyError);
+      }
     } catch (err) {
       console.error("Failed to fetch dashboard:", err);
     } finally {
@@ -69,14 +85,27 @@ export default function Dashboard() {
   // Realtime: auto-refresh when any table changes
   useEffect(() => {
     const supabase = createClient();
-    const tables = ["accounts", "credit_cards", "transactions", "debts_owed", "liabilities", "loans"];
+    const tables = [
+      "accounts",
+      "credit_cards",
+      "transactions",
+      "debts_owed",
+      "liabilities",
+      "loans",
+      "stock_holdings",
+      "planner_configs",
+    ];
     const channel = supabase.channel("dashboard-realtime");
     for (const table of tables) {
       channel.on("postgres_changes" as any, { event: "*", schema: "public", table }, () => {
         fetchData();
       });
     }
-    channel.subscribe();
+    channel.subscribe((status, err) => {
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.error("Dashboard realtime channel error:", err ?? status);
+      }
+    });
     return () => { supabase.removeChannel(channel); };
   }, [fetchData]);
 
@@ -84,6 +113,19 @@ export default function Dashboard() {
     setRefreshing(true);
     fetchData();
   };
+
+  const effectiveStockTotal = stockHoldingsValue !== null && stockHoldingsValue > 0
+    ? stockHoldingsValue
+    : data?.totals.stockTotal ?? 0;
+  const effectiveCryptoTotal = cryptoHoldingsValue !== null && cryptoHoldingsValue > 0
+    ? cryptoHoldingsValue
+    : data?.totals.cryptoTotal ?? 0;
+  const effectiveAssetsTotal = data
+    ? data.totals.assetsTotal - data.totals.stockTotal - data.totals.cryptoTotal + effectiveStockTotal + effectiveCryptoTotal
+    : 0;
+  const effectiveNetWorth = data
+    ? data.totals.netWorth - data.totals.stockTotal - data.totals.cryptoTotal + effectiveStockTotal + effectiveCryptoTotal
+    : 0;
 
   if (loading) {
     return (
@@ -190,15 +232,26 @@ export default function Dashboard() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8 space-y-6 sm:space-y-8">
         {view === "overview" && (
           <>
+            {data.accounts.bank.length + data.accounts.cash.length + data.accounts.stock.length + data.accounts.crypto.length === 0 && (
+              <section className="rounded-2xl border border-accent/30 bg-accent/10 p-5 sm:p-6">
+                <p className="text-xs font-semibold uppercase tracking-wider text-accent-light mb-1">Welcome to BeanCount</p>
+                <h2 className="text-xl font-bold text-foreground">Start with your first account</h2>
+                <p className="text-sm text-foreground/60 mt-1 max-w-xl">Add an account manually or connect your bank so your assets, spending, and net worth have a reliable starting point.</p>
+                <button onClick={() => document.getElementById("accounts-section")?.scrollIntoView({ behavior: "smooth" })} className="mt-4 px-4 py-2 rounded-xl bg-accent text-white text-sm font-semibold hover:bg-accent-light transition-colors">
+                  Add an account
+                </button>
+              </section>
+            )}
             {/* Hero - Net Worth */}
             <NetWorthHero
-              netWorth={data.totals.netWorth}
-              assetsTotal={data.totals.assetsTotal}
+              netWorth={effectiveNetWorth}
+              assetsTotal={effectiveAssetsTotal}
               creditCardDebt={data.totals.creditCardDebt}
             />
+            <NetWorthHistory snapshots={netWorthHistory} />
 
             {/* Asset Breakdown + Accounts Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div id="accounts-section" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <AccountSection
                 type="bank"
                 accounts={data.accounts.bank}
@@ -217,28 +270,28 @@ export default function Dashboard() {
               <AccountSection
                 type="stock"
                 accounts={data.accounts.stock}
-                total={data.totals.stockTotal}
+                total={effectiveStockTotal}
                 onRefresh={handleRefresh}
               >
-                <StockHoldings accounts={data.accounts.stock} assetClass="stock" />
+                <StockHoldings accounts={data.accounts.stock} assetClass="stock" onValuationChange={setStockHoldingsValue} />
               </AccountSection>
               <AccountSection
                 type="crypto"
                 accounts={data.accounts.crypto}
-                total={data.totals.cryptoTotal}
+                total={effectiveCryptoTotal}
                 onRefresh={handleRefresh}
               >
-                <StockHoldings accounts={data.accounts.crypto} assetClass="crypto" />
+                <StockHoldings accounts={data.accounts.crypto} assetClass="crypto" onValuationChange={setCryptoHoldingsValue} />
               </AccountSection>
             </div>
 
             {/* Asset Breakdown Donut */}
             <AssetBreakdown
               bankTotal={data.totals.bankTotal}
-              stockTotal={data.totals.stockTotal}
-              cryptoTotal={data.totals.cryptoTotal}
+              stockTotal={effectiveStockTotal}
+              cryptoTotal={effectiveCryptoTotal}
               cashTotal={data.totals.cashTotal}
-              assetsTotal={data.totals.assetsTotal}
+              assetsTotal={effectiveAssetsTotal}
             />
 
             {/* Credit Cards + Debts + Liabilities */}
@@ -263,12 +316,12 @@ export default function Dashboard() {
 
             {/* Final Summary */}
             <FinalTotals
-              assetsTotal={data.totals.assetsTotal}
+              assetsTotal={effectiveAssetsTotal}
               debtsOwedTotal={data.totals.debtsOwedTotal}
               pointsValue={data.totals.pointsValue}
               creditCardDebt={data.totals.creditCardDebt}
               liabilitiesTotal={data.totals.liabilitiesTotal}
-              netWorth={data.totals.netWorth}
+              netWorth={effectiveNetWorth}
             />
           </>
         )}
@@ -279,7 +332,7 @@ export default function Dashboard() {
         </div>
 
         {view === "loans" && <LoansSection />}
-        {view === "planner" && <PlannerSection netWorth={data.totals.netWorth} stockTotal={data.totals.stockTotal} />}
+        {view === "planner" && <PlannerSection netWorth={effectiveNetWorth} stockTotal={effectiveStockTotal} />}
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">

@@ -141,12 +141,24 @@ export interface DashboardData {
   };
 }
 
+export interface NetWorthSnapshot {
+  id: string;
+  user_id: string;
+  snapshot_date: string;
+  net_worth: number;
+  assets_total: number;
+  stock_total: number;
+  crypto_total: number;
+  created_at: string;
+}
+
 export interface StockHolding {
   id: string;
   user_id: string;
   account_id: string;
   ticker: string;
   shares: number;
+  cost_basis: number | null;
   created_at: string;
   updated_at: string;
 }
