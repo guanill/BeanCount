@@ -220,12 +220,14 @@ const SELECT_CLS = INPUT_CLS;
 type LoanFormValues = {
   name: string; type: string; balance: string; original_amount: string;
   interest_rate: string; monthly_payment: string; notes: string;
+  payment_day: string;
   deferral_months: string; deferral_type: "subsidized" | "unsubsidized";
 };
 
 const EMPTY_FORM: LoanFormValues = {
   name: "", type: "personal", balance: "", original_amount: "",
   interest_rate: "", monthly_payment: "", notes: "",
+  payment_day: "",
   deferral_months: "0", deferral_type: "unsubsidized",
 };
 
@@ -351,6 +353,11 @@ function LoanForm({
               onChange={e => set("monthly_payment", e.target.value)}
               placeholder="350.00"
               className={INPUT_CLS} required />
+          </Field>
+          <Field label="Payment day of month" helper="Used in the planner calendar">
+            <input type="number" min="1" max="31" value={value.payment_day}
+              onChange={e => set("payment_day", e.target.value)}
+              placeholder="15" className={INPUT_CLS} />
           </Field>
         </div>
       </div>
@@ -546,6 +553,7 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
       original_amount: loan.original_amount?.toString() ?? "",
       interest_rate: loan.interest_rate.toString(),
       monthly_payment: loan.monthly_payment.toString(),
+      payment_day: loan.payment_day?.toString() ?? "",
       notes: loan.notes ?? "",
       // Show what the user *currently sees* — months remaining — not the stored total-from-creation.
       deferral_months: deferralMonthsRemaining(loan).toString(),
@@ -567,6 +575,7 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
         original_amount: editForm.original_amount ? parseFloat(editForm.original_amount) : null,
         interest_rate: parseFloat(editForm.interest_rate) || 0,
         monthly_payment: parseFloat(editForm.monthly_payment) || 0,
+        payment_day: editForm.payment_day ? parseInt(editForm.payment_day) : null,
         notes: editForm.notes || null,
         deferral_months: storedDeferralMonths,
         deferral_type: editForm.deferral_type as "subsidized" | "unsubsidized",
@@ -600,7 +609,7 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
     : baseRows.slice(0, 6);
 
   return (
-    <div className="rounded-2xl bg-card border border-border/30 overflow-hidden transition-all">
+    <div className="min-w-0 max-w-full rounded-2xl bg-card border border-border/30 overflow-hidden transition-all">
       <div className="h-0.5 w-full" style={{ background: colors.ring, opacity: 0.5 }} />
 
       <div className="p-3 sm:p-4">
@@ -938,6 +947,7 @@ export default function LoansSection() {
         original_amount: addForm.original_amount ? parseFloat(addForm.original_amount) : undefined,
         interest_rate: parseFloat(addForm.interest_rate) || 0,
         monthly_payment: parseFloat(addForm.monthly_payment) || 0,
+        payment_day: addForm.payment_day ? parseInt(addForm.payment_day) : undefined,
         notes: addForm.notes || undefined,
         deferral_months: parseInt(addForm.deferral_months) || 0,
         deferral_type: addForm.deferral_type,
@@ -1091,7 +1101,7 @@ export default function LoansSection() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+        <div className="grid min-w-0 grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
           {sorted.map(loan => (
             <LoanCard key={loan.id} loan={loan} onRefresh={fetchLoans} />
           ))}

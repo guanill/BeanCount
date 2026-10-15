@@ -332,7 +332,7 @@ export default function Dashboard() {
         </div>
 
         {view === "loans" && <LoansSection />}
-        {view === "planner" && <PlannerSection netWorth={effectiveNetWorth} stockTotal={effectiveStockTotal} />}
+        {view === "planner" && <PlannerSection netWorth={effectiveNetWorth} stockTotal={effectiveStockTotal} loans={data.loans} />}
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">

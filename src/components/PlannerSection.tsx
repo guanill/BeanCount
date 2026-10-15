@@ -7,6 +7,7 @@ import {
   Building, CheckCircle2, Circle, MapPin, Calculator, RefreshCw,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import type { Loan } from "@/lib/types";
 import {
   type FilingStatus, computeAnnualTax, computeMonthlyNet, netOfSupplemental, taxTableFor,
 } from "@/lib/tax";
@@ -151,6 +152,16 @@ function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
   return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+function salaryReceivedSoFar(period: SalaryPeriod, date = NOW): number {
+  if (date.getFullYear() !== CUR_YEAR || date.getMonth() + 1 !== CUR_MONTH) return 0;
+  const frequency = period.payFrequency ?? "monthly";
+  const day = date.getDate();
+  if (frequency === "semimonthly") {
+    return period.monthlySalary * ((day >= (period.payDay2 ?? 30) ? 1 : day >= (period.payDay1 ?? 15) ? 0.5 : 0));
+  }
+  return day >= (period.payDay1 ?? 15) ? period.monthlySalary : 0;
 }
 
 const DEFAULT_CONFIG: PlannerConfig = {
@@ -518,10 +529,10 @@ interface AddEventForm { label: string; amount: string; type: EventType; }
 const EMPTY_FORM: AddEventForm = { label: "", amount: "", type: "bonus" };
 
 function MonthCard({
-  year, month, salary, netSalary, salaryPaid, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
+  year, month, salary, netSalary, salaryPaid, salaryReceived, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
   onAddEvent, onRemoveEvent,
 }: {
-  year: number; month: number; salary: number; netSalary: number; salaryPaid: boolean; monthlyExpenses: number;
+  year: number; month: number; salary: number; netSalary: number; salaryPaid: boolean; salaryReceived: number; monthlyExpenses: number;
   events: PlannerEvent[];
   vestEvents: VestEvent[];
   recurBonuses: RecurringBonus[];
@@ -595,7 +606,7 @@ function MonthCard({
         <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
           <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(netSalary)}</div>
-          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryPaid ? "text-green" : "text-foreground/35"}`}>{salaryPaid ? "Pay received" : "Pay expected later"}</div>}
+          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived > 0 ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? "Pay received" : salaryReceived > 0 ? `${formatCurrency(Math.max(0, netSalary - salaryReceived))} left to receive` : "Pay expected later"}</div>}
           {salary > 0 && (
             <div className="invisible group-hover/inc:visible opacity-0 group-hover/inc:opacity-100 transition-opacity absolute z-30 left-1/2 -translate-x-1/2 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[170px] space-y-1 pointer-events-none">
               <div className="flex items-center justify-between gap-3 text-[10px]">
@@ -1394,7 +1405,7 @@ function BonusFormBody({
 }
 
 // ─── Main Component ────────────────────────────────────────────────────────────
-export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth: number; stockTotal?: number }) {
+export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth: number; stockTotal?: number; loans?: Loan[] }) {
   const [config,       setConfig]       = useState<PlannerConfig>(DEFAULT_CONFIG);
   const [dbLoaded,     setDbLoaded]     = useState(false);
   const [viewYear,     setViewYear]     = useState(CUR_YEAR);
@@ -1430,7 +1441,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [dismissedKeys,    setDismissedKeys]    = useState<Set<string>>(new Set());
   const [scanning,         setScanning]         = useState(false);
   const [scanned,          setScanned]          = useState(false);
-  const [loans,            setLoans]            = useState<Array<{ id: string; name: string; monthly_payment: number; type: string; balance: number; interest_rate: number; deferral_months: number | null; deferral_type: string | null; created_at: string | null }>>([]);
+  const [loans,            setLoans]       = useState<Array<{ id: string; name: string; monthly_payment: number; payment_day: number | null; type: string; balance: number; interest_rate: number; deferral_months: number | null; deferral_type: string | null; created_at: string | null }>>([]);
   const [loadFailed,       setLoadFailed]       = useState(false);
   // Ref mirror so savePlanner (called from stale closures) can always see the flag.
   const loadFailedRef = useRef(false);
@@ -1445,7 +1456,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       const { createClient } = await import("@/lib/supabase/client");
       const sb = createClient();
       const [{ data: loansData }, { data: plannerRow, error: plannerError }] = await Promise.all([
-        sb.from("loans").select("id, name, monthly_payment, type, balance, interest_rate, deferral_months, deferral_type, created_at"),
+        sb.from("loans").select("id, name, monthly_payment, payment_day, type, balance, interest_rate, deferral_months, deferral_type, created_at"),
         sb.from("planner_configs").select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status").maybeSingle(),
       ]);
       setLoans(loansData ?? []);
@@ -2264,26 +2275,30 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             <div className="grid grid-cols-7 gap-1">
               {Array.from({ length: new Date(CUR_YEAR, CUR_MONTH, 0).getDate() }, (_, i) => i + 1).map(day => {
                 const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, CUR_YEAR, CUR_MONTH) && c.chargeDay === day);
-                const pay = config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
+                const pay = day >= CUR_DAY && config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
+                const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH) > 0);
                 const today = day === CUR_DAY;
                 return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`min-h-9 rounded-lg border p-1 text-center ${calendarDay === day ? "border-accent/60 bg-accent/10" : "border-border/20 bg-background/30"}`}>
                   <div className="text-[9px] text-foreground/40">{day}</div>
                   {bills.length > 0 && <div className="text-[10px] text-red" title={bills.map(b => b.label).join(", ")}>●</div>}
                   {pay && <div className="text-[10px] text-green" title="Payday">◆</div>}
+                  {loanPayments.length > 0 && <div className="text-[10px] text-orange-400" title="Loan payment">■</div>}
                 </button>;
               })}
             </div>
             {calendarDay !== null && (() => {
               const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, CUR_YEAR, CUR_MONTH) && c.chargeDay === calendarDay);
-              const pay = config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay));
+              const pay = calendarDay >= CUR_DAY ? config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay)) : [];
+              const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH) > 0);
               return <div className="mt-2 rounded-lg border border-border/20 bg-background/30 px-3 py-2 text-[10px] text-foreground/55">
                 <span className="font-semibold text-foreground/70">{MONTHS_SHORT[CUR_MONTH - 1]} {calendarDay}</span>
                 {bills.length === 0 && pay.length === 0 && <span className="ml-2">Nothing scheduled</span>}
                 {bills.map(b => <span key={b.id} className="ml-2 text-red">Bill: {b.label} ({formatCurrency(b.amount)})</span>)}
                 {pay.map(p => <span key={p.id} className="ml-2 text-green">Payday: {p.label || "Salary"}</span>)}
+                {loanPayments.map(l => <span key={l.id} className="ml-2 text-orange-400">Loan: {l.name} ({formatCurrency(l.monthly_payment)})</span>)}
               </div>;
             })()}
-            <div className="mt-2 flex gap-3 text-[10px] text-foreground/40"><span><b className="text-red">●</b> bill</span><span><b className="text-green">◆</b> payday</span></div>
+            <div className="mt-2 flex gap-3 text-[10px] text-foreground/40"><span><b className="text-red">●</b> bill</span><span><b className="text-green">◆</b> remaining payday</span><span><b className="text-orange-400">■</b> loan payment</span></div>
           </div>
 
           {/* Month grid */}
@@ -2303,7 +2318,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               <MonthCard
                 key={i}
                 year={d.year} month={d.month}
-                salary={d.salary} netSalary={netSalary} salaryPaid={isToday && config.salaryPeriods.some(sp => getSalaryForMonth([sp], d.year, d.month) > 0 && salaryPaidThisMonth(sp))}
+                salary={d.salary} netSalary={netSalary} salaryReceived={config.salaryPeriods.reduce((sum, sp) => sum + salaryReceivedSoFar(sp), 0)} salaryPaid={isToday && config.salaryPeriods.some(sp => getSalaryForMonth([sp], d.year, d.month) > 0 && salaryPaidThisMonth(sp))}
                 monthlyExpenses={isToday
                   ? Math.max(0, monthCharges - paidChargesTotal)
                   : monthCharges}
