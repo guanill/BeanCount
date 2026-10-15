@@ -329,10 +329,9 @@ function projectBalances(
     const payDays = activeSalary
       ? (activeSalary.payFrequency === "semimonthly" ? [activeSalary.payDay1 ?? 15, activeSalary.payDay2 ?? 30] : [activeSalary.payDay1 ?? 15])
       : [];
-    const today = new Date();
     const paidSalary = y === CUR_YEAR && m === CUR_MONTH
       ? payDays.filter(day => !(activeSalary?.unpaidPaydays?.[monthKey] ?? []).includes(day) &&
-          (day <= today.getDate() || (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day))).length *
+          (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
         (payDays.length > 0 ? netSalary / payDays.length : 0)
       : 0;
     const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
@@ -628,7 +627,7 @@ function MonthCard({
                 <button key={paycheck.id} type="button" disabled={!paycheck.enabled}
                   onClick={() => onTogglePaycheck(paycheck.periodId, paycheck.day)}
                   className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
-                {paycheck.paid ? `Unmark ${paycheck.day}` : paycheck.due ? `Mark ${paycheck.day} paid` : `${paycheck.day} upcoming`}
+                {paycheck.paid ? `${paycheck.day} paid` : `${paycheck.day} upcoming`}
                 </button>
               ))}
             </div>
@@ -2370,10 +2369,9 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   const paid = period.paidPaydays?.[THIS_MONTH_KEY] ?? [];
                   const unpaid = period.unpaidPaydays?.[THIS_MONTH_KEY] ?? [];
                   return days.map((day, index) => {
-                    const isPaid = CUR_DAY >= day && !unpaid.includes(day) || paid.includes(day);
+                    const isPaid = paid.includes(day) && !unpaid.includes(day);
                     const previousPaid = index === 0 || (
-                      CUR_DAY >= days[index - 1] && !unpaid.includes(days[index - 1]) ||
-                      paid.includes(days[index - 1])
+                      paid.includes(days[index - 1]) && !unpaid.includes(days[index - 1])
                     );
                     return {
                     id: `${period.id}-${day}`,
