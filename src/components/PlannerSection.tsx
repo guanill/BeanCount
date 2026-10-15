@@ -42,6 +42,7 @@ interface SalaryPeriod {
   yearToDateGrossPay?: number;
   yearToDateWithholding?: number;
   paidPaydays?: Record<string, number[]>;
+  unpaidPaydays?: Record<string, number[]>;
 }
 
 interface VestingGrant {
@@ -330,7 +331,8 @@ function projectBalances(
       : [];
     const today = new Date();
     const paidSalary = y === CUR_YEAR && m === CUR_MONTH
-      ? payDays.filter(day => day <= today.getDate() || (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
+      ? payDays.filter(day => !(activeSalary?.unpaidPaydays?.[monthKey] ?? []).includes(day) &&
+          (day <= today.getDate() || (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day))).length *
         (payDays.length > 0 ? netSalary / payDays.length : 0)
       : 0;
     const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
@@ -535,6 +537,7 @@ interface PaycheckMarker {
   amount: number;
   due: boolean;
   paid: boolean;
+  enabled: boolean;
 }
 
 function MonthCard({
@@ -621,10 +624,10 @@ function MonthCard({
           {isToday && paychecks.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {paychecks.map(paycheck => (
-                <button key={paycheck.id} type="button" disabled={!paycheck.due}
+                <button key={paycheck.id} type="button" disabled={!paycheck.enabled}
                   onClick={() => onTogglePaycheck(paycheck.id, paycheck.day)}
                   className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
-                  {paycheck.paid ? `Paid ${paycheck.day}` : paycheck.due ? `Mark ${paycheck.day} paid` : `${paycheck.day} upcoming`}
+                {paycheck.paid ? `Unmark ${paycheck.day}` : paycheck.due ? `Mark ${paycheck.day} paid` : `${paycheck.day} upcoming`}
                 </button>
               ))}
             </div>
@@ -2030,9 +2033,14 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       ...c,
       salaryPeriods: c.salaryPeriods.map(period => {
         if (period.id !== periodId) return period;
-        const current = period.paidPaydays?.[monthKey] ?? [];
-        const next = current.includes(day) ? current.filter(value => value !== day) : [...current, day];
-        return { ...period, paidPaydays: { ...(period.paidPaydays ?? {}), [monthKey]: next } };
+        const paid = period.paidPaydays?.[monthKey] ?? [];
+        const unpaid = period.unpaidPaydays?.[monthKey] ?? [];
+        const isPaid = !unpaid.includes(day) && (paid.includes(day) || day <= CUR_DAY);
+        return {
+          ...period,
+          paidPaydays: { ...(period.paidPaydays ?? {}), [monthKey]: isPaid ? paid.filter(value => value !== day) : [...paid, day] },
+          unpaidPaydays: { ...(period.unpaidPaydays ?? {}), [monthKey]: isPaid ? [...new Set([...unpaid, day])] : unpaid.filter(value => value !== day) },
+        };
       }),
     }));
   }
@@ -2359,14 +2367,23 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               ? (activeSalaryPeriod ? [activeSalaryPeriod] : []).flatMap(period => {
                   const days = paycheckDays(period);
                   const paid = period.paidPaydays?.[THIS_MONTH_KEY] ?? [];
-                  return days.map(day => ({
+                  const unpaid = period.unpaidPaydays?.[THIS_MONTH_KEY] ?? [];
+                  return days.map((day, index) => {
+                    const isPaid = CUR_DAY >= day && !unpaid.includes(day) || paid.includes(day);
+                    const previousPaid = index === 0 || (
+                      CUR_DAY >= days[index - 1] && !unpaid.includes(days[index - 1]) ||
+                      paid.includes(days[index - 1])
+                    );
+                    return {
                     id: `${period.id}-${day}`,
                     label: period.label || "Salary",
                     day,
                     amount: netSalary / days.length,
                     due: CUR_DAY >= day,
-                    paid: CUR_DAY >= day || paid.includes(day),
-                  }));
+                    paid: isPaid,
+                    enabled: CUR_DAY >= day && previousPaid,
+                  };
+                  });
                 })
               : [];
             const salaryReceived = currentMonthPaychecks.filter(p => p.paid).reduce((sum, p) => sum + p.amount, 0);
