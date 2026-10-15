@@ -328,8 +328,9 @@ function projectBalances(
     const payDays = activeSalary
       ? (activeSalary.payFrequency === "semimonthly" ? [activeSalary.payDay1 ?? 15, activeSalary.payDay2 ?? 30] : [activeSalary.payDay1 ?? 15])
       : [];
+    const today = new Date();
     const paidSalary = y === CUR_YEAR && m === CUR_MONTH
-      ? payDays.filter(day => (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
+      ? payDays.filter(day => day <= today.getDate() || (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
         (payDays.length > 0 ? netSalary / payDays.length : 0)
       : 0;
     const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
@@ -2041,11 +2042,6 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     return [period.payDay1 ?? 15];
   }
 
-  function paycheckNet(period: SalaryPeriod, count: number): number {
-    const rate = Math.max(0, Math.min(100, period.withholdingRate ?? 0)) / 100;
-    return (period.monthlySalary / count) * (1 - rate);
-  }
-
   const yearsWithData = [CUR_YEAR, CUR_YEAR + 1, CUR_YEAR + 2, CUR_YEAR + 3];
 
   // ── Tax estimate ──
@@ -2367,9 +2363,9 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     id: `${period.id}-${day}`,
                     label: period.label || "Salary",
                     day,
-                    amount: paycheckNet(period, days.length),
+                    amount: netSalary / days.length,
                     due: CUR_DAY >= day,
-                    paid: paid.includes(day),
+                    paid: CUR_DAY >= day || paid.includes(day),
                   }));
                 })
               : [];
