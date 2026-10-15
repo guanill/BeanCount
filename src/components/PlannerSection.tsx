@@ -532,6 +532,7 @@ const EMPTY_FORM: AddEventForm = { label: "", amount: "", type: "bonus" };
 
 interface PaycheckMarker {
   id: string;
+  periodId: string;
   label: string;
   day: number;
   amount: number;
@@ -625,7 +626,7 @@ function MonthCard({
             <div className="mt-1 flex flex-wrap gap-1">
               {paychecks.map(paycheck => (
                 <button key={paycheck.id} type="button" disabled={!paycheck.enabled}
-                  onClick={() => onTogglePaycheck(paycheck.id, paycheck.day)}
+                  onClick={() => onTogglePaycheck(paycheck.periodId, paycheck.day)}
                   className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
                 {paycheck.paid ? `Unmark ${paycheck.day}` : paycheck.due ? `Mark ${paycheck.day} paid` : `${paycheck.day} upcoming`}
                 </button>
@@ -2376,6 +2377,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     );
                     return {
                     id: `${period.id}-${day}`,
+                    periodId: period.id,
                     label: period.label || "Salary",
                     day,
                     amount: netSalary / days.length,
