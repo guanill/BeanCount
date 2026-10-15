@@ -3200,7 +3200,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                           onChange={e => {
                             const m = e.target.value;
                             if (!m) { setLoanPayoffOverride(loan.id, null); return; }
-                            const y = override ? override.split("-")[0] : String(CUR_YEAR);
+                            const y = override ? override.split("-")[0] : String(Number(m) < CUR_MONTH ? CUR_YEAR + 1 : CUR_YEAR);
                             setLoanPayoffOverride(loan.id, `${y}-${m.padStart(2, "0")}`);
                           }}
                           className="bg-background border border-border/40 rounded-md px-1.5 py-0.5 text-[11px] text-foreground/80">
