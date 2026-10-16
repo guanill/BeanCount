@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Check, ChevronDown, CircleCheck, Clock3, Loader2, TrendingUp, WalletCards } from "lucide-react";
+import { Calculator, Check, ChevronDown, CircleCheck, Clock3, Loader2, Plus, Trash2, TrendingUp, WalletCards } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getPlannerConfig, upsertPlannerConfig } from "@/lib/supabase/queries";
 import { formatCurrency } from "@/lib/format";
@@ -23,6 +23,16 @@ interface TaxYearRecord {
   refundReceived?: boolean;
   refundReceivedDate?: string;
   refundEventId?: string;
+  otherIncome?: TaxIncomeItem[];
+}
+
+interface TaxIncomeItem {
+  id: string;
+  label: string;
+  type: "interest" | "dividend" | "freelance" | "rental" | "capital_gain" | "other";
+  amount: string;
+  account?: string;
+  notes?: string;
 }
 
 interface TaxConfig {
@@ -30,7 +40,7 @@ interface TaxConfig {
   events?: Array<{ id: string; year: number; month: number; label: string; amount: number; type: string }>;
 }
 
-type TaxInputKey = Exclude<keyof TaxYearRecord, "refundReceived">;
+type TaxInputKey = Exclude<keyof TaxYearRecord, "refundReceived" | "otherIncome">;
 
 const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, index) => CURRENT_YEAR - 1 + index);
@@ -48,6 +58,7 @@ export default function TaxCenter() {
   const [message, setMessage] = useState("");
   const [incomeOpen, setIncomeOpen] = useState(true);
   const [investmentsOpen, setInvestmentsOpen] = useState(false);
+  const [otherIncomeOpen, setOtherIncomeOpen] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +82,27 @@ export default function TaxCenter() {
   const update = (field: TaxInputKey, value: string) => {
     setRecord(previous => ({ ...previous, [field]: value }));
     setMessage("");
+  };
+
+  const updateIncomeItem = (id: string, field: keyof TaxIncomeItem, value: string) => {
+    setRecord(previous => ({
+      ...previous,
+      otherIncome: (previous.otherIncome ?? []).map(item => item.id === id ? { ...item, [field]: value } : item),
+    }));
+    setMessage("");
+  };
+
+  const addIncomeItem = () => {
+    const id = `income-${Date.now()}`;
+    setRecord(previous => ({
+      ...previous,
+      otherIncome: [...(previous.otherIncome ?? []), { id, label: "", type: "interest", amount: "", account: "" }],
+    }));
+    setOtherIncomeOpen(true);
+  };
+
+  const removeIncomeItem = (id: string) => {
+    setRecord(previous => ({ ...previous, otherIncome: (previous.otherIncome ?? []).filter(item => item.id !== id) }));
   };
 
   const save = async () => {
@@ -101,13 +133,15 @@ export default function TaxCenter() {
     const income = amount(record.actualGrossIncome) + amount(record.expectedRemainingGross);
     const withholding = amount(record.actualWithholding) + amount(record.expectedRemainingWithholding);
     const investments = amount(record.investmentProceeds) - amount(record.investmentCostBasis);
-    return { income, withholding, investments };
+    const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
+    return { income: income + otherIncome, withholding, investments, otherIncome };
   }, [record]);
 
   const estimatedRefund = useMemo(() => {
     const gross = amount(record.actualGrossIncome) + amount(record.expectedRemainingGross);
-    if (gross <= 0) return null;
-    const tax = computeAnnualTax(gross, filingStatus, year);
+    const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
+    if (gross + otherIncome <= 0) return null;
+    const tax = computeAnnualTax(gross + otherIncome, filingStatus, year);
     if (!tax) return null;
     const paid = amount(record.actualWithholding) + amount(record.expectedRemainingWithholding)
       + amount(record.estimatedPayments) + amount(record.taxCredits);
@@ -235,6 +269,49 @@ export default function TaxCenter() {
           {field("actualWithholding", "Tax withheld to date", "Pay stubs")}
           {field("expectedRemainingWithholding", "Expected remaining withholding", "Future pay")}
         </div></div>}
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border border-border/40 bg-card">
+        <div className="flex items-center justify-between gap-3 p-4 sm:p-5">
+          <button type="button" onClick={() => setOtherIncomeOpen(open => !open)} className="flex min-w-0 items-center gap-3 text-left">
+            <span className="rounded-xl bg-cyan-400/10 p-2 text-cyan-300"><Plus className="h-4 w-4" /></span>
+            <span><span className="block font-semibold text-foreground">Other income</span><span className="mt-0.5 block text-[10px] text-foreground/40">Interest, freelance, rental, dividends, or anything outside your paycheck.</span></span>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-foreground/40 transition-transform ${otherIncomeOpen ? "rotate-180" : ""}`} />
+          </button>
+          <button type="button" onClick={addIncomeItem} className="flex shrink-0 items-center gap-1 rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold text-accent-light hover:bg-accent/20">
+            <Plus className="h-3 w-3" /> Add income
+          </button>
+        </div>
+        {otherIncomeOpen && <div className="border-t border-border/20 p-4 pt-3 sm:p-5 sm:pt-4">
+          {(record.otherIncome ?? []).length === 0 ? (
+            <button type="button" onClick={addIncomeItem} className="flex w-full items-center justify-center rounded-xl border border-dashed border-border/40 px-4 py-5 text-xs text-foreground/40 hover:border-accent/40 hover:text-accent-light">
+              Add interest from a savings account, dividends, freelance income, or another source
+            </button>
+          ) : (
+            <div className="space-y-2">
+              {(record.otherIncome ?? []).map(item => (
+                <div key={item.id} className="grid grid-cols-1 gap-2 rounded-xl border border-border/30 bg-background/30 p-3 sm:grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] sm:items-end">
+                  <label className="text-[10px] text-foreground/50">Income name
+                    <input value={item.label} onChange={event => updateIncomeItem(item.id, "label", event.target.value)} placeholder="e.g. Savings interest" className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
+                  </label>
+                  <label className="text-[10px] text-foreground/50">Type
+                    <select value={item.type} onChange={event => updateIncomeItem(item.id, "type", event.target.value)} className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground">
+                      <option value="interest">Interest</option><option value="dividend">Dividend</option><option value="freelance">Freelance</option><option value="rental">Rental</option><option value="capital_gain">Capital gain</option><option value="other">Other</option>
+                    </select>
+                  </label>
+                  <label className="text-[10px] text-foreground/50">Account or source
+                    <input value={item.account ?? ""} onChange={event => updateIncomeItem(item.id, "account", event.target.value)} placeholder="e.g. Ally savings" className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
+                  </label>
+                  <label className="text-[10px] text-foreground/50">Annual amount
+                    <input type="number" min="0" step="0.01" value={item.amount} onChange={event => updateIncomeItem(item.id, "amount", event.target.value)} placeholder="$0.00" className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
+                  </label>
+                  <button type="button" onClick={() => removeIncomeItem(item.id)} aria-label={`Remove ${item.label || "income item"}`} className="justify-self-end rounded-lg p-2 text-foreground/30 hover:bg-red/10 hover:text-red"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              ))}
+              <button type="button" onClick={addIncomeItem} className="text-xs font-semibold text-accent-light hover:text-accent">+ Add another income source</button>
+            </div>
+          )}
+        </div>}
       </section>
 
       <section className="rounded-2xl border border-border/40 bg-card p-4 sm:p-5">
