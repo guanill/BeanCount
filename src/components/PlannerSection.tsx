@@ -1593,6 +1593,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   // ── Tax estimator state ──
   const [taxFilingStatus,   setTaxFilingStatus]   = useState<FilingStatus>("single");
   const [taxIncomeOverride, setTaxIncomeOverride] = useState<string>("");
+  const [taxWithheldInput, setTaxWithheldInput] = useState("");
+  const [taxRemainingInput, setTaxRemainingInput] = useState("");
+  const [taxPaymentsInput, setTaxPaymentsInput] = useState("");
+  const [taxCreditsInput, setTaxCreditsInput] = useState("");
 
   const SCENARIO_EMOJIS = ["✈️","💍","🏠","🚗","🎓","🎉","🏖️","🛠️","💻","🌍","🎸","🏋️","🍽️","🎁","⛵"];
 
@@ -2103,6 +2107,15 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     return { annualGross, annualSalary, annualBonuses, ...breakdown, monthlySalaryNet, monthlyGross };
   }, [taxFilingStatus, taxIncomeOverride, viewYear, config.salaryPeriods, config.recurringBonuses, config.vestingGrants, config.stockPrices, config.events]);
 
+  const refundEstimate = useMemo(() => {
+    if (!taxEstimate) return null;
+    const withheldToDate = parseFloat(taxWithheldInput) || 0;
+    const remainingWithholding = parseFloat(taxRemainingInput) || 0;
+    const payments = parseFloat(taxPaymentsInput) || 0;
+    const credits = parseFloat(taxCreditsInput) || 0;
+    return { withheld: withheldToDate + remainingWithholding, withheldToDate, remainingWithholding, payments, credits, difference: withheldToDate + remainingWithholding + payments + credits - taxEstimate.total };
+  }, [taxEstimate, taxWithheldInput, taxRemainingInput, taxPaymentsInput, taxCreditsInput]);
+
   return (
     <div className="space-y-6">
       {/* ── Page header ── */}
@@ -2480,6 +2493,49 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 )}
               </div>
             </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-border/30 bg-background/30 p-3 sm:p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-xs font-semibold text-foreground/80">Tax refund calculator</h3>
+                <p className="text-[10px] text-foreground/40 mt-0.5">Compare estimated tax with withholding and payments.</p>
+              </div>
+              <span className="text-[10px] text-foreground/30">estimated</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              <label className="text-[10px] text-foreground/45">
+                Tax withheld to date
+                <input type="number" min="0" step="0.01" value={taxWithheldInput} onChange={e => setTaxWithheldInput(e.target.value)}
+                  placeholder="From pay stubs" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+              </label>
+              <label className="text-[10px] text-foreground/45">
+                Expected remaining withholding
+                <input type="number" min="0" step="0.01" value={taxRemainingInput} onChange={e => setTaxRemainingInput(e.target.value)}
+                  placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+              </label>
+              <label className="text-[10px] text-foreground/45">
+                Estimated payments
+                <input type="number" min="0" step="0.01" value={taxPaymentsInput} onChange={e => setTaxPaymentsInput(e.target.value)}
+                  placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+              </label>
+              <label className="text-[10px] text-foreground/45">
+                Tax credits
+                <input type="number" min="0" step="0.01" value={taxCreditsInput} onChange={e => setTaxCreditsInput(e.target.value)}
+                  placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+              </label>
+            </div>
+            {refundEstimate && (
+              <div className={`mt-3 rounded-lg border px-3 py-2.5 ${refundEstimate.difference >= 0 ? "border-emerald-500/25 bg-emerald-500/10" : "border-rose-500/25 bg-rose-500/10"}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-foreground/60">{refundEstimate.difference >= 0 ? "Estimated refund" : "Estimated amount due"}</span>
+                  <span className={`text-sm font-bold tabular-nums ${refundEstimate.difference >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {formatCurrency(Math.abs(refundEstimate.difference))}
+                  </span>
+                </div>
+                <p className="text-[10px] text-foreground/35 mt-1">Based on the {viewYear} estimate above; enter actual year-to-date figures from your pay stubs.</p>
+              </div>
+            )}
           </div>
 
           {taxEstimate ? (
