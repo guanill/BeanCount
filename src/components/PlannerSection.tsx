@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus, Trash2, ChevronLeft, ChevronRight, ChevronDown,
   TrendingUp, Zap, DollarSign, Edit2, Check, X, Calendar, ScanSearch, BarChart2, Sparkles,
-  Building, Building2, CheckCircle2, Circle, MapPin, Calculator, RefreshCw, Receipt, Banknote,
+  Building, Building2, CheckCircle2, Circle, MapPin, Calculator, RefreshCw, Receipt, Banknote, CircleDollarSign,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import type { Loan } from "@/lib/types";
@@ -119,6 +119,18 @@ interface TaxYearTracking {
   expectedRemainingWithholding?: string;
   estimatedPayments?: string;
   taxCredits?: string;
+  expectedRefundDate?: string;
+  refundReceived?: boolean;
+  refundReceivedDate?: string;
+  refundEventId?: string;
+  otherIncome?: Array<{
+    id: string;
+    label: string;
+    type: string;
+    amount: string;
+    account?: string;
+    notes?: string;
+  }>;
 }
 
 interface PlannerConfig {
@@ -2436,14 +2448,18 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 <span className="flex items-center gap-1"><Receipt className="h-3 w-3 text-red" /> bills</span>
                 <span className="flex items-center gap-1"><Banknote className="h-3 w-3 text-green" /> income</span>
                 <span className="flex items-center gap-1"><Building2 className="h-3 w-3 text-orange-400" /> loans</span>
+                <span className="flex items-center gap-1"><CircleDollarSign className="h-3 w-3 text-violet-300" /> refund</span>
               </div>
             </div>
             <div className="grid grid-cols-7 gap-1.5">
               {Array.from({ length: new Date(calendarYear, calendarMonth, 0).getDate() }, (_, i) => i + 1).map(day => {
                 const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === day);
-                const pay = config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
+                const pay = config.salaryPeriods.some(s => (s.payDay1 ?? 15) === day || (s.payFrequency === "semimonthly" && (s.payDay2 ?? 30) === day));
                 const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
-                const hasEvents = bills.length > 0 || pay || loanPayments.length > 0;
+                const refundRecord = config.taxYearTracking?.[String(calendarYear)];
+                const refundDate = refundRecord?.refundReceivedDate ?? refundRecord?.expectedRefundDate;
+                const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === day;
+                const hasEvents = bills.length > 0 || pay || loanPayments.length > 0 || refund;
                 const isToday = day === CUR_DAY && calendarMonth === CUR_MONTH && calendarYear === CUR_YEAR;
                 return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`relative min-h-12 rounded-xl border p-1.5 text-left transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:bg-accent/5 ${
                   calendarDay === day ? "border-accent bg-accent/10 shadow-sm shadow-accent/10" : isToday ? "border-accent/50 bg-accent/5" : "border-border/20 bg-background/30"
@@ -2453,22 +2469,39 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     {bills.length > 0 && <Receipt className="h-3 w-3 text-red" aria-label={`${bills.length} bill${bills.length === 1 ? "" : "s"}`} />}
                     {pay && <Banknote className="h-3 w-3 text-green" aria-label="Payday" />}
                     {loanPayments.length > 0 && <Building2 className="h-3 w-3 text-orange-400" aria-label={`${loanPayments.length} loan payment${loanPayments.length === 1 ? "" : "s"}`} />}
+                    {refund && <CircleDollarSign className={`h-3 w-3 ${refundRecord?.refundReceived ? "text-green" : "text-violet-300"}`} aria-label={refundRecord?.refundReceived ? "Refund received" : "Expected tax refund"} />}
                   </div>}
                   {bills.length + loanPayments.length > 1 && <span className="absolute bottom-1 right-1 text-[8px] font-bold text-foreground/35">{bills.length + loanPayments.length}</span>}
                 </button>;
               })}
             </div>
+            {(() => {
+              const monthIncomeEvents = config.events.filter(event => event.year === calendarYear && event.month === calendarMonth && event.amount > 0);
+              const monthVests = allVestEvents.filter(event => event.year === calendarYear && event.month === calendarMonth);
+              if (monthIncomeEvents.length === 0 && monthVests.length === 0) return null;
+              return <div className="mt-3 rounded-xl border border-green/20 bg-green/5 px-3 py-2.5">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold text-green"><TrendingUp className="h-3 w-3" /> Monthly income and grants</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {monthIncomeEvents.map(event => <span key={event.id} className="rounded-lg bg-green/10 px-2 py-1 text-[10px] text-green">{event.label} · {formatCurrency(event.amount)}</span>)}
+                  {monthVests.map((event, index) => <span key={`${event.label}-${index}`} className="rounded-lg bg-violet-400/10 px-2 py-1 text-[10px] text-violet-300">{event.label} grant · {formatCurrency(event.amount)}</span>)}
+                </div>
+              </div>;
+            })()}
             {calendarDay !== null && (() => {
               const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === calendarDay);
-              const pay = config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay));
+              const pay = config.salaryPeriods.filter(s => (s.payDay1 ?? 15) === calendarDay || (s.payFrequency === "semimonthly" && (s.payDay2 ?? 30) === calendarDay));
               const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
+              const refundRecord = config.taxYearTracking?.[String(calendarYear)];
+              const refundDate = refundRecord?.refundReceivedDate ?? refundRecord?.expectedRefundDate;
+              const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === calendarDay;
               return <div className="mt-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-3 text-[10px] text-foreground/55">
-                <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length} scheduled</span></div>
-                {bills.length === 0 && pay.length === 0 && loanPayments.length === 0 && <span>Nothing scheduled</span>}
+                <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length + (refund ? 1 : 0)} scheduled</span></div>
+                {bills.length === 0 && pay.length === 0 && loanPayments.length === 0 && !refund && <span>Nothing scheduled</span>}
                 <div className="flex flex-wrap gap-1.5">
                   {bills.map(b => <span key={b.id} className="flex items-center gap-1 rounded-lg bg-red/10 px-2 py-1 text-red"><Receipt className="h-3 w-3" />{b.label} · {formatCurrency(b.amount)}</span>)}
                   {pay.map(p => <span key={p.id} className="flex items-center gap-1 rounded-lg bg-green/10 px-2 py-1 text-green"><Banknote className="h-3 w-3" />{p.label || "Salary"}</span>)}
                   {loanPayments.map(l => <span key={l.id} className="flex items-center gap-1 rounded-lg bg-orange-400/10 px-2 py-1 text-orange-400"><Building2 className="h-3 w-3" />{l.name} · {formatCurrency(l.monthly_payment)}</span>)}
+                  {refund && <span className={`flex items-center gap-1 rounded-lg px-2 py-1 ${refundRecord?.refundReceived ? "bg-green/10 text-green" : "bg-violet-400/10 text-violet-300"}`}><CircleDollarSign className="h-3 w-3" />{refundRecord?.refundReceived ? "Tax refund received" : "Expected tax refund"}</span>}
                 </div>
               </div>;
             })()}
