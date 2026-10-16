@@ -2081,9 +2081,25 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     if (taxIncomeOverride) {
       annualGross = parseFloat(taxIncomeOverride);
     } else {
-      // Sum salary for every month in viewYear (respects mid-year salary changes)
-      for (let m = 1; m <= 12; m++) {
-        annualSalary += getSalaryForMonth(config.salaryPeriods, viewYear, m);
+      const activeCurrentPeriod = config.salaryPeriods
+        .filter(p => p.startYear < CUR_YEAR || (p.startYear === CUR_YEAR && p.startMonth <= CUR_MONTH))
+        .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth))
+        .slice(-1)[0];
+      const hasCurrentYearYtd = viewYear === CUR_YEAR && activeCurrentPeriod?.yearToDateGrossPay != null;
+
+      if (hasCurrentYearYtd) {
+        // YTD gross already includes the months that have passed. Only project
+        // the remaining months so earlier pay is never dropped or counted twice.
+        annualSalary = Math.max(0, activeCurrentPeriod.yearToDateGrossPay ?? 0);
+        for (let m = CUR_MONTH + 1; m <= 12; m++) {
+          annualSalary += getSalaryForMonth(config.salaryPeriods, CUR_YEAR, m);
+        }
+      } else {
+        // Without YTD data, derive the full year from each salary period,
+        // including months before the current month.
+        for (let m = 1; m <= 12; m++) {
+          annualSalary += getSalaryForMonth(config.salaryPeriods, viewYear, m);
+        }
       }
       // Add recurring bonuses that fire this year (mid scenario)
       for (const b of (config.recurringBonuses ?? [])) {
@@ -2123,12 +2139,17 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
   const refundEstimate = useMemo(() => {
     if (!taxEstimate) return null;
-    const withheldToDate = parseFloat(taxWithheldInput) || 0;
+    const activeCurrentPeriod = config.salaryPeriods
+      .filter(p => p.startYear < CUR_YEAR || (p.startYear === CUR_YEAR && p.startMonth <= CUR_MONTH))
+      .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth))
+      .slice(-1)[0];
+    const ytdWithholding = activeCurrentPeriod?.yearToDateWithholding ?? 0;
+    const withheldToDate = taxWithheldInput === "" ? ytdWithholding : (parseFloat(taxWithheldInput) || 0);
     const remainingWithholding = parseFloat(taxRemainingInput) || 0;
     const payments = parseFloat(taxPaymentsInput) || 0;
     const credits = parseFloat(taxCreditsInput) || 0;
     return { withheld: withheldToDate + remainingWithholding, withheldToDate, remainingWithholding, payments, credits, difference: withheldToDate + remainingWithholding + payments + credits - taxEstimate.total };
-  }, [taxEstimate, taxWithheldInput, taxRemainingInput, taxPaymentsInput, taxCreditsInput]);
+  }, [config.salaryPeriods, taxEstimate, taxWithheldInput, taxRemainingInput, taxPaymentsInput, taxCreditsInput]);
 
   return (
     <div className="space-y-6">
@@ -2521,7 +2542,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               <label className="text-[10px] text-foreground/45">
                 Tax withheld to date
                 <input type="number" min="0" step="0.01" value={taxWithheldInput} onChange={e => setTaxWithheldInput(e.target.value)}
-                  placeholder="From pay stubs" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+                  placeholder={(() => {
+                    const active = config.salaryPeriods
+                      .filter(p => p.startYear < CUR_YEAR || (p.startYear === CUR_YEAR && p.startMonth <= CUR_MONTH))
+                      .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth))
+                      .slice(-1)[0];
+                    return active?.yearToDateWithholding ? `Salary YTD: ${formatCurrency(active.yearToDateWithholding)}` : "From pay stubs";
+                  })()} className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
               </label>
               <label className="text-[10px] text-foreground/45">
                 Expected remaining withholding
