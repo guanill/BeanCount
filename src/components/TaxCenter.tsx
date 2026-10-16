@@ -122,21 +122,6 @@ function expectedSalaryAfterNow(periods: TaxConfig["salaryPeriods"], year: numbe
   return total;
 }
 
-function expectedWithholdingAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
-  let total = 0;
-  if (year < CURRENT_YEAR) return 0;
-  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH : 1;
-  for (let month = firstMonth; month <= 12; month++) {
-    const salary = month === CURRENT_MONTH && year === CURRENT_YEAR
-      ? expectedSalaryAfterNow(periods, year) - Array.from({ length: 12 - CURRENT_MONTH }, (_, index) => salaryForMonth(periods, year, CURRENT_MONTH + index + 1)).reduce((sum, value) => sum + value, 0)
-      : salaryForMonth(periods, year, month);
-    const period = salaryPeriodForMonth(periods, year, month);
-    const rate = Math.max(0, Math.min(100, period?.withholdingRate ?? 0)) / 100;
-    total += salary * rate;
-  }
-  return total;
-}
-
 export default function TaxCenter() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [record, setRecord] = useState<TaxYearRecord>({});
@@ -224,13 +209,24 @@ export default function TaxCenter() {
 
   const save = () => saveRecord(record, true);
 
+  const expectedGrossFallback = expectedSalaryAfterNow(salaryPeriods, year);
+  const actualGrossFallback = salaryReceivedToDate(salaryPeriods, year);
+  const estimatedRemainingTaxFallback = useMemo(() => {
+    const actualGross = amount(record.actualGrossIncome) > 0 ? amount(record.actualGrossIncome) : actualGrossFallback;
+    const expectedGross = amount(record.expectedRemainingGross) > 0 ? amount(record.expectedRemainingGross) : expectedGrossFallback;
+    const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
+    const tax = computeAnnualTax(actualGross + expectedGross + otherIncome, filingStatus, year);
+    if (!tax) return 0;
+    return Math.max(0, tax.total - amount(record.actualWithholding) - amount(record.estimatedPayments) - amount(record.taxCredits));
+  }, [actualGrossFallback, expectedGrossFallback, filingStatus, record, year]);
+
   const totals = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0
       ? amount(record.actualGrossIncome)
       : salaryReceivedToDate(salaryPeriods, year);
     const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
       ? amount(record.expectedRemainingWithholding)
-      : expectedWithholdingAfterNow(salaryPeriods, year);
+      : estimatedRemainingTaxFallback;
     const withholding = amount(record.actualWithholding) + expectedWithholding;
     const investments = amount(record.investmentProceeds) - amount(record.investmentCostBasis);
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
@@ -238,7 +234,7 @@ export default function TaxCenter() {
       ? amount(record.expectedRemainingGross)
       : expectedSalaryAfterNow(salaryPeriods, year);
     return { income: actualGross + expectedFromSalary + otherIncome, withholding, investments, otherIncome };
-  }, [record, salaryPeriods, year]);
+  }, [estimatedRemainingTaxFallback, record, salaryPeriods, year]);
 
   const estimatedRefund = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0
@@ -254,11 +250,11 @@ export default function TaxCenter() {
     if (!tax) return null;
     const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
       ? amount(record.expectedRemainingWithholding)
-      : expectedWithholdingAfterNow(salaryPeriods, year);
+      : estimatedRemainingTaxFallback;
     const paid = amount(record.actualWithholding) + expectedWithholding
       + amount(record.estimatedPayments) + amount(record.taxCredits);
     return paid - tax.total;
-  }, [filingStatus, record, salaryPeriods, year]);
+  }, [estimatedRemainingTaxFallback, filingStatus, record, salaryPeriods, year]);
 
   const incomeComplete = amount(record.actualGrossIncome) > 0 && amount(record.actualWithholding) >= 0;
   const investmentComplete = amount(record.investmentProceeds) > 0 || amount(record.dividends) > 0 || amount(record.realizedCapitalGain) !== 0;
@@ -282,8 +278,7 @@ export default function TaxCenter() {
     </label>
   );
 
-  const expectedGrossFallback = expectedSalaryAfterNow(salaryPeriods, year);
-  const expectedWithholdingFallback = expectedWithholdingAfterNow(salaryPeriods, year);
+  const expectedWithholdingFallback = estimatedRemainingTaxFallback;
 
   const saveRefundStatus = async (received: boolean) => {
     setSaving(true);
@@ -388,7 +383,7 @@ export default function TaxCenter() {
               placeholder={expectedWithholdingFallback > 0 ? formatCurrency(expectedWithholdingFallback) : "Future pay"}
               className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
             <span className="mt-1 block text-[9px] text-foreground/30">
-              {record.expectedRemainingWithholding ? "Manual override" : expectedWithholdingFallback > 0 ? "From salary × actual withholding %" : "Add withholding %"}
+              {record.expectedRemainingWithholding ? "Manual override" : expectedWithholdingFallback > 0 ? "Estimated tax still due after paid amounts" : "Add income to estimate"}
             </span>
           </label>
         </div></div>}
