@@ -659,7 +659,7 @@ function MonthCard({
         {/* Income (with breakdown popover) */}
         <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
-          <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(Math.max(0, netSalary - salaryReceived))}</div>
+          <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(Math.max(0, netSalary - salaryReceived) + projectedRefund)}</div>
           {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived >= netSalary ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? `Paid ${formatCurrency(salaryReceived)}` : salaryDue > salaryReceived ? `${formatCurrency(Math.max(0, salaryDue - salaryReceived))} income left` : "Income expected later"}</div>}
           {isToday && paychecks.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
@@ -686,6 +686,12 @@ function MonthCard({
                 <span className="text-foreground/70">Net take-home</span>
                 <span className="text-green font-bold tabular-nums">+{formatCurrency(netSalary)}</span>
               </div>
+              {projectedRefund > 0 && (
+                <div className="flex items-center justify-between gap-3 text-[10px]">
+                  <span className="text-violet-300">Expected tax refund</span>
+                  <span className="text-green font-semibold tabular-nums">+{formatCurrency(projectedRefund)}</span>
+                </div>
+              )}
               <p className="text-[9px] text-foreground/30 italic pt-0.5">Bonuses & vests show as separate rows below</p>
             </div>
           )}
