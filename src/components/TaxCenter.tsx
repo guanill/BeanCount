@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Check, ChevronDown, CircleCheck, Clock3, Loader2, Plus, Trash2, TrendingUp, WalletCards } from "lucide-react";
+import { CalendarDays, Calculator, Check, ChevronDown, CircleCheck, Clock3, Loader2, Plus, Trash2, TrendingUp, WalletCards } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getPlannerConfig, upsertPlannerConfig } from "@/lib/supabase/queries";
 import { formatCurrency } from "@/lib/format";
@@ -450,27 +450,28 @@ export default function TaxCenter() {
             </span>
           )}
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <label className="text-[10px] text-foreground/50">
-            Expected refund date
-            <input type="date" value={record.expectedRefundDate ?? ""} onChange={event => update("expectedRefundDate", event.target.value)}
-              className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground" />
-          </label>
-          <label className="text-[10px] text-foreground/50">
-            Received date
-            <input type="date" value={record.refundReceivedDate ?? ""} disabled={!record.refundReceived}
-              onChange={event => update("refundReceivedDate", event.target.value)}
-              className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground disabled:opacity-40" />
-          </label>
-          <div className="flex items-end">
-            <button onClick={() => saveRefundStatus(!record.refundReceived)} disabled={saving || estimatedRefund === null || estimatedRefund <= 0}
-              className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                record.refundReceived ? "border-green/30 bg-green/10 text-green hover:bg-green/20" : "border-accent/30 bg-accent/10 text-accent-light hover:bg-accent/20"
-              }`}>
-              <Check className="h-4 w-4" />
-              {record.refundReceived ? "Refund received" : "Mark refund received"}
-            </button>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="rounded-xl border border-violet-400/20 bg-violet-400/5 p-3">
+            <div className="mb-2 flex items-center gap-2"><span className="rounded-lg bg-violet-400/10 p-1.5 text-violet-300"><CalendarDays className="h-3.5 w-3.5" /></span><div><p className="text-xs font-semibold text-foreground/80">Expected arrival</p><p className="text-[10px] text-foreground/35">This date appears on the Planner calendar.</p></div></div>
+            <input aria-label="Expected refund date" type="date" value={record.expectedRefundDate ?? ""} onChange={event => update("expectedRefundDate", event.target.value)}
+              className="h-10 w-full rounded-lg border border-violet-400/20 bg-background px-3 text-sm font-medium text-foreground [color-scheme:dark]" />
           </div>
+          <div className={`rounded-xl border p-3 ${record.refundReceived ? "border-green/25 bg-green/5" : "border-border/30 bg-background/20"}`}>
+            <div className="mb-2 flex items-center gap-2"><span className={`rounded-lg p-1.5 ${record.refundReceived ? "bg-green/10 text-green" : "bg-border/30 text-foreground/30"}`}><CircleCheck className="h-3.5 w-3.5" /></span><div><p className="text-xs font-semibold text-foreground/80">Actual arrival</p><p className="text-[10px] text-foreground/35">{record.refundReceived ? "The refund is recorded as received." : "Mark received to enter this date."}</p></div></div>
+            <input aria-label="Received date" type="date" value={record.refundReceivedDate ?? ""} disabled={!record.refundReceived}
+              onChange={event => update("refundReceivedDate", event.target.value)}
+              className="h-10 w-full rounded-lg border border-border/30 bg-background px-3 text-sm font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-35 [color-scheme:dark]" />
+          </div>
+        </div>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button onClick={() => saveRefundStatus(!record.refundReceived)} disabled={saving || estimatedRefund === null || estimatedRefund <= 0}
+            className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              record.refundReceived ? "border-green/30 bg-green/10 text-green hover:bg-green/20" : "border-accent/30 bg-accent/10 text-accent-light hover:bg-accent/20"
+            }`}>
+            <Check className="h-4 w-4" />
+            {record.refundReceived ? "Mark as not received" : "Mark refund received"}
+          </button>
+          <span className="text-[10px] text-foreground/35">{record.refundReceived ? "You can undo this if the status was entered by mistake." : "The button becomes available when a positive refund estimate exists."}</span>
         </div>
         <p className="mt-3 text-[10px] text-foreground/35">
           When marked received, the expected refund is removed from future Planner projections because it should already be reflected in your account balance. Unmarking it restores the expected projection.
