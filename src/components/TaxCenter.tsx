@@ -38,20 +38,37 @@ interface TaxIncomeItem {
 interface TaxConfig {
   taxYearTracking?: Record<string, TaxYearRecord>;
   events?: Array<{ id: string; year: number; month: number; label: string; amount: number; type: string }>;
+  salaryPeriods?: Array<{ startYear: number; startMonth: number; monthlySalary: number }>;
 }
 
 type TaxInputKey = Exclude<keyof TaxYearRecord, "refundReceived" | "otherIncome">;
 
 const CURRENT_YEAR = new Date().getFullYear();
+const CURRENT_MONTH = new Date().getMonth() + 1;
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, index) => CURRENT_YEAR - 1 + index);
 
 function amount(value: string | undefined): number {
   return Math.max(0, parseFloat(value ?? "") || 0);
 }
 
+function salaryForMonth(periods: TaxConfig["salaryPeriods"], year: number, month: number): number {
+  const applicable = (periods ?? [])
+    .filter(period => period.startYear < year || (period.startYear === year && period.startMonth <= month))
+    .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth));
+  return applicable[applicable.length - 1]?.monthlySalary ?? 0;
+}
+
+function expectedSalaryAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
+  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH + 1 : 1;
+  let total = 0;
+  for (let month = firstMonth; month <= 12; month++) total += salaryForMonth(periods, year, month);
+  return total;
+}
+
 export default function TaxCenter() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [record, setRecord] = useState<TaxYearRecord>({});
+  const [salaryPeriods, setSalaryPeriods] = useState<TaxConfig["salaryPeriods"]>([]);
   const [filingStatus, setFilingStatus] = useState<FilingStatus>("single");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -68,6 +85,7 @@ export default function TaxCenter() {
         if (!cancelled) {
           const config = (row?.config ?? {}) as TaxConfig;
           setRecord(config.taxYearTracking?.[String(year)] ?? {});
+          setSalaryPeriods(config.salaryPeriods ?? []);
           if (row?.tax_filing_status) setFilingStatus(row.tax_filing_status as FilingStatus);
         }
       } catch {
@@ -134,11 +152,17 @@ export default function TaxCenter() {
     const withholding = amount(record.actualWithholding) + amount(record.expectedRemainingWithholding);
     const investments = amount(record.investmentProceeds) - amount(record.investmentCostBasis);
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
-    return { income: income + otherIncome, withholding, investments, otherIncome };
-  }, [record]);
+    const expectedFromSalary = amount(record.expectedRemainingGross) > 0
+      ? amount(record.expectedRemainingGross)
+      : expectedSalaryAfterNow(salaryPeriods, year);
+    return { income: amount(record.actualGrossIncome) + expectedFromSalary + otherIncome, withholding, investments, otherIncome };
+  }, [record, salaryPeriods, year]);
 
   const estimatedRefund = useMemo(() => {
-    const gross = amount(record.actualGrossIncome) + amount(record.expectedRemainingGross);
+    const expectedFromSalary = amount(record.expectedRemainingGross) > 0
+      ? amount(record.expectedRemainingGross)
+      : expectedSalaryAfterNow(salaryPeriods, year);
+    const gross = amount(record.actualGrossIncome) + expectedFromSalary;
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
     if (gross + otherIncome <= 0) return null;
     const tax = computeAnnualTax(gross + otherIncome, filingStatus, year);
@@ -146,7 +170,7 @@ export default function TaxCenter() {
     const paid = amount(record.actualWithholding) + amount(record.expectedRemainingWithholding)
       + amount(record.estimatedPayments) + amount(record.taxCredits);
     return paid - tax.total;
-  }, [filingStatus, record, year]);
+  }, [filingStatus, record, salaryPeriods, year]);
 
   const incomeComplete = amount(record.actualGrossIncome) > 0 && amount(record.actualWithholding) >= 0;
   const investmentComplete = amount(record.investmentProceeds) > 0 || amount(record.dividends) > 0 || amount(record.realizedCapitalGain) !== 0;
@@ -169,6 +193,8 @@ export default function TaxCenter() {
       />
     </label>
   );
+
+  const expectedGrossFallback = expectedSalaryAfterNow(salaryPeriods, year);
 
   const saveRefundStatus = async (received: boolean) => {
     setSaving(true);
@@ -265,7 +291,16 @@ export default function TaxCenter() {
         </button>
         {incomeOpen && <div className="border-t border-border/20 p-4 pt-4 sm:p-5 sm:pt-4"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {field("actualGrossIncome", "Actual gross income to date", "Pay stubs")}
-          {field("expectedRemainingGross", "Expected remaining gross", "Future pay")}
+          <label className="text-[10px] text-foreground/50">
+            Expected remaining gross
+            <input type="number" min="0" step="0.01" value={record.expectedRemainingGross ?? ""}
+              onChange={event => update("expectedRemainingGross", event.target.value)}
+              placeholder={expectedGrossFallback > 0 ? formatCurrency(expectedGrossFallback) : "Future pay"}
+              className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
+            <span className="mt-1 block text-[9px] text-foreground/30">
+              {record.expectedRemainingGross ? "Manual override" : expectedGrossFallback > 0 ? "From Income Schedule" : "Add a salary schedule"}
+            </span>
+          </label>
           {field("actualWithholding", "Tax withheld to date", "Pay stubs")}
           {field("expectedRemainingWithholding", "Expected remaining withholding", "Future pay")}
         </div></div>}
