@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus, Trash2, ChevronLeft, ChevronRight, ChevronDown,
   TrendingUp, Zap, DollarSign, Edit2, Check, X, Calendar, ScanSearch, BarChart2, Sparkles,
-  Building, CheckCircle2, Circle, MapPin, Calculator, RefreshCw,
+  Building, Building2, CheckCircle2, Circle, MapPin, Calculator, RefreshCw, Receipt, Banknote,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import type { Loan } from "@/lib/types";
@@ -2413,8 +2413,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
 
           {/* A compact day-level view complements the month projection with the
               dates that are most useful for checking the current month. */}
-          <div className="mb-3 rounded-2xl border border-border/30 bg-card/30 p-3">
-            <div className="flex items-center justify-between mb-2">
+          <div className="mb-3 rounded-2xl border border-border/30 bg-card/30 p-3 sm:p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => {
                   const previous = new Date(calendarYear, calendarMonth - 2, 1);
@@ -2432,18 +2432,29 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   setCalendarDay(null);
                 }} className="rounded p-1 text-foreground/40 hover:text-foreground" aria-label="Next calendar month"><ChevronRight className="w-3.5 h-3.5" /></button>
               </div>
-              <span className="text-[10px] text-foreground/35">bills and paydays</span>
+              <div className="flex items-center gap-2 text-[9px] text-foreground/40">
+                <span className="flex items-center gap-1"><Receipt className="h-3 w-3 text-red" /> bills</span>
+                <span className="flex items-center gap-1"><Banknote className="h-3 w-3 text-green" /> income</span>
+                <span className="flex items-center gap-1"><Building2 className="h-3 w-3 text-orange-400" /> loans</span>
+              </div>
             </div>
-            <div className="grid grid-cols-7 gap-1">
+            <div className="grid grid-cols-7 gap-1.5">
               {Array.from({ length: new Date(calendarYear, calendarMonth, 0).getDate() }, (_, i) => i + 1).map(day => {
                 const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === day);
                 const pay = config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
                 const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
-                return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`min-h-9 rounded-lg border p-1 text-center ${calendarDay === day ? "border-accent/60 bg-accent/10" : "border-border/20 bg-background/30"}`}>
-                  <div className="text-[9px] text-foreground/40">{day}</div>
-                  {bills.length > 0 && <div className="text-[10px] text-red" title={bills.map(b => b.label).join(", ")}>●</div>}
-                  {pay && <div className="text-[10px] text-green" title="Payday">◆</div>}
-                  {loanPayments.length > 0 && <div className="text-[10px] text-orange-400" title="Loan payment">■</div>}
+                const hasEvents = bills.length > 0 || pay || loanPayments.length > 0;
+                const isToday = day === CUR_DAY && calendarMonth === CUR_MONTH && calendarYear === CUR_YEAR;
+                return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`relative min-h-12 rounded-xl border p-1.5 text-left transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:bg-accent/5 ${
+                  calendarDay === day ? "border-accent bg-accent/10 shadow-sm shadow-accent/10" : isToday ? "border-accent/50 bg-accent/5" : "border-border/20 bg-background/30"
+                }`}>
+                  <div className={`text-[10px] font-semibold ${isToday ? "text-accent" : "text-foreground/45"}`}>{day}</div>
+                  {hasEvents && <div className="mt-1 flex flex-wrap items-center gap-0.5">
+                    {bills.length > 0 && <Receipt className="h-3 w-3 text-red" aria-label={`${bills.length} bill${bills.length === 1 ? "" : "s"}`} />}
+                    {pay && <Banknote className="h-3 w-3 text-green" aria-label="Payday" />}
+                    {loanPayments.length > 0 && <Building2 className="h-3 w-3 text-orange-400" aria-label={`${loanPayments.length} loan payment${loanPayments.length === 1 ? "" : "s"}`} />}
+                  </div>}
+                  {bills.length + loanPayments.length > 1 && <span className="absolute bottom-1 right-1 text-[8px] font-bold text-foreground/35">{bills.length + loanPayments.length}</span>}
                 </button>;
               })}
             </div>
@@ -2451,15 +2462,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === calendarDay);
               const pay = config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay));
               const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
-              return <div className="mt-2 rounded-lg border border-border/20 bg-background/30 px-3 py-2 text-[10px] text-foreground/55">
-                <span className="font-semibold text-foreground/70">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span>
-                {bills.length === 0 && pay.length === 0 && <span className="ml-2">Nothing scheduled</span>}
-                {bills.map(b => <span key={b.id} className="ml-2 text-red">Bill: {b.label} ({formatCurrency(b.amount)})</span>)}
-                {pay.map(p => <span key={p.id} className="ml-2 text-green">Payday: {p.label || "Salary"}</span>)}
-                {loanPayments.map(l => <span key={l.id} className="ml-2 text-orange-400">Loan: {l.name} ({formatCurrency(l.monthly_payment)})</span>)}
+              return <div className="mt-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-3 text-[10px] text-foreground/55">
+                <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length} scheduled</span></div>
+                {bills.length === 0 && pay.length === 0 && loanPayments.length === 0 && <span>Nothing scheduled</span>}
+                <div className="flex flex-wrap gap-1.5">
+                  {bills.map(b => <span key={b.id} className="flex items-center gap-1 rounded-lg bg-red/10 px-2 py-1 text-red"><Receipt className="h-3 w-3" />{b.label} · {formatCurrency(b.amount)}</span>)}
+                  {pay.map(p => <span key={p.id} className="flex items-center gap-1 rounded-lg bg-green/10 px-2 py-1 text-green"><Banknote className="h-3 w-3" />{p.label || "Salary"}</span>)}
+                  {loanPayments.map(l => <span key={l.id} className="flex items-center gap-1 rounded-lg bg-orange-400/10 px-2 py-1 text-orange-400"><Building2 className="h-3 w-3" />{l.name} · {formatCurrency(l.monthly_payment)}</span>)}
+                </div>
               </div>;
             })()}
-            <div className="mt-2 flex gap-3 text-[10px] text-foreground/40"><span><b className="text-red">●</b> bill</span><span><b className="text-green">◆</b> remaining payday</span><span><b className="text-orange-400">■</b> loan payment</span></div>
           </div>
 
           {/* Month grid */}
