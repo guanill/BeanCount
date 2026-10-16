@@ -38,7 +38,17 @@ interface TaxIncomeItem {
 interface TaxConfig {
   taxYearTracking?: Record<string, TaxYearRecord>;
   events?: Array<{ id: string; year: number; month: number; label: string; amount: number; type: string }>;
-  salaryPeriods?: Array<{ startYear: number; startMonth: number; monthlySalary: number; withholdingRate?: number }>;
+  salaryPeriods?: Array<{
+    startYear: number;
+    startMonth: number;
+    monthlySalary: number;
+    withholdingRate?: number;
+    payFrequency?: "monthly" | "semimonthly" | "biweekly" | "weekly";
+    payDay1?: number;
+    payDay2?: number;
+    paidPaydays?: Record<string, number[]>;
+    unpaidPaydays?: Record<string, number[]>;
+  }>;
 }
 
 type TaxInputKey = Exclude<keyof TaxYearRecord, "refundReceived" | "otherIncome">;
@@ -58,22 +68,70 @@ function salaryForMonth(periods: TaxConfig["salaryPeriods"], year: number, month
   return applicable[applicable.length - 1]?.monthlySalary ?? 0;
 }
 
-function expectedSalaryAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
-  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH + 1 : 1;
+function salaryPeriodForMonth(periods: TaxConfig["salaryPeriods"], year: number, month: number) {
+  const applicable = (periods ?? [])
+    .filter(period => period.startYear < year || (period.startYear === year && period.startMonth <= month))
+    .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth));
+  return applicable[applicable.length - 1];
+}
+
+function paycheckDays(period: NonNullable<TaxConfig["salaryPeriods"]>[number]): number[] {
+  if (period.payFrequency === "semimonthly") return [period.payDay1 ?? 15, period.payDay2 ?? 30];
+  return [period.payDay1 ?? 15];
+}
+
+function paycheckPaid(period: NonNullable<TaxConfig["salaryPeriods"]>[number], year: number, month: number, day: number): boolean {
+  const key = `${year}-${String(month).padStart(2, "0")}`;
+  const paid = period.paidPaydays?.[key] ?? [];
+  const unpaid = period.unpaidPaydays?.[key] ?? [];
+  return paid.includes(day) && !unpaid.includes(day);
+}
+
+function salaryReceivedToDate(periods: TaxConfig["salaryPeriods"], year: number): number {
+  if (year > CURRENT_YEAR) return 0;
   let total = 0;
-  for (let month = firstMonth; month <= 12; month++) total += salaryForMonth(periods, year, month);
+  const lastMonth = year < CURRENT_YEAR ? 12 : CURRENT_MONTH;
+  for (let month = 1; month <= lastMonth; month++) {
+    const salary = salaryForMonth(periods, year, month);
+    if (month < lastMonth || year < CURRENT_YEAR) {
+      total += salary;
+      continue;
+    }
+    const period = salaryPeriodForMonth(periods, year, month);
+    const days = period ? paycheckDays(period) : [];
+    const paidCount = period ? days.filter(day => paycheckPaid(period, year, month, day)).length : 0;
+    total += days.length > 0 ? salary * paidCount / days.length : 0;
+  }
+  return total;
+}
+
+function expectedSalaryAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
+  let total = 0;
+  if (year < CURRENT_YEAR) return 0;
+  if (year === CURRENT_YEAR) {
+    const salary = salaryForMonth(periods, year, CURRENT_MONTH);
+    const period = salaryPeriodForMonth(periods, year, CURRENT_MONTH);
+    const days = period ? paycheckDays(period) : [];
+    const unpaidCount = period ? days.filter(day => !paycheckPaid(period, year, CURRENT_MONTH, day)).length : 0;
+    total += days.length > 0 ? salary * unpaidCount / days.length : 0;
+    for (let month = CURRENT_MONTH + 1; month <= 12; month++) total += salaryForMonth(periods, year, month);
+    return total;
+  }
+  for (let month = 1; month <= 12; month++) total += salaryForMonth(periods, year, month);
   return total;
 }
 
 function expectedWithholdingAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
-  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH + 1 : 1;
   let total = 0;
+  if (year < CURRENT_YEAR) return 0;
+  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH : 1;
   for (let month = firstMonth; month <= 12; month++) {
-    const applicable = (periods ?? [])
-      .filter(period => period.startYear < year || (period.startYear === year && period.startMonth <= month))
-      .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth));
-    const period = applicable[applicable.length - 1];
-    total += period ? period.monthlySalary * Math.max(0, Math.min(100, period.withholdingRate ?? 0)) / 100 : 0;
+    const salary = month === CURRENT_MONTH && year === CURRENT_YEAR
+      ? expectedSalaryAfterNow(periods, year) - Array.from({ length: 12 - CURRENT_MONTH }, (_, index) => salaryForMonth(periods, year, CURRENT_MONTH + index + 1)).reduce((sum, value) => sum + value, 0)
+      : salaryForMonth(periods, year, month);
+    const period = salaryPeriodForMonth(periods, year, month);
+    const rate = Math.max(0, Math.min(100, period?.withholdingRate ?? 0)) / 100;
+    total += salary * rate;
   }
   return total;
 }
@@ -161,6 +219,9 @@ export default function TaxCenter() {
   };
 
   const totals = useMemo(() => {
+    const actualGross = amount(record.actualGrossIncome) > 0
+      ? amount(record.actualGrossIncome)
+      : salaryReceivedToDate(salaryPeriods, year);
     const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
       ? amount(record.expectedRemainingWithholding)
       : expectedWithholdingAfterNow(salaryPeriods, year);
@@ -170,14 +231,17 @@ export default function TaxCenter() {
     const expectedFromSalary = amount(record.expectedRemainingGross) > 0
       ? amount(record.expectedRemainingGross)
       : expectedSalaryAfterNow(salaryPeriods, year);
-    return { income: amount(record.actualGrossIncome) + expectedFromSalary + otherIncome, withholding, investments, otherIncome };
+    return { income: actualGross + expectedFromSalary + otherIncome, withholding, investments, otherIncome };
   }, [record, salaryPeriods, year]);
 
   const estimatedRefund = useMemo(() => {
+    const actualGross = amount(record.actualGrossIncome) > 0
+      ? amount(record.actualGrossIncome)
+      : salaryReceivedToDate(salaryPeriods, year);
     const expectedFromSalary = amount(record.expectedRemainingGross) > 0
       ? amount(record.expectedRemainingGross)
       : expectedSalaryAfterNow(salaryPeriods, year);
-    const gross = amount(record.actualGrossIncome) + expectedFromSalary;
+    const gross = actualGross + expectedFromSalary;
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
     if (gross + otherIncome <= 0) return null;
     const tax = computeAnnualTax(gross + otherIncome, filingStatus, year);
