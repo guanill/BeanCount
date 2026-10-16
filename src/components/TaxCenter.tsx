@@ -20,6 +20,7 @@ interface TaxYearRecord {
   investmentCostBasis?: string;
   realizedCapitalGain?: string;
   expectedRefundDate?: string;
+  estimatedRefundAmount?: string;
   refundReceived?: boolean;
   refundReceivedDate?: string;
   refundEventId?: string;
@@ -206,7 +207,10 @@ export default function TaxCenter() {
           ...config,
           taxYearTracking: {
             ...(config.taxYearTracking ?? {}),
-            [String(year)]: record,
+            [String(year)]: {
+              ...record,
+              estimatedRefundAmount: estimatedRefund !== null ? String(Math.max(0, estimatedRefund)) : undefined,
+            },
           },
         },
       });
@@ -298,6 +302,7 @@ export default function TaxCenter() {
         : undefined;
       const nextRecord = {
         ...current,
+        estimatedRefundAmount: estimatedRefund !== null ? String(Math.max(0, estimatedRefund)) : undefined,
         refundReceived: received,
         refundReceivedDate: receivedDate,
         refundEventId: refundAmount > 0 ? eventId : undefined,

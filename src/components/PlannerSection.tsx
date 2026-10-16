@@ -120,6 +120,7 @@ interface TaxYearTracking {
   estimatedPayments?: string;
   taxCredits?: string;
   expectedRefundDate?: string;
+  estimatedRefundAmount?: string;
   refundReceived?: boolean;
   refundReceivedDate?: string;
   refundEventId?: string;
@@ -2458,6 +2459,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
                 const refundRecord = config.taxYearTracking?.[String(calendarYear)];
                 const refundDate = refundRecord?.refundReceivedDate ?? refundRecord?.expectedRefundDate;
+                const refundAmount = Number(refundRecord?.estimatedRefundAmount ?? 0);
                 const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === day;
                 const hasEvents = bills.length > 0 || pay || loanPayments.length > 0 || refund;
                 const isToday = day === CUR_DAY && calendarMonth === CUR_MONTH && calendarYear === CUR_YEAR;
@@ -2471,6 +2473,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     {loanPayments.length > 0 && <Building2 className="h-3 w-3 text-orange-400" aria-label={`${loanPayments.length} loan payment${loanPayments.length === 1 ? "" : "s"}`} />}
                     {refund && <CircleDollarSign className={`h-3 w-3 ${refundRecord?.refundReceived ? "text-green" : "text-violet-300"}`} aria-label={refundRecord?.refundReceived ? "Refund received" : "Expected tax refund"} />}
                   </div>}
+                  {refund && refundAmount > 0 && <span className="mt-0.5 block truncate text-[8px] font-semibold text-violet-300">+{formatCurrency(refundAmount)}</span>}
                   {bills.length + loanPayments.length > 1 && <span className="absolute bottom-1 right-1 text-[8px] font-bold text-foreground/35">{bills.length + loanPayments.length}</span>}
                 </button>;
               })}
@@ -2493,6 +2496,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
               const refundRecord = config.taxYearTracking?.[String(calendarYear)];
               const refundDate = refundRecord?.refundReceivedDate ?? refundRecord?.expectedRefundDate;
+              const refundAmount = Number(refundRecord?.estimatedRefundAmount ?? 0);
               const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === calendarDay;
               return <div className="mt-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-3 text-[10px] text-foreground/55">
                 <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length + (refund ? 1 : 0)} scheduled</span></div>
@@ -2501,7 +2505,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   {bills.map(b => <span key={b.id} className="flex items-center gap-1 rounded-lg bg-red/10 px-2 py-1 text-red"><Receipt className="h-3 w-3" />{b.label} · {formatCurrency(b.amount)}</span>)}
                   {pay.map(p => <span key={p.id} className="flex items-center gap-1 rounded-lg bg-green/10 px-2 py-1 text-green"><Banknote className="h-3 w-3" />{p.label || "Salary"}</span>)}
                   {loanPayments.map(l => <span key={l.id} className="flex items-center gap-1 rounded-lg bg-orange-400/10 px-2 py-1 text-orange-400"><Building2 className="h-3 w-3" />{l.name} · {formatCurrency(l.monthly_payment)}</span>)}
-                  {refund && <span className={`flex items-center gap-1 rounded-lg px-2 py-1 ${refundRecord?.refundReceived ? "bg-green/10 text-green" : "bg-violet-400/10 text-violet-300"}`}><CircleDollarSign className="h-3 w-3" />{refundRecord?.refundReceived ? "Tax refund received" : "Expected tax refund"}</span>}
+                  {refund && <span className={`flex items-center gap-1 rounded-lg px-2 py-1 ${refundRecord?.refundReceived ? "bg-green/10 text-green" : "bg-violet-400/10 text-violet-300"}`}><CircleDollarSign className="h-3 w-3" />{refundRecord?.refundReceived ? "Tax refund received" : "Expected tax refund"}{refundAmount > 0 && ` · ${formatCurrency(refundAmount)}`}</span>}
                 </div>
               </div>;
             })()}
