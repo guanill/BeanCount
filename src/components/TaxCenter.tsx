@@ -145,6 +145,7 @@ export default function TaxCenter() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [loadedYear, setLoadedYear] = useState<number | null>(null);
   const [incomeOpen, setIncomeOpen] = useState(true);
   const [investmentsOpen, setInvestmentsOpen] = useState(false);
   const [otherIncomeOpen, setOtherIncomeOpen] = useState(true);
@@ -159,6 +160,7 @@ export default function TaxCenter() {
           setRecord(config.taxYearTracking?.[String(year)] ?? {});
           setSalaryPeriods(config.salaryPeriods ?? []);
           if (row?.tax_filing_status) setFilingStatus(row.tax_filing_status as FilingStatus);
+          setLoadedYear(year);
         }
       } catch {
         if (!cancelled) setMessage("Could not load saved tax information.");
@@ -195,9 +197,9 @@ export default function TaxCenter() {
     setRecord(previous => ({ ...previous, otherIncome: (previous.otherIncome ?? []).filter(item => item.id !== id) }));
   };
 
-  const save = async () => {
+  async function saveRecord(nextRecord: TaxYearRecord, notify: boolean) {
     setSaving(true);
-    setMessage("");
+    if (notify) setMessage("");
     try {
       const supabase = createClient();
       const row = await getPlannerConfig(supabase);
@@ -208,19 +210,27 @@ export default function TaxCenter() {
           taxYearTracking: {
             ...(config.taxYearTracking ?? {}),
             [String(year)]: {
-              ...record,
+              ...nextRecord,
               estimatedRefundAmount: estimatedRefund !== null ? String(Math.max(0, estimatedRefund)) : undefined,
             },
           },
         },
       });
-      setMessage(`${year} tax details saved.`);
+      if (notify) setMessage(`${year} tax details saved.`);
     } catch {
-      setMessage("Could not save tax details. Please try again.");
+      if (notify) setMessage("Could not save tax details. Please try again.");
     } finally {
       setSaving(false);
     }
-  };
+  }
+
+  const save = () => saveRecord(record, true);
+
+  useEffect(() => {
+    if (loadedYear !== year) return;
+    const timer = setTimeout(() => { void saveRecord(record, false); }, 800);
+    return () => clearTimeout(timer);
+  }, [loadedYear, record, year]);
 
   const totals = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0
