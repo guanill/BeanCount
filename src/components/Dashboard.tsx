@@ -11,16 +11,17 @@ import AssetBreakdown from "./AssetBreakdown";
 import FinalTotals from "./FinalTotals";
 import TransactionsSection from "./TransactionsSection";
 import PlannerSection from "./PlannerSection";
+import TaxCenter from "./TaxCenter";
 import LoansSection from "./LoansSection";
 import LiabilitiesSection from "./LiabilitiesSection";
-import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, LogOut, X } from "lucide-react";
+import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, Calculator, LogOut, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getDashboardData } from "@/lib/supabase/queries";
 import { getNetWorthHistory, saveNetWorthSnapshot } from "@/lib/supabase/queries";
 import NetWorthHistory from "./NetWorthHistory";
 
-type View = "overview" | "spending" | "planner" | "loans";
-const VIEWS: View[] = ["overview", "spending", "planner", "loans"];
+type View = "overview" | "spending" | "planner" | "tax" | "loans";
+const VIEWS: View[] = ["overview", "spending", "planner", "tax", "loans"];
 
 /** Read the active tab from the URL hash so a refresh keeps you where you were. */
 function readViewFromHash(): View {
@@ -167,6 +168,7 @@ export default function Dashboard() {
               { key: "overview", icon: LayoutDashboard, label: "Overview" },
               { key: "spending", icon: Receipt, label: "Spending" },
               { key: "planner", icon: Sparkles, label: "Planner" },
+              { key: "tax", icon: Calculator, label: "Tax" },
               { key: "loans", icon: Landmark, label: "Loans" },
             ] as const).map(({ key, icon: Icon, label }) => (
               <button
@@ -211,6 +213,7 @@ export default function Dashboard() {
             { key: "overview", icon: LayoutDashboard, label: "Overview" },
             { key: "spending", icon: Receipt, label: "Spending" },
             { key: "planner", icon: Sparkles, label: "Planner" },
+            { key: "tax", icon: Calculator, label: "Tax" },
             { key: "loans", icon: Landmark, label: "Loans" },
           ] as const).map(({ key, icon: Icon, label }) => (
             <button
@@ -335,6 +338,7 @@ export default function Dashboard() {
 
         {view === "loans" && <LoansSection />}
         {view === "planner" && <PlannerSection netWorth={effectiveNetWorth} stockTotal={effectiveStockTotal} loans={data.loans} />}
+        {view === "tax" && <TaxCenter />}
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">
