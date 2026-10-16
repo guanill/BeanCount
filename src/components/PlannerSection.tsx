@@ -2828,9 +2828,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         <Accordion
           title="Income Schedule"
           icon={<div className="p-2.5 bg-green/15 rounded-xl"><TrendingUp className="w-5 h-5 text-green" /></div>}
-          subtitle="— salary periods, promotions, job changes"
+          subtitle="— gross salary, actual paycheck withholding, promotions, job changes"
           gradient="from-green/10 to-green/5"
         >
+          <p className="mb-3 rounded-lg border border-green/15 bg-green/5 px-3 py-2 text-[10px] leading-relaxed text-foreground/45">
+            Enter your gross monthly salary and the actual percentage your employer withholds.
+            The payment calendar uses that actual percentage for expected take-home pay; the tax estimator remains a separate annual estimate.
+          </p>
           {config.salaryPeriods.length === 0 && !addingSalary && (
             <p className="text-xs text-foreground/40 text-center py-2">No salary periods yet. Add your current salary to start projecting.</p>
           )}
@@ -2867,7 +2871,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                       className="w-14 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Second payday" />}
                     <input type="number" min={0} max={100} step="0.01" value={salaryDraft.withholdingRate ?? sp.withholdingRate ?? ""}
                       onChange={e => setSalaryDraft(d => ({ ...d, withholdingRate: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
-                      placeholder="Tax %" className="w-16 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Actual paycheck withholding rate" />
+                      placeholder="Actual %" className="w-20 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Actual paycheck withholding percentage" />
                     <input type="number" min={0} step="0.01" value={salaryDraft.yearToDateGrossPay ?? sp.yearToDateGrossPay ?? ""}
                       onChange={e => setSalaryDraft(d => ({ ...d, yearToDateGrossPay: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
                       placeholder="YTD gross" className="w-20 shrink-0 bg-background border border-border/50 rounded-lg px-2 py-1 text-xs text-foreground" title="Year-to-date gross pay" />
@@ -2929,7 +2933,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Actual tax withheld %</label>
+                <label className="text-[10px] text-foreground/40 uppercase tracking-wide">Actual paycheck withholding %</label>
                 <input type="number" min={0} max={100} step="0.01" placeholder="Use estimate" value={newSP.withholdingRate ?? ""}
                   onChange={e => setNewSP(f => ({ ...f, withholdingRate: e.target.value === "" ? undefined : parseFloat(e.target.value) }))}
                   className="bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground w-28" />
