@@ -541,7 +541,7 @@ interface PaycheckMarker {
 }
 
 function MonthCard({
-  year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday,
+  year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday, isCalendarSelected,
   onAddEvent, onRemoveEvent,
   onTogglePaycheck,
 }: {
@@ -554,7 +554,7 @@ function MonthCard({
   spendBreakdown: Array<{ id: string; label: string; amount: number }>;
   scenarioEvents: ScenarioEvent[];
   balance: number; net: number;
-  isPast: boolean; isToday: boolean;
+  isPast: boolean; isToday: boolean; isCalendarSelected: boolean;
   onAddEvent: (ev: Omit<PlannerEvent, "id">) => void;
   onRemoveEvent: (id: string) => void;
   onTogglePaycheck: (id: string, day: number) => void;
@@ -583,7 +583,7 @@ function MonthCard({
       isToday   ? "border-accent/60 bg-accent/5 shadow-lg shadow-accent/10 ring-1 ring-accent/20"
       : isPast  ? "border-border/15 bg-card/15 opacity-50"
       : "border-border/40 bg-card hover:border-border/70 hover:shadow-md hover:shadow-black/20"
-    }`}>
+    } ${isCalendarSelected ? "ring-2 ring-violet-400/80 ring-offset-2 ring-offset-background" : ""}`}>
       {/* Top accent stripe */}
       <div className={`h-0.75 w-full rounded-t-2xl ${positive ? "bg-green/50" : "bg-red/50"}`} />
 
@@ -1473,6 +1473,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   function markLoadFailed() { loadFailedRef.current = true; setLoadFailed(true); }
   const [paidLoanIds, setPaidLoanIds] = useState<Set<string>>(new Set());
   const [thisMonthTxKeys, setThisMonthTxKeys] = useState<Set<string>>(new Set());
+  const [calendarYear, setCalendarYear] = useState(CUR_YEAR);
+  const [calendarMonth, setCalendarMonth] = useState(CUR_MONTH);
   const [calendarDay, setCalendarDay] = useState<number | null>(CUR_DAY);
 
   // Load planner config + loans on mount
@@ -2317,15 +2319,30 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               dates that are most useful for checking the current month. */}
           <div className="mb-3 rounded-2xl border border-border/30 bg-card/30 p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-foreground/70">Payment calendar · {MONTHS_FULL[CUR_MONTH - 1]}</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => {
+                  const previous = new Date(calendarYear, calendarMonth - 2, 1);
+                  setCalendarYear(previous.getFullYear());
+                  setCalendarMonth(previous.getMonth() + 1);
+                  setViewYear(previous.getFullYear());
+                  setCalendarDay(null);
+                }} className="rounded p-1 text-foreground/40 hover:text-foreground" aria-label="Previous calendar month"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                <span className="text-xs font-semibold text-foreground/70">Payment calendar · {MONTHS_FULL[calendarMonth - 1]} {calendarYear}</span>
+                <button type="button" onClick={() => {
+                  const next = new Date(calendarYear, calendarMonth, 1);
+                  setCalendarYear(next.getFullYear());
+                  setCalendarMonth(next.getMonth() + 1);
+                  setViewYear(next.getFullYear());
+                  setCalendarDay(null);
+                }} className="rounded p-1 text-foreground/40 hover:text-foreground" aria-label="Next calendar month"><ChevronRight className="w-3.5 h-3.5" /></button>
+              </div>
               <span className="text-[10px] text-foreground/35">bills and paydays</span>
             </div>
             <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: new Date(CUR_YEAR, CUR_MONTH, 0).getDate() }, (_, i) => i + 1).map(day => {
-                const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, CUR_YEAR, CUR_MONTH) && c.chargeDay === day);
-                const pay = day >= CUR_DAY && config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
-                const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH) > 0);
-                const today = day === CUR_DAY;
+              {Array.from({ length: new Date(calendarYear, calendarMonth, 0).getDate() }, (_, i) => i + 1).map(day => {
+                const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === day);
+                const pay = config.salaryPeriods.some(s => s.payDay1 === day || (s.payFrequency === "semimonthly" && s.payDay2 === day));
+                const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
                 return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`min-h-9 rounded-lg border p-1 text-center ${calendarDay === day ? "border-accent/60 bg-accent/10" : "border-border/20 bg-background/30"}`}>
                   <div className="text-[9px] text-foreground/40">{day}</div>
                   {bills.length > 0 && <div className="text-[10px] text-red" title={bills.map(b => b.label).join(", ")}>●</div>}
@@ -2335,11 +2352,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               })}
             </div>
             {calendarDay !== null && (() => {
-              const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, CUR_YEAR, CUR_MONTH) && c.chargeDay === calendarDay);
-              const pay = calendarDay >= CUR_DAY ? config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay)) : [];
-              const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH) > 0);
+              const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === calendarDay);
+              const pay = config.salaryPeriods.filter(s => s.payDay1 === calendarDay || (s.payFrequency === "semimonthly" && s.payDay2 === calendarDay));
+              const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
               return <div className="mt-2 rounded-lg border border-border/20 bg-background/30 px-3 py-2 text-[10px] text-foreground/55">
-                <span className="font-semibold text-foreground/70">{MONTHS_SHORT[CUR_MONTH - 1]} {calendarDay}</span>
+                <span className="font-semibold text-foreground/70">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span>
                 {bills.length === 0 && pay.length === 0 && <span className="ml-2">Nothing scheduled</span>}
                 {bills.map(b => <span key={b.id} className="ml-2 text-red">Bill: {b.label} ({formatCurrency(b.amount)})</span>)}
                 {pay.map(p => <span key={p.id} className="ml-2 text-green">Payday: {p.label || "Salary"}</span>)}
@@ -2358,6 +2375,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             const scenarioEventsM = (config.scenarioEvents ?? []).filter(s => s.year === d.year && s.month === d.month);
             const isPast  = d.year < CUR_YEAR || (d.year === CUR_YEAR && d.month < CUR_MONTH);
             const isToday = d.year === CUR_YEAR && d.month === CUR_MONTH;
+            const isCalendarSelected = d.year === calendarYear && d.month === calendarMonth;
             const netSalary = d.netSalary;
             const activeSalaryPeriod = config.salaryPeriods
               .filter(period => period.startYear < CUR_YEAR || (period.startYear === CUR_YEAR && period.startMonth <= CUR_MONTH))
@@ -2405,7 +2423,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 loanBreakdown={getLoanBreakdownForMonth(d.year, d.month)}
                 spendBreakdown={getSpendBreakdownForMonth(d.year, d.month)}
                 balance={d.balance} net={d.net}
-                isPast={isPast} isToday={isToday}
+                isPast={isPast} isToday={isToday} isCalendarSelected={isCalendarSelected}
                 onAddEvent={addEvent} onRemoveEvent={removeEvent}
               />
             );
