@@ -112,6 +112,15 @@ interface ScenarioEvent {
   items: ScenarioLineItem[];
 }
 
+interface TaxYearTracking {
+  actualGrossIncome?: string;
+  actualWithholding?: string;
+  expectedRemainingGross?: string;
+  expectedRemainingWithholding?: string;
+  estimatedPayments?: string;
+  taxCredits?: string;
+}
+
 interface PlannerConfig {
   startingBalance: number;
   balanceOverride: number | null;
@@ -126,6 +135,7 @@ interface PlannerConfig {
   events: PlannerEvent[];
   /** Expected remaining paycheck withholding, keyed by tax year. */
   taxExpectedRemainingByYear?: Record<string, string>;
+  taxYearTracking?: Record<string, TaxYearTracking>;
   /** Per-loan "pay off in month YYYY-MM" override — payments stop being projected at/after that month. */
   loanPayoffOverrides?: Record<string, string>;
 }
@@ -172,6 +182,7 @@ const DEFAULT_CONFIG: PlannerConfig = {
   scenarioEvents: [],
   events: [],
   taxExpectedRemainingByYear: {},
+  taxYearTracking: {},
   loanPayoffOverrides: {},
 };
 
@@ -1614,10 +1625,33 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [taxRemainingInput, setTaxRemainingInput] = useState("");
   const [taxPaymentsInput, setTaxPaymentsInput] = useState("");
   const [taxCreditsInput, setTaxCreditsInput] = useState("");
+  const [taxActualGrossInput, setTaxActualGrossInput] = useState("");
+  const [taxExpectedGrossInput, setTaxExpectedGrossInput] = useState("");
 
   useEffect(() => {
-    setTaxRemainingInput(config.taxExpectedRemainingByYear?.[String(viewYear)] ?? "");
-  }, [config.taxExpectedRemainingByYear, viewYear]);
+    const saved = config.taxYearTracking?.[String(viewYear)];
+    setTaxActualGrossInput(saved?.actualGrossIncome ?? "");
+    setTaxWithheldInput(saved?.actualWithholding ?? "");
+    setTaxExpectedGrossInput(saved?.expectedRemainingGross ?? "");
+    setTaxRemainingInput(saved?.expectedRemainingWithholding
+      ?? config.taxExpectedRemainingByYear?.[String(viewYear)]
+      ?? "");
+    setTaxPaymentsInput(saved?.estimatedPayments ?? "");
+    setTaxCreditsInput(saved?.taxCredits ?? "");
+  }, [config.taxExpectedRemainingByYear, config.taxYearTracking, viewYear]);
+
+  function updateTaxYearField(field: keyof TaxYearTracking, value: string) {
+    setConfig(c => ({
+      ...c,
+      taxYearTracking: {
+        ...(c.taxYearTracking ?? {}),
+        [String(viewYear)]: {
+          ...(c.taxYearTracking?.[String(viewYear)] ?? {}),
+          [field]: value || undefined,
+        },
+      },
+    }));
+  }
 
   const SCENARIO_EMOJIS = ["✈️","💍","🏠","🚗","🎓","🎉","🏖️","🛠️","💻","🌍","🎸","🏋️","🍽️","🎁","⛵"];
 
@@ -2088,13 +2122,19 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     if (taxIncomeOverride) {
       annualGross = parseFloat(taxIncomeOverride);
     } else {
+      const savedTaxYear = config.taxYearTracking?.[String(viewYear)];
+      const actualGross = parseFloat(savedTaxYear?.actualGrossIncome ?? "") || 0;
+      const expectedGross = parseFloat(savedTaxYear?.expectedRemainingGross ?? "") || 0;
       const activeCurrentPeriod = config.salaryPeriods
         .filter(p => p.startYear < CUR_YEAR || (p.startYear === CUR_YEAR && p.startMonth <= CUR_MONTH))
         .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth))
         .slice(-1)[0];
+      const hasSavedTaxYearIncome = actualGross > 0 || expectedGross > 0;
       const hasCurrentYearYtd = viewYear === CUR_YEAR && activeCurrentPeriod?.yearToDateGrossPay != null;
 
-      if (hasCurrentYearYtd) {
+      if (hasSavedTaxYearIncome) {
+        annualSalary = actualGross + expectedGross;
+      } else if (hasCurrentYearYtd) {
         // YTD gross already includes the months that have passed. Only project
         // the remaining months so earlier pay is never dropped or counted twice.
         annualSalary = Math.max(0, activeCurrentPeriod.yearToDateGrossPay ?? 0);
@@ -2151,12 +2191,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
       .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth))
       .slice(-1)[0];
     const ytdWithholding = activeCurrentPeriod?.yearToDateWithholding ?? 0;
-    const withheldToDate = taxWithheldInput === "" ? ytdWithholding : (parseFloat(taxWithheldInput) || 0);
+    const savedActualWithholding = parseFloat(config.taxYearTracking?.[String(viewYear)]?.actualWithholding ?? "") || 0;
+    const withheldToDate = taxWithheldInput === "" ? (savedActualWithholding || ytdWithholding) : (parseFloat(taxWithheldInput) || 0);
     const remainingWithholding = parseFloat(taxRemainingInput) || 0;
     const payments = parseFloat(taxPaymentsInput) || 0;
     const credits = parseFloat(taxCreditsInput) || 0;
     return { withheld: withheldToDate + remainingWithholding, withheldToDate, remainingWithholding, payments, credits, difference: withheldToDate + remainingWithholding + payments + credits - taxEstimate.total };
-  }, [config.salaryPeriods, taxEstimate, taxWithheldInput, taxRemainingInput, taxPaymentsInput, taxCreditsInput]);
+  }, [config.salaryPeriods, config.taxYearTracking, taxEstimate, taxWithheldInput, taxRemainingInput, taxPaymentsInput, taxCreditsInput, viewYear]);
 
   return (
     <div className="space-y-6">
@@ -2545,10 +2586,35 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               </div>
               <span className="text-[10px] text-foreground/30">estimated</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            <p className="mb-3 text-[10px] leading-relaxed text-foreground/35">
+              These values are saved separately for {viewYear}. Enter actual pay-stub totals for the year so the estimate keeps prior income as the months pass.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <label className="text-[10px] text-foreground/45">
+                Actual gross income to date
+                <input type="number" min="0" step="0.01" value={taxActualGrossInput} onChange={e => {
+                  const value = e.target.value;
+                  setTaxActualGrossInput(value);
+                  updateTaxYearField("actualGrossIncome", value);
+                }}
+                  placeholder="From pay stubs" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+              </label>
+              <label className="text-[10px] text-foreground/45">
+                Expected remaining gross income
+                <input type="number" min="0" step="0.01" value={taxExpectedGrossInput} onChange={e => {
+                  const value = e.target.value;
+                  setTaxExpectedGrossInput(value);
+                  updateTaxYearField("expectedRemainingGross", value);
+                }}
+                  placeholder="From schedule" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
+              </label>
               <label className="text-[10px] text-foreground/45">
                 Tax withheld to date
-                <input type="number" min="0" step="0.01" value={taxWithheldInput} onChange={e => setTaxWithheldInput(e.target.value)}
+                <input type="number" min="0" step="0.01" value={taxWithheldInput} onChange={e => {
+                  const value = e.target.value;
+                  setTaxWithheldInput(value);
+                  updateTaxYearField("actualWithholding", value);
+                }}
                   placeholder={(() => {
                     const active = config.salaryPeriods
                       .filter(p => p.startYear < CUR_YEAR || (p.startYear === CUR_YEAR && p.startMonth <= CUR_MONTH))
@@ -2562,23 +2628,26 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 <input type="number" min="0" step="0.01" value={taxRemainingInput} onChange={e => {
                   const value = e.target.value;
                   setTaxRemainingInput(value);
-                  setConfig(c => {
-                    const next = { ...(c.taxExpectedRemainingByYear ?? {}) };
-                    if (value === "") delete next[String(viewYear)];
-                    else next[String(viewYear)] = value;
-                    return { ...c, taxExpectedRemainingByYear: next };
-                  });
+                  updateTaxYearField("expectedRemainingWithholding", value);
                 }}
                   placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
               </label>
               <label className="text-[10px] text-foreground/45">
                 Estimated payments
-                <input type="number" min="0" step="0.01" value={taxPaymentsInput} onChange={e => setTaxPaymentsInput(e.target.value)}
+                <input type="number" min="0" step="0.01" value={taxPaymentsInput} onChange={e => {
+                  const value = e.target.value;
+                  setTaxPaymentsInput(value);
+                  updateTaxYearField("estimatedPayments", value);
+                }}
                   placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
               </label>
               <label className="text-[10px] text-foreground/45">
                 Tax credits
-                <input type="number" min="0" step="0.01" value={taxCreditsInput} onChange={e => setTaxCreditsInput(e.target.value)}
+                <input type="number" min="0" step="0.01" value={taxCreditsInput} onChange={e => {
+                  const value = e.target.value;
+                  setTaxCreditsInput(value);
+                  updateTaxYearField("taxCredits", value);
+                }}
                   placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
               </label>
             </div>
