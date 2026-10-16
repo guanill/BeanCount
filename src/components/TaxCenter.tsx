@@ -309,17 +309,6 @@ export default function TaxCenter() {
         refundEventId: refundAmount > 0 ? eventId : undefined,
       };
       const events = (config.events ?? []).filter(event => event.id !== eventId);
-      if (received && refundAmount > 0 && receivedDate) {
-        const date = new Date(`${receivedDate}T12:00:00`);
-        events.push({
-          id: eventId,
-          year: date.getFullYear(),
-          month: date.getMonth() + 1,
-          label: `${year} tax refund`,
-          amount: refundAmount,
-          type: "income",
-        });
-      }
       await upsertPlannerConfig(supabase, {
         config: {
           ...config,
@@ -484,7 +473,7 @@ export default function TaxCenter() {
           </div>
         </div>
         <p className="mt-3 text-[10px] text-foreground/35">
-          When marked received, the estimated refund is added to the Planner as income on the received date. Unmarking it removes that Planner income event.
+          When marked received, the expected refund is removed from future Planner projections because it should already be reflected in your account balance. Unmarking it restores the expected projection.
         </p>
       </section>
 

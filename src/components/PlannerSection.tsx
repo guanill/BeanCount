@@ -361,7 +361,12 @@ function projectBalances(
           (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
         (payDays.length > 0 ? netSalary / payDays.length : 0)
       : 0;
-    const evtPos    = config.events.filter(e => e.year === y && e.month === m && e.amount > 0).reduce((s, e) => s + e.amount, 0);
+    const receivedRefundEventIds = new Set(Object.values(config.taxYearTracking ?? {})
+      .filter(taxYear => taxYear.refundReceived && taxYear.refundEventId)
+      .map(taxYear => taxYear.refundEventId));
+    const evtPos    = config.events
+      .filter(e => !receivedRefundEventIds.has(e.id) && e.year === y && e.month === m && e.amount > 0)
+      .reduce((s, e) => s + e.amount, 0);
     const evtNeg    = config.events.filter(e => e.year === y && e.month === m && e.amount < 0).reduce((s, e) => s - e.amount, 0);
     const taxYear = config.taxYearTracking?.[String(y)];
     const refundDate = taxYear?.expectedRefundDate;
@@ -2471,7 +2476,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 const pay = config.salaryPeriods.some(s => (s.payDay1 ?? 15) === day || (s.payFrequency === "semimonthly" && (s.payDay2 ?? 30) === day));
                 const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
                 const refundRecord = config.taxYearTracking?.[String(calendarYear)];
-                const refundDate = refundRecord?.refundReceivedDate ?? refundRecord?.expectedRefundDate;
+                const refundDate = refundRecord?.refundReceived ? undefined : refundRecord?.expectedRefundDate;
                 const refundAmount = Number(refundRecord?.estimatedRefundAmount ?? 0);
                 const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === day;
                 const hasEvents = bills.length > 0 || pay || loanPayments.length > 0 || refund;
@@ -2508,7 +2513,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               const pay = config.salaryPeriods.filter(s => (s.payDay1 ?? 15) === calendarDay || (s.payFrequency === "semimonthly" && (s.payDay2 ?? 30) === calendarDay));
               const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
               const refundRecord = config.taxYearTracking?.[String(calendarYear)];
-              const refundDate = refundRecord?.refundReceivedDate ?? refundRecord?.expectedRefundDate;
+              const refundDate = refundRecord?.refundReceived ? undefined : refundRecord?.expectedRefundDate;
               const refundAmount = Number(refundRecord?.estimatedRefundAmount ?? 0);
               const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === calendarDay;
               return <div className="mt-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-3 text-[10px] text-foreground/55">
