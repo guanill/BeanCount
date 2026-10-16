@@ -368,12 +368,10 @@ function projectBalances(
       .filter(e => !receivedRefundEventIds.has(e.id) && e.year === y && e.month === m && e.amount > 0)
       .reduce((s, e) => s + e.amount, 0);
     const evtNeg    = config.events.filter(e => e.year === y && e.month === m && e.amount < 0).reduce((s, e) => s - e.amount, 0);
-    const taxYear = config.taxYearTracking?.[String(y)];
-    const refundDate = taxYear?.expectedRefundDate;
-    const projectedRefund = !taxYear?.refundReceived && refundDate
-      && refundDate.startsWith(`${y}-${String(m).padStart(2, "0")}-`)
-      ? Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0))
-      : 0;
+    const projectedRefund = Object.values(config.taxYearTracking ?? {})
+      .filter(taxYear => !taxYear.refundReceived
+        && taxYear.expectedRefundDate?.startsWith(`${y}-${String(m).padStart(2, "0")}-`))
+      .reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
     // Bonuses and vests are gross comp — count what lands after supplemental withholding.
     const vestSum   = netOfSupplemental(vestEvs.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0));
     const bonusSum  = netOfSupplemental((config.recurringBonuses ?? [])
@@ -2481,10 +2479,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === day);
                 const pay = config.salaryPeriods.some(s => (s.payDay1 ?? 15) === day || (s.payFrequency === "semimonthly" && (s.payDay2 ?? 30) === day));
                 const loanPayments = loans.filter(l => l.payment_day === day && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
-                const refundRecord = config.taxYearTracking?.[String(calendarYear)];
-                const refundDate = refundRecord?.refundReceived ? undefined : refundRecord?.expectedRefundDate;
-                const refundAmount = Number(refundRecord?.estimatedRefundAmount ?? 0);
-                const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === day;
+                const refundRecords = Object.values(config.taxYearTracking ?? {}).filter(taxYear => {
+                  const date = taxYear.refundReceived ? undefined : taxYear.expectedRefundDate;
+                  return !!date && date.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(date.slice(-2)) === day;
+                });
+                const refundAmount = refundRecords.reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
+                const refund = refundRecords.length > 0;
                 const hasEvents = bills.length > 0 || pay || loanPayments.length > 0 || refund;
                 const isToday = day === CUR_DAY && calendarMonth === CUR_MONTH && calendarYear === CUR_YEAR;
                 return <button type="button" key={day} onClick={() => setCalendarDay(day)} className={`relative min-h-12 rounded-xl border p-1.5 text-left transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:bg-accent/5 ${
@@ -2495,7 +2495,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     {bills.length > 0 && <Receipt className="h-3 w-3 text-red" aria-label={`${bills.length} bill${bills.length === 1 ? "" : "s"}`} />}
                     {pay && <Banknote className="h-3 w-3 text-green" aria-label="Payday" />}
                     {loanPayments.length > 0 && <Building2 className="h-3 w-3 text-orange-400" aria-label={`${loanPayments.length} loan payment${loanPayments.length === 1 ? "" : "s"}`} />}
-                    {refund && <CircleDollarSign className={`h-3 w-3 ${refundRecord?.refundReceived ? "text-green" : "text-violet-300"}`} aria-label={refundRecord?.refundReceived ? "Refund received" : "Expected tax refund"} />}
+                    {refund && <CircleDollarSign className="h-3 w-3 text-violet-300" aria-label="Expected tax refund" />}
                   </div>}
                   {refund && refundAmount > 0 && <span className="mt-0.5 block truncate text-[8px] font-semibold text-violet-300">+{formatCurrency(refundAmount)}</span>}
                   {bills.length + loanPayments.length > 1 && <span className="absolute bottom-1 right-1 text-[8px] font-bold text-foreground/35">{bills.length + loanPayments.length}</span>}
@@ -2518,10 +2518,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               const bills = (config.recurringCharges ?? []).filter(c => chargeActiveInMonth(c, calendarYear, calendarMonth) && c.chargeDay === calendarDay);
               const pay = config.salaryPeriods.filter(s => (s.payDay1 ?? 15) === calendarDay || (s.payFrequency === "semimonthly" && (s.payDay2 ?? 30) === calendarDay));
               const loanPayments = loans.filter(l => l.payment_day === calendarDay && loanPaymentForMonth(l, calendarYear, calendarMonth) > 0);
-              const refundRecord = config.taxYearTracking?.[String(calendarYear)];
-              const refundDate = refundRecord?.refundReceived ? undefined : refundRecord?.expectedRefundDate;
-              const refundAmount = Number(refundRecord?.estimatedRefundAmount ?? 0);
-              const refund = !!refundDate && refundDate.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(refundDate.slice(-2)) === calendarDay;
+              const refundRecords = Object.values(config.taxYearTracking ?? {}).filter(taxYear => {
+                const date = taxYear.refundReceived ? undefined : taxYear.expectedRefundDate;
+                return !!date && date.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(date.slice(-2)) === calendarDay;
+              });
+              const refundAmount = refundRecords.reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
+              const refund = refundRecords.length > 0;
               return <div className="mt-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-3 text-[10px] text-foreground/55">
                 <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length + (refund ? 1 : 0)} scheduled</span></div>
                 {bills.length === 0 && pay.length === 0 && loanPayments.length === 0 && !refund && <span>Nothing scheduled</span>}
@@ -2529,7 +2531,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   {bills.map(b => <span key={b.id} className="flex items-center gap-1 rounded-lg bg-red/10 px-2 py-1 text-red"><Receipt className="h-3 w-3" />{b.label} · {formatCurrency(b.amount)}</span>)}
                   {pay.map(p => <span key={p.id} className="flex items-center gap-1 rounded-lg bg-green/10 px-2 py-1 text-green"><Banknote className="h-3 w-3" />{p.label || "Salary"}</span>)}
                   {loanPayments.map(l => <span key={l.id} className="flex items-center gap-1 rounded-lg bg-orange-400/10 px-2 py-1 text-orange-400"><Building2 className="h-3 w-3" />{l.name} · {formatCurrency(l.monthly_payment)}</span>)}
-                  {refund && <span className={`flex items-center gap-1 rounded-lg px-2 py-1 ${refundRecord?.refundReceived ? "bg-green/10 text-green" : "bg-violet-400/10 text-violet-300"}`}><CircleDollarSign className="h-3 w-3" />{refundRecord?.refundReceived ? "Tax refund received" : "Expected tax refund"}{refundAmount > 0 && ` · ${formatCurrency(refundAmount)}`}</span>}
+                  {refund && <span className="flex items-center gap-1 rounded-lg bg-violet-400/10 px-2 py-1 text-violet-300"><CircleDollarSign className="h-3 w-3" />Expected tax refund{refundAmount > 0 && ` · ${formatCurrency(refundAmount)}`}</span>}
                 </div>
               </div>;
             })()}
@@ -2575,12 +2577,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               : [];
             const salaryReceived = currentMonthPaychecks.filter(p => p.paid).reduce((sum, p) => sum + p.amount, 0);
             const salaryDue = currentMonthPaychecks.filter(p => p.due).reduce((sum, p) => sum + p.amount, 0);
-            const taxYearRecord = config.taxYearTracking?.[String(d.year)];
-            const refundDate = taxYearRecord?.expectedRefundDate;
-            const projectedRefund = !taxYearRecord?.refundReceived && refundDate
-              && refundDate.startsWith(`${d.year}-${String(d.month).padStart(2, "0")}-`)
-              ? Math.max(0, Number(taxYearRecord.estimatedRefundAmount ?? 0))
-              : 0;
+            const projectedRefund = Object.values(config.taxYearTracking ?? {})
+              .filter(taxYear => !taxYear.refundReceived
+                && taxYear.expectedRefundDate?.startsWith(`${d.year}-${String(d.month).padStart(2, "0")}-`))
+              .reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
             const monthCharges = (config.recurringCharges ?? []).length > 0
               ? chargesForMonth(config.recurringCharges ?? [], d.year, d.month)
               : config.monthlyExpenses;
