@@ -542,7 +542,7 @@ interface PaycheckMarker {
 
 function MonthCard({
   year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday, isCalendarSelected,
-  onAddEvent, onRemoveEvent,
+  onAddEvent, onRemoveEvent, onSelectMonth,
   onTogglePaycheck,
 }: {
   year: number; month: number; salary: number; netSalary: number; salaryReceived: number; salaryDue: number; paychecks: PaycheckMarker[]; monthlyExpenses: number;
@@ -557,6 +557,7 @@ function MonthCard({
   isPast: boolean; isToday: boolean; isCalendarSelected: boolean;
   onAddEvent: (ev: Omit<PlannerEvent, "id">) => void;
   onRemoveEvent: (id: string) => void;
+  onSelectMonth: (year: number, month: number) => void;
   onTogglePaycheck: (id: string, day: number) => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -579,7 +580,7 @@ function MonthCard({
   const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0;
 
   return (
-    <div className={`relative rounded-2xl border flex flex-col transition-all ${
+    <div onClick={() => onSelectMonth(year, month)} className={`relative rounded-2xl border flex flex-col transition-all cursor-pointer ${
       isToday   ? "border-accent/60 bg-accent/5 shadow-lg shadow-accent/10 ring-1 ring-accent/20"
       : isPast  ? "border-border/15 bg-card/15 opacity-50"
       : "border-border/40 bg-card hover:border-border/70 hover:shadow-md hover:shadow-black/20"
@@ -1481,6 +1482,12 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     setViewYear(year);
     setCalendarYear(year);
     setCalendarMonth(year === CUR_YEAR ? CUR_MONTH : 1);
+    setCalendarDay(null);
+  }, []);
+
+  const selectCalendarMonth = useCallback((year: number, month: number) => {
+    setCalendarYear(year);
+    setCalendarMonth(month);
     setCalendarDay(null);
   }, []);
 
@@ -2444,7 +2451,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 spendBreakdown={getSpendBreakdownForMonth(d.year, d.month)}
                 balance={d.balance} net={d.net}
                 isPast={isPast} isToday={isToday} isCalendarSelected={isCalendarSelected}
-                onAddEvent={addEvent} onRemoveEvent={removeEvent}
+                onAddEvent={addEvent} onRemoveEvent={removeEvent} onSelectMonth={selectCalendarMonth}
               />
             );
           })}
