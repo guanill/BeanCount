@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Check, Loader2, Plus } from "lucide-react";
+import { Calculator, Check, ChevronDown, CircleCheck, Clock3, Loader2, TrendingUp, WalletCards } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getPlannerConfig, upsertPlannerConfig } from "@/lib/supabase/queries";
 import { formatCurrency } from "@/lib/format";
@@ -46,6 +46,8 @@ export default function TaxCenter() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [incomeOpen, setIncomeOpen] = useState(true);
+  const [investmentsOpen, setInvestmentsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,6 +113,9 @@ export default function TaxCenter() {
       + amount(record.estimatedPayments) + amount(record.taxCredits);
     return paid - tax.total;
   }, [filingStatus, record, year]);
+
+  const incomeComplete = amount(record.actualGrossIncome) > 0 && amount(record.actualWithholding) >= 0;
+  const investmentComplete = amount(record.investmentProceeds) > 0 || amount(record.dividends) > 0 || amount(record.realizedCapitalGain) !== 0;
 
   if (loading) {
     return <div className="flex items-center justify-center rounded-2xl border border-border/30 bg-card/30 p-12 text-foreground/50"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading tax details…</div>;
@@ -190,47 +195,52 @@ export default function TaxCenter() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-accent-light">Tax Center</p>
           <h2 className="mt-1 text-2xl font-bold text-foreground">Tax details and year tracking</h2>
-          <p className="mt-1 max-w-2xl text-sm text-foreground/50">Keep pay-stub totals, investment activity, deductions, and payments together for each tax year.</p>
+          <p className="mt-1 max-w-2xl text-sm text-foreground/50">A guided snapshot of your pay stubs, investments, and refund progress for each tax year.</p>
         </div>
         <div className="flex items-center gap-2">
           <select value={year} onChange={event => setYear(Number(event.target.value))} className="rounded-xl border border-border/50 bg-card px-3 py-2 text-sm text-foreground">
             {YEAR_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
           </select>
-          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save
+          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-white shadow-lg shadow-accent/10 disabled:opacity-50">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save changes
           </button>
         </div>
       </div>
 
       {message && <p className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-xs text-accent-light">{message}</p>}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["Income planned", totals.income, "text-green"],
-          ["Withholding planned", totals.withholding, "text-rose-400"],
-          ["Investment gain/loss", totals.investments, totals.investments >= 0 ? "text-green" : "text-red"],
-        ].map(([label, value, color]) => (
-          <div key={String(label)} className="rounded-2xl border border-border/40 bg-card p-4">
-            <p className="text-[10px] uppercase tracking-wider text-foreground/40">{label}</p>
-            <p className={`mt-1 text-xl font-bold tabular-nums ${color}`}>{formatCurrency(Number(value))}</p>
+          { label: "Income tracked", value: totals.income, color: "text-green", icon: WalletCards, note: incomeComplete ? "Pay-stub totals added" : "Add your pay stubs" },
+          { label: "Withholding tracked", value: totals.withholding, color: "text-rose-400", icon: Calculator, note: "Actual + expected" },
+          { label: "Investment gain/loss", value: totals.investments, color: totals.investments >= 0 ? "text-green" : "text-red", icon: TrendingUp, note: investmentComplete ? "Brokerage activity added" : "Optional" },
+          { label: estimatedRefund !== null && estimatedRefund >= 0 ? "Estimated refund" : "Estimated amount due", value: Math.abs(estimatedRefund ?? 0), color: estimatedRefund !== null && estimatedRefund >= 0 ? "text-accent-light" : "text-orange-400", icon: CircleCheck, note: record.refundReceived ? "Received" : "Based on current entries" },
+        ].map(({ label, value, color, icon: Icon, note }) => (
+          <div key={label} className="rounded-2xl border border-border/40 bg-card p-4 transition-colors hover:border-accent/30">
+            <div className="flex items-center justify-between gap-2"><p className="text-[10px] uppercase tracking-wider text-foreground/40">{label}</p><Icon className={`h-4 w-4 ${color}`} /></div>
+            <p className={`mt-2 text-xl font-bold tabular-nums ${color}`}>{formatCurrency(Number(value))}</p>
+            <p className="mt-1 text-[10px] text-foreground/35">{note}</p>
           </div>
         ))}
       </div>
 
-      <section className="rounded-2xl border border-border/40 bg-card p-4 sm:p-5">
-        <div className="mb-4 flex items-center gap-2"><Calculator className="h-4 w-4 text-accent-light" /><h3 className="font-semibold text-foreground">Income and withholding</h3></div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="overflow-hidden rounded-2xl border border-border/40 bg-card">
+        <button type="button" onClick={() => setIncomeOpen(open => !open)} className="flex w-full items-center justify-between gap-3 p-4 text-left sm:p-5">
+          <span className="flex items-center gap-3"><span className="rounded-xl bg-green/10 p-2 text-green"><WalletCards className="h-4 w-4" /></span><span><span className="block font-semibold text-foreground">Income snapshot</span><span className="mt-0.5 block text-[10px] text-foreground/40">Use your latest pay stubs, then add what you expect for the rest of the year.</span></span></span>
+          <ChevronDown className={`h-4 w-4 text-foreground/40 transition-transform ${incomeOpen ? "rotate-180" : ""}`} />
+        </button>
+        {incomeOpen && <div className="border-t border-border/20 p-4 pt-4 sm:p-5 sm:pt-4"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {field("actualGrossIncome", "Actual gross income to date", "Pay stubs")}
           {field("expectedRemainingGross", "Expected remaining gross", "Future pay")}
           {field("actualWithholding", "Tax withheld to date", "Pay stubs")}
           {field("expectedRemainingWithholding", "Expected remaining withholding", "Future pay")}
-        </div>
+        </div></div>}
       </section>
 
       <section className="rounded-2xl border border-border/40 bg-card p-4 sm:p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <h3 className="font-semibold text-foreground">Refund timing</h3>
+            <div className="flex items-center gap-2"><span className="rounded-xl bg-accent/10 p-2 text-accent-light"><Clock3 className="h-4 w-4" /></span><h3 className="font-semibold text-foreground">Refund timeline</h3></div>
             <p className="mt-0.5 text-[10px] text-foreground/40">Track when you expect the refund and when it actually reaches your account.</p>
           </div>
           {estimatedRefund !== null && (
@@ -267,9 +277,12 @@ export default function TaxCenter() {
         </p>
       </section>
 
-      <section className="rounded-2xl border border-border/40 bg-card p-4 sm:p-5">
-        <div className="mb-4 flex items-center gap-2"><Plus className="h-4 w-4 text-accent-light" /><h3 className="font-semibold text-foreground">Investments and other tax items</h3></div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="overflow-hidden rounded-2xl border border-border/40 bg-card">
+        <button type="button" onClick={() => setInvestmentsOpen(open => !open)} className="flex w-full items-center justify-between gap-3 p-4 text-left sm:p-5">
+          <span className="flex items-center gap-3"><span className="rounded-xl bg-violet-500/10 p-2 text-violet-300"><TrendingUp className="h-4 w-4" /></span><span><span className="block font-semibold text-foreground">Investments and deductions</span><span className="mt-0.5 block text-[10px] text-foreground/40">Add brokerage totals from your 1099 forms when they become available.</span></span></span>
+          <ChevronDown className={`h-4 w-4 text-foreground/40 transition-transform ${investmentsOpen ? "rotate-180" : ""}`} />
+        </button>
+        {investmentsOpen && <div className="border-t border-border/20 p-4 pt-4 sm:p-5 sm:pt-4"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {field("investmentProceeds", "Stock/crypto sale proceeds", "Total sales")}
           {field("investmentCostBasis", "Stock/crypto cost basis", "What you paid")}
           {field("realizedCapitalGain", "Realized capital gain/loss", "Optional override")}
@@ -277,8 +290,7 @@ export default function TaxCenter() {
           {field("deductions", "Deductions", "Itemized or other")}
           {field("taxCredits", "Tax credits", "Credits")}
           {field("estimatedPayments", "Estimated tax payments", "Payments")}
-        </div>
-        <p className="mt-3 text-[10px] leading-relaxed text-foreground/35">Use your brokerage 1099 forms for proceeds, cost basis, realized gains, and dividends. These entries are tracking data and do not replace tax filing advice.</p>
+        </div><p className="mt-3 text-[10px] leading-relaxed text-foreground/35">Use your brokerage 1099 forms for proceeds, cost basis, realized gains, and dividends. These entries are tracking data and do not replace tax filing advice.</p></div>}
       </section>
     </div>
   );
