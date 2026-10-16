@@ -38,7 +38,7 @@ interface TaxIncomeItem {
 interface TaxConfig {
   taxYearTracking?: Record<string, TaxYearRecord>;
   events?: Array<{ id: string; year: number; month: number; label: string; amount: number; type: string }>;
-  salaryPeriods?: Array<{ startYear: number; startMonth: number; monthlySalary: number }>;
+  salaryPeriods?: Array<{ startYear: number; startMonth: number; monthlySalary: number; withholdingRate?: number }>;
 }
 
 type TaxInputKey = Exclude<keyof TaxYearRecord, "refundReceived" | "otherIncome">;
@@ -62,6 +62,19 @@ function expectedSalaryAfterNow(periods: TaxConfig["salaryPeriods"], year: numbe
   const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH + 1 : 1;
   let total = 0;
   for (let month = firstMonth; month <= 12; month++) total += salaryForMonth(periods, year, month);
+  return total;
+}
+
+function expectedWithholdingAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
+  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH + 1 : 1;
+  let total = 0;
+  for (let month = firstMonth; month <= 12; month++) {
+    const applicable = (periods ?? [])
+      .filter(period => period.startYear < year || (period.startYear === year && period.startMonth <= month))
+      .sort((a, b) => (a.startYear * 12 + a.startMonth) - (b.startYear * 12 + b.startMonth));
+    const period = applicable[applicable.length - 1];
+    total += period ? period.monthlySalary * Math.max(0, Math.min(100, period.withholdingRate ?? 0)) / 100 : 0;
+  }
   return total;
 }
 
@@ -148,8 +161,10 @@ export default function TaxCenter() {
   };
 
   const totals = useMemo(() => {
-    const income = amount(record.actualGrossIncome) + amount(record.expectedRemainingGross);
-    const withholding = amount(record.actualWithholding) + amount(record.expectedRemainingWithholding);
+    const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
+      ? amount(record.expectedRemainingWithholding)
+      : expectedWithholdingAfterNow(salaryPeriods, year);
+    const withholding = amount(record.actualWithholding) + expectedWithholding;
     const investments = amount(record.investmentProceeds) - amount(record.investmentCostBasis);
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
     const expectedFromSalary = amount(record.expectedRemainingGross) > 0
@@ -167,7 +182,10 @@ export default function TaxCenter() {
     if (gross + otherIncome <= 0) return null;
     const tax = computeAnnualTax(gross + otherIncome, filingStatus, year);
     if (!tax) return null;
-    const paid = amount(record.actualWithholding) + amount(record.expectedRemainingWithholding)
+    const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
+      ? amount(record.expectedRemainingWithholding)
+      : expectedWithholdingAfterNow(salaryPeriods, year);
+    const paid = amount(record.actualWithholding) + expectedWithholding
       + amount(record.estimatedPayments) + amount(record.taxCredits);
     return paid - tax.total;
   }, [filingStatus, record, salaryPeriods, year]);
@@ -188,6 +206,7 @@ export default function TaxCenter() {
         step="0.01"
         value={record[key] ?? ""}
         onChange={event => update(key, event.target.value)}
+        onBlur={save}
         placeholder={placeholder}
         className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25"
       />
@@ -195,6 +214,7 @@ export default function TaxCenter() {
   );
 
   const expectedGrossFallback = expectedSalaryAfterNow(salaryPeriods, year);
+  const expectedWithholdingFallback = expectedWithholdingAfterNow(salaryPeriods, year);
 
   const saveRefundStatus = async (received: boolean) => {
     setSaving(true);
@@ -295,6 +315,7 @@ export default function TaxCenter() {
             Expected remaining gross
             <input type="number" min="0" step="0.01" value={record.expectedRemainingGross ?? ""}
               onChange={event => update("expectedRemainingGross", event.target.value)}
+              onBlur={save}
               placeholder={expectedGrossFallback > 0 ? formatCurrency(expectedGrossFallback) : "Future pay"}
               className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
             <span className="mt-1 block text-[9px] text-foreground/30">
@@ -302,7 +323,17 @@ export default function TaxCenter() {
             </span>
           </label>
           {field("actualWithholding", "Tax withheld to date", "Pay stubs")}
-          {field("expectedRemainingWithholding", "Expected remaining withholding", "Future pay")}
+          <label className="text-[10px] text-foreground/50">
+            Expected remaining withholding
+            <input type="number" min="0" step="0.01" value={record.expectedRemainingWithholding ?? ""}
+              onChange={event => update("expectedRemainingWithholding", event.target.value)}
+              onBlur={save}
+              placeholder={expectedWithholdingFallback > 0 ? formatCurrency(expectedWithholdingFallback) : "Future pay"}
+              className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
+            <span className="mt-1 block text-[9px] text-foreground/30">
+              {record.expectedRemainingWithholding ? "Manual override" : expectedWithholdingFallback > 0 ? "From salary × actual withholding %" : "Add withholding %"}
+            </span>
+          </label>
         </div></div>}
       </section>
 
@@ -366,12 +397,14 @@ export default function TaxCenter() {
           <label className="text-[10px] text-foreground/50">
             Expected refund date
             <input type="date" value={record.expectedRefundDate ?? ""} onChange={event => update("expectedRefundDate", event.target.value)}
+              onBlur={save}
               className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground" />
           </label>
           <label className="text-[10px] text-foreground/50">
             Received date
             <input type="date" value={record.refundReceivedDate ?? ""} disabled={!record.refundReceived}
               onChange={event => update("refundReceivedDate", event.target.value)}
+              onBlur={save}
               className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground disabled:opacity-40" />
           </label>
           <div className="flex items-end">
