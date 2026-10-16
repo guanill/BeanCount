@@ -1477,6 +1477,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [calendarMonth, setCalendarMonth] = useState(CUR_MONTH);
   const [calendarDay, setCalendarDay] = useState<number | null>(CUR_DAY);
 
+  const selectViewYear = useCallback((year: number) => {
+    setViewYear(year);
+    setCalendarYear(year);
+    setCalendarMonth(year === CUR_YEAR ? CUR_MONTH : 1);
+    setCalendarDay(null);
+  }, []);
+
   // Load planner config + loans on mount
   useEffect(() => {
     (async () => {
@@ -2284,18 +2291,18 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   <ChevronLeft className="w-3 h-3" /> start
                 </div>
               ) : (
-                <button onClick={() => setViewYear(y => y - 1)}
+                <button onClick={() => selectViewYear(viewYear - 1)}
                   className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
                   <ChevronLeft className="w-4 h-4 text-foreground/60" />
                 </button>
               )}
               <span className="text-lg font-bold text-accent w-12 text-center tabular-nums">{viewYear}</span>
-              <button onClick={() => setViewYear(y => y + 1)} className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
+              <button onClick={() => selectViewYear(viewYear + 1)} className="p-2 bg-card hover:bg-card-hover border border-border/40 rounded-xl transition-colors">
                 <ChevronRight className="w-4 h-4 text-foreground/60" />
               </button>
               <div className="flex gap-1 ml-1 overflow-x-auto">
                 {yearsWithData.map(y => (
-                  <button key={y} onClick={() => setViewYear(y)}
+                  <button key={y} onClick={() => selectViewYear(y)}
                     className={`px-2 py-1 rounded-lg text-[11px] sm:text-xs font-medium transition-colors shrink-0 ${
                       viewYear === y ? "bg-accent text-white" : "bg-card text-foreground/40 hover:text-foreground border border-border/30"
                     }`}>{y}</button>
