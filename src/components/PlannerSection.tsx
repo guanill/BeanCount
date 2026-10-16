@@ -124,6 +124,8 @@ interface PlannerConfig {
   recurringCharges: RecurringCharge[];
   scenarioEvents: ScenarioEvent[];
   events: PlannerEvent[];
+  /** Expected remaining paycheck withholding, keyed by tax year. */
+  taxExpectedRemainingByYear?: Record<string, string>;
   /** Per-loan "pay off in month YYYY-MM" override — payments stop being projected at/after that month. */
   loanPayoffOverrides?: Record<string, string>;
 }
@@ -169,6 +171,7 @@ const DEFAULT_CONFIG: PlannerConfig = {
   recurringCharges: [],
   scenarioEvents: [],
   events: [],
+  taxExpectedRemainingByYear: {},
   loanPayoffOverrides: {},
 };
 
@@ -1612,6 +1615,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   const [taxPaymentsInput, setTaxPaymentsInput] = useState("");
   const [taxCreditsInput, setTaxCreditsInput] = useState("");
 
+  useEffect(() => {
+    setTaxRemainingInput(config.taxExpectedRemainingByYear?.[String(viewYear)] ?? "");
+  }, [config.taxExpectedRemainingByYear, viewYear]);
+
   const SCENARIO_EMOJIS = ["✈️","💍","🏠","🚗","🎓","🎉","🏖️","🛠️","💻","🌍","🎸","🏋️","🍽️","🎁","⛵"];
 
   function addScenario() {
@@ -2552,7 +2559,16 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               </label>
               <label className="text-[10px] text-foreground/45">
                 Expected remaining withholding
-                <input type="number" min="0" step="0.01" value={taxRemainingInput} onChange={e => setTaxRemainingInput(e.target.value)}
+                <input type="number" min="0" step="0.01" value={taxRemainingInput} onChange={e => {
+                  const value = e.target.value;
+                  setTaxRemainingInput(value);
+                  setConfig(c => {
+                    const next = { ...(c.taxExpectedRemainingByYear ?? {}) };
+                    if (value === "") delete next[String(viewYear)];
+                    else next[String(viewYear)] = value;
+                    return { ...c, taxExpectedRemainingByYear: next };
+                  });
+                }}
                   placeholder="Optional" className="mt-1 w-full bg-card border border-border/50 rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground/25" />
               </label>
               <label className="text-[10px] text-foreground/45">
