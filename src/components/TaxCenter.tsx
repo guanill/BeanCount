@@ -138,7 +138,10 @@ export default function TaxCenter() {
       const supabase = createClient();
       const row = await getPlannerConfig(supabase);
       const config = (row?.config ?? {}) as TaxConfig;
-      const current = config.taxYearTracking?.[String(year)] ?? record;
+      const current = {
+        ...(config.taxYearTracking?.[String(year)] ?? {}),
+        ...record,
+      };
       const refundAmount = Math.max(0, estimatedRefund ?? 0);
       const eventId = current.refundEventId ?? `tax-refund-${year}`;
       const receivedDate = received
