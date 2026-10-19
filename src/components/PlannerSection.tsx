@@ -121,6 +121,7 @@ interface TaxYearTracking {
   taxCredits?: string;
   expectedRefundDate?: string;
   estimatedRefundAmount?: string;
+  estimatedTaxBalance?: string;
   refundReceived?: boolean;
   refundReceivedDate?: string;
   refundEventId?: string;
@@ -371,7 +372,11 @@ function projectBalances(
     const projectedRefund = Object.values(config.taxYearTracking ?? {})
       .filter(taxYear => !taxYear.refundReceived
         && taxYear.expectedRefundDate?.startsWith(`${y}-${String(m).padStart(2, "0")}-`))
-      .reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
+      .reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedTaxBalance ?? taxYear.estimatedRefundAmount ?? 0)), 0);
+    const projectedTaxDue = Object.values(config.taxYearTracking ?? {})
+      .filter(taxYear => !taxYear.refundReceived
+        && taxYear.expectedRefundDate?.startsWith(`${y}-${String(m).padStart(2, "0")}-`))
+      .reduce((sum, taxYear) => sum + Math.max(0, -Number(taxYear.estimatedTaxBalance ?? 0)), 0);
     // Bonuses and vests are gross comp — count what lands after supplemental withholding.
     const vestSum   = netOfSupplemental(vestEvs.filter(e => e.year === y && e.month === m).reduce((s, e) => s + e.amount, 0));
     const bonusSum  = netOfSupplemental((config.recurringBonuses ?? [])
@@ -386,7 +391,7 @@ function projectBalances(
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
     const inflow  = Math.max(0, netSalary - paidSalary) + vestSum + bonusSum + evtPos + projectedRefund;
-    const outflow = expenseTotal + scenarioSum + evtNeg;
+    const outflow = expenseTotal + scenarioSum + evtNeg + projectedTaxDue;
     const net = inflow - outflow;
     balance += net;
     result.push({ year: y, month: m, balance, net, salary, netSalary, inflow, outflow });
@@ -578,7 +583,7 @@ interface PaycheckMarker {
 
 function MonthCard({
   year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday, isCalendarSelected,
-  projectedRefund, onAddEvent, onRemoveEvent, onSelectMonth,
+  projectedRefund, projectedTaxDue, onAddEvent, onRemoveEvent, onSelectMonth,
   onTogglePaycheck,
 }: {
   year: number; month: number; salary: number; netSalary: number; salaryReceived: number; salaryDue: number; paychecks: PaycheckMarker[]; monthlyExpenses: number;
@@ -589,7 +594,7 @@ function MonthCard({
   loanBreakdown: Array<{ id: string; name: string; amount: number }>;
   spendBreakdown: Array<{ id: string; label: string; amount: number }>;
   scenarioEvents: ScenarioEvent[];
-  projectedRefund: number;
+  projectedRefund: number; projectedTaxDue: number;
   balance: number; net: number;
   isPast: boolean; isToday: boolean; isCalendarSelected: boolean;
   onAddEvent: (ev: Omit<PlannerEvent, "id">) => void;
@@ -614,7 +619,7 @@ function MonthCard({
   }
 
   const positive  = net >= 0;
-  const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0 || projectedRefund > 0;
+  const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0 || projectedRefund > 0 || projectedTaxDue > 0;
 
   return (
     <div onClick={() => onSelectMonth(year, month)} className={`relative rounded-2xl border flex flex-col transition-all cursor-pointer ${
@@ -688,6 +693,12 @@ function MonthCard({
                 <div className="flex items-center justify-between gap-3 text-[10px]">
                   <span className="text-violet-300">Expected tax refund</span>
                   <span className="text-green font-semibold tabular-nums">+{formatCurrency(projectedRefund)}</span>
+                </div>
+              )}
+              {projectedTaxDue > 0 && (
+                <div className="flex items-center justify-between rounded-xl bg-rose-400/10 px-2 py-2 sm:px-4 sm:py-2.5 text-[10px] sm:text-xs">
+                  <span className="flex items-center gap-1.5 sm:gap-2.5 text-rose-300"><span>🧾</span><span className="font-medium">Estimated tax payment</span></span>
+                  <span className="font-semibold tabular-nums text-rose-400">−{formatCurrency(projectedTaxDue)}</span>
                 </div>
               )}
               <p className="text-[9px] text-foreground/30 italic pt-0.5">Bonuses & vests show as separate rows below</p>
@@ -2522,16 +2533,19 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 const date = taxYear.refundReceived ? undefined : taxYear.expectedRefundDate;
                 return !!date && date.startsWith(`${calendarYear}-${String(calendarMonth).padStart(2, "0")}-`) && Number(date.slice(-2)) === calendarDay;
               });
-              const refundAmount = refundRecords.reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
-              const refund = refundRecords.length > 0;
+              const refundAmount = refundRecords.reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedTaxBalance ?? taxYear.estimatedRefundAmount ?? 0)), 0);
+              const taxDueAmount = refundRecords.reduce((sum, taxYear) => sum + Math.max(0, -Number(taxYear.estimatedTaxBalance ?? 0)), 0);
+              const refund = refundAmount > 0;
+              const taxDue = taxDueAmount > 0;
               return <div className="mt-3 rounded-xl border border-accent/20 bg-accent/5 px-3 py-3 text-[10px] text-foreground/55">
-                <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length + (refund ? 1 : 0)} scheduled</span></div>
-                {bills.length === 0 && pay.length === 0 && loanPayments.length === 0 && !refund && <span>Nothing scheduled</span>}
+                <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-foreground/80">{MONTHS_SHORT[calendarMonth - 1]} {calendarDay}</span><span className="text-foreground/35">{bills.length + pay.length + loanPayments.length + (refund ? 1 : 0) + (taxDue ? 1 : 0)} scheduled</span></div>
+                {bills.length === 0 && pay.length === 0 && loanPayments.length === 0 && !refund && !taxDue && <span>Nothing scheduled</span>}
                 <div className="flex flex-wrap gap-1.5">
                   {bills.map(b => <span key={b.id} className="flex items-center gap-1 rounded-lg bg-red/10 px-2 py-1 text-red"><Receipt className="h-3 w-3" />{b.label} · {formatCurrency(b.amount)}</span>)}
                   {pay.map(p => <span key={p.id} className="flex items-center gap-1 rounded-lg bg-green/10 px-2 py-1 text-green"><Banknote className="h-3 w-3" />{p.label || "Salary"}</span>)}
                   {loanPayments.map(l => <span key={l.id} className="flex items-center gap-1 rounded-lg bg-orange-400/10 px-2 py-1 text-orange-400"><Building2 className="h-3 w-3" />{l.name} · {formatCurrency(l.monthly_payment)}</span>)}
                   {refund && <span className="flex items-center gap-1 rounded-lg bg-violet-400/10 px-2 py-1 text-violet-300"><CircleDollarSign className="h-3 w-3" />Expected tax refund{refundAmount > 0 && ` · ${formatCurrency(refundAmount)}`}</span>}
+                  {taxDueAmount > 0 && <span className="flex items-center gap-1 rounded-lg bg-rose-400/10 px-2 py-1 text-rose-300"><Receipt className="h-3 w-3" />Estimated tax payment · {formatCurrency(taxDueAmount)}</span>}
                 </div>
               </div>;
             })()}
@@ -2580,7 +2594,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             const projectedRefund = Object.values(config.taxYearTracking ?? {})
               .filter(taxYear => !taxYear.refundReceived
                 && taxYear.expectedRefundDate?.startsWith(`${d.year}-${String(d.month).padStart(2, "0")}-`))
-              .reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedRefundAmount ?? 0)), 0);
+              .reduce((sum, taxYear) => sum + Math.max(0, Number(taxYear.estimatedTaxBalance ?? taxYear.estimatedRefundAmount ?? 0)), 0);
+            const projectedTaxDue = Object.values(config.taxYearTracking ?? {})
+              .filter(taxYear => !taxYear.refundReceived
+                && taxYear.expectedRefundDate?.startsWith(`${d.year}-${String(d.month).padStart(2, "0")}-`))
+              .reduce((sum, taxYear) => sum + Math.max(0, -Number(taxYear.estimatedTaxBalance ?? 0)), 0);
             const monthCharges = (config.recurringCharges ?? []).length > 0
               ? chargesForMonth(config.recurringCharges ?? [], d.year, d.month)
               : config.monthlyExpenses;
@@ -2595,6 +2613,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 events={eventsM} vestEvents={vestEventsM} recurBonuses={recurBonusM}
                 scenarioEvents={scenarioEventsM}
                 projectedRefund={projectedRefund}
+                projectedTaxDue={projectedTaxDue}
                 loanPaymentsTotal={getLoanPaymentsForMonth(d.year, d.month)}
                 loanBreakdown={getLoanBreakdownForMonth(d.year, d.month)}
                 spendBreakdown={getSpendBreakdownForMonth(d.year, d.month)}

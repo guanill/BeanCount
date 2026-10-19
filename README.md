@@ -69,6 +69,8 @@ income tax, and the Tax Center displays this estimate as a visual breakdown.
 When expected withholding is blank, the refund projection uses each applicable
 salary schedule's withholding percentage against unpaid future paychecks.
 Payroll deductions are estimated from wages; actual pay-stub withholding should
-be used for the final refund estimate.
+be used for the final refund estimate. If the projection is negative, the
+expected tax payment is shown on the planner calendar as an expense rather
+than as income.
 
 Run the unit tests with `npm test` (Node 22+).
