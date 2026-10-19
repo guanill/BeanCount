@@ -84,7 +84,12 @@ export interface AnnualTaxBreakdown {
 }
 
 /** Full annual tax breakdown for a gross income, or null when there's no income. */
-export function computeAnnualTax(annualGross: number, status: FilingStatus, year: number = new Date().getFullYear()): AnnualTaxBreakdown | null {
+export function computeAnnualTax(
+  annualGross: number,
+  status: FilingStatus,
+  year: number = new Date().getFullYear(),
+  wageIncome: number = annualGross,
+): AnnualTaxBreakdown | null {
   if (!annualGross || annualGross <= 0) return null;
   const t = taxTableFor(year);
   const taxable = Math.max(0, annualGross - t.standardDeduction[status]);
@@ -99,9 +104,10 @@ export function computeAnnualTax(annualGross: number, status: FilingStatus, year
     federalBrackets.push({ rate, from: min, to: max === Infinity ? null : max, taxed, tax });
   }
 
-  const ss       = Math.min(annualGross, t.ssWageBase) * SS_RATE;
-  const medicare = annualGross * MEDICARE_RATE + Math.max(0, annualGross - t.medicareAddlThreshold[status]) * MEDICARE_ADDL_RATE;
-  const waCares  = annualGross * t.waCaresRate;
+  const taxableWages = Math.max(0, wageIncome);
+  const ss       = Math.min(taxableWages, t.ssWageBase) * SS_RATE;
+  const medicare = taxableWages * MEDICARE_RATE + Math.max(0, taxableWages - t.medicareAddlThreshold[status]) * MEDICARE_ADDL_RATE;
+  const waCares  = taxableWages * t.waCaresRate;
   const total    = federal + ss + medicare + waCares;
   const marginal = [...t.brackets[status]].reverse().find(([min]) => taxable > min)?.[2] ?? 0.10;
 
