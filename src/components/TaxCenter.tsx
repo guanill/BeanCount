@@ -211,14 +211,20 @@ export default function TaxCenter() {
 
   const expectedGrossFallback = expectedSalaryAfterNow(salaryPeriods, year);
   const actualGrossFallback = salaryReceivedToDate(salaryPeriods, year);
-  const estimatedRemainingTaxFallback = useMemo(() => {
+  const projectedGross = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0 ? amount(record.actualGrossIncome) : actualGrossFallback;
     const expectedGross = amount(record.expectedRemainingGross) > 0 ? amount(record.expectedRemainingGross) : expectedGrossFallback;
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
-    const tax = computeAnnualTax(actualGross + expectedGross + otherIncome, filingStatus, year);
-    if (!tax) return 0;
-    return Math.max(0, tax.total - amount(record.actualWithholding) - amount(record.estimatedPayments) - amount(record.taxCredits));
-  }, [actualGrossFallback, expectedGrossFallback, filingStatus, record, year]);
+    return { wages: actualGross + expectedGross, otherIncome, total: actualGross + expectedGross + otherIncome };
+  }, [actualGrossFallback, expectedGrossFallback, record]);
+  const projectedTax = useMemo(
+    () => computeAnnualTax(projectedGross.total, filingStatus, year, projectedGross.wages),
+    [filingStatus, projectedGross, year],
+  );
+  const estimatedRemainingTaxFallback = useMemo(() => {
+    if (!projectedTax) return 0;
+    return Math.max(0, projectedTax.total - amount(record.actualWithholding) - amount(record.estimatedPayments) - amount(record.taxCredits));
+  }, [projectedTax, record]);
 
   const hasExpectedWithholdingOverride = (record.expectedRemainingWithholding ?? "").trim() !== "";
 
@@ -239,17 +245,7 @@ export default function TaxCenter() {
   }, [estimatedRemainingTaxFallback, hasExpectedWithholdingOverride, record, salaryPeriods, year]);
 
   const estimatedRefund = useMemo(() => {
-    const actualGross = amount(record.actualGrossIncome) > 0
-      ? amount(record.actualGrossIncome)
-      : salaryReceivedToDate(salaryPeriods, year);
-    const expectedFromSalary = amount(record.expectedRemainingGross) > 0
-      ? amount(record.expectedRemainingGross)
-      : expectedSalaryAfterNow(salaryPeriods, year);
-    const gross = actualGross + expectedFromSalary;
-    const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
-    if (gross + otherIncome <= 0) return null;
-    const tax = computeAnnualTax(gross + otherIncome, filingStatus, year);
-    if (!tax) return null;
+    if (!projectedTax) return null;
     // A blank forecast is unknown future withholding, not money already paid.
     // Keep the tax-due fallback in the withholding summary, but do not use it
     // as paid withholding when calculating the refund estimate.
@@ -258,8 +254,8 @@ export default function TaxCenter() {
       : 0;
     const paid = amount(record.actualWithholding) + expectedWithholding
       + amount(record.estimatedPayments) + amount(record.taxCredits);
-    return paid - tax.total;
-  }, [filingStatus, hasExpectedWithholdingOverride, record, salaryPeriods, year]);
+    return paid - projectedTax.total;
+  }, [hasExpectedWithholdingOverride, projectedTax, record]);
 
   const incomeComplete = amount(record.actualGrossIncome) > 0 && amount(record.actualWithholding) >= 0;
   const investmentComplete = amount(record.investmentProceeds) > 0 || amount(record.dividends) > 0 || amount(record.realizedCapitalGain) !== 0;
@@ -362,6 +358,44 @@ export default function TaxCenter() {
           </div>
         ))}
       </div>
+
+      <section className="rounded-2xl border border-border/40 bg-card p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-accent-light">Projected tax breakdown</p>
+            <h3 className="mt-1 font-semibold text-foreground">Where the annual estimate comes from</h3>
+            <p className="mt-1 text-[10px] text-foreground/40">
+              Washington has no state individual income tax. Payroll taxes apply to projected wages, not interest or other non-wage income.
+            </p>
+          </div>
+          {projectedTax && <div className="text-right"><p className="text-[10px] uppercase tracking-wider text-foreground/40">Projected total</p><p className="text-lg font-bold tabular-nums text-foreground">{formatCurrency(projectedTax.total)}</p><p className="text-[10px] text-foreground/40">{(projectedTax.effectiveRate * 100).toFixed(1)}% effective rate</p></div>}
+        </div>
+        {projectedTax ? (
+          <div className="mt-4 space-y-3">
+            {[
+              { label: "Federal income tax", value: projectedTax.federal, color: "bg-accent" },
+              { label: "Social Security", value: projectedTax.ss, color: "bg-cyan-400" },
+              { label: "Medicare", value: projectedTax.medicare, color: "bg-violet-400" },
+              { label: "WA Cares Fund", value: projectedTax.waCares, color: "bg-amber-400" },
+            ].map(item => (
+              <div key={item.label}>
+                <div className="mb-1 flex items-center justify-between gap-3 text-xs">
+                  <span className="flex items-center gap-2 text-foreground/65"><span className={`h-2 w-2 rounded-full ${item.color}`} />{item.label}</span>
+                  <span className="font-semibold tabular-nums text-foreground">{formatCurrency(item.value)}</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-background">
+                  <div className={`h-full rounded-full ${item.color}`} style={{ width: `${projectedTax.total > 0 ? Math.min(100, (item.value / projectedTax.total) * 100) : 0}%` }} />
+                </div>
+              </div>
+            ))}
+            <p className="border-t border-border/20 pt-3 text-[10px] leading-relaxed text-foreground/35">
+              Federal tax uses the selected filing status and standard deduction. Social Security, Medicare, and WA Cares are estimated from wages; actual pay-stub withholding remains the best source for your refund estimate.
+            </p>
+          </div>
+        ) : (
+          <p className="mt-4 rounded-xl border border-dashed border-border/30 px-3 py-4 text-xs text-foreground/40">Add projected income to see the tax breakdown.</p>
+        )}
+      </section>
 
       <section className="overflow-hidden rounded-2xl border border-border/40 bg-card">
         <button type="button" onClick={() => setIncomeOpen(open => !open)} className="flex w-full items-center justify-between gap-3 p-4 text-left sm:p-5">

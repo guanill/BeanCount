@@ -63,4 +63,10 @@ payday has arrived; the percentage is used for take-home projections. Recurring
 charges can likewise be auto-marked paid after their configured billing day,
 and the planner includes a day-level payment calendar.
 
+The Tax Center estimates Washington tax using federal income tax, Social Security,
+Medicare, and WA Cares payroll deductions. Washington has no individual state
+income tax, and the Tax Center displays this estimate as a visual breakdown.
+Payroll deductions are estimated from wages; actual pay-stub withholding should
+be used for the final refund estimate.
+
 Run the unit tests with `npm test` (Node 22+).
