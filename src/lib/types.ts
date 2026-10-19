@@ -60,6 +60,8 @@ export interface Transaction {
   credit_card_id: string | null;
   plaid_transaction_id: string | null;
   teller_transaction_id: string | null;
+  import_fingerprint: string | null;
+  source_name: string | null;
   amount: number;           // positive = expense, negative = income
   date: string;             // YYYY-MM-DD
   name: string;

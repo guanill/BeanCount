@@ -73,4 +73,13 @@ be used for the final refund estimate. If the projection is negative, the
 expected tax payment is shown on the planner calendar as an expense rather
 than as income.
 
+Transactions can be imported from bank and credit-card CSV exports by choosing
+the destination account before uploading. Imports recognize common Date,
+Description, Amount, Debit, and Credit columns, categorize rows automatically,
+and skip rows already imported from that account. Account deletion warns about
+linked transactions; transactions remain in history with the former account
+name retained. Apply
+`supabase/migrations/20261018000000_transaction_import_fingerprints.sql`
+before using CSV imports or deleting accounts/cards with linked transactions.
+
 Run the unit tests with `npm test` (Node 22+).

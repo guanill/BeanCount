@@ -47,6 +47,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   const [pointsForm, setPointsForm] = useState({ points_balance: "", points_value_cents: "" });
   const [confirmAction, setConfirmAction] = useState<"disconnect" | "delete" | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [linkedTransactionCount, setLinkedTransactionCount] = useState<number | null>(null);
 
   const linkedCards = cards.filter((c) => c.teller_account_id);
   const hasLinked = linkedCards.length > 0;
@@ -146,6 +147,23 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete credit card:", e);
       toast("Failed to delete credit card: " + msg, "error");
+    }
+
+  }
+
+  async function requestDelete(id: string) {
+    try {
+      const { count, error } = await createClient()
+        .from("transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("credit_card_id", id);
+      if (error) throw error;
+      setLinkedTransactionCount(count ?? 0);
+      setConfirmAction("delete");
+      setConfirmId(id);
+    } catch (error) {
+      console.error("Failed to check credit card transactions:", error);
+      toast("Could not check transactions linked to this card. Please try again.", "error");
     }
   }
 
@@ -444,7 +462,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                               <Unlink className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button onClick={() => { setConfirmAction("delete"); setConfirmId(card.id); }} className="p-1 text-foreground/30 hover:text-red transition-colors" aria-label="Delete credit card">
+                          <button onClick={() => void requestDelete(card.id)} className="p-1 text-foreground/30 hover:text-red transition-colors" aria-label="Delete credit card">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -583,14 +601,17 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
           <ConfirmDialog
             open={confirmAction !== null}
             title={confirmAction === "delete" ? "Delete credit card?" : "Disconnect credit card?"}
-            description={confirmAction === "delete" ? "This will permanently remove the credit card." : "The card will stay but stop syncing from Teller."}
+            description={confirmAction === "delete"
+              ? `This permanently removes the card. ${linkedTransactionCount ?? 0} linked transaction${linkedTransactionCount === 1 ? "" : "s"} will remain in your spending history, unlinked from the card${linkedTransactionCount ? ", with the card name retained" : ""}.`
+              : "The card will stay but stop syncing from Teller."}
             confirmLabel={confirmAction === "delete" ? "Delete" : "Disconnect"}
-            onCancel={() => { setConfirmAction(null); setConfirmId(null); }}
+            onCancel={() => { setConfirmAction(null); setConfirmId(null); setLinkedTransactionCount(null); }}
             onConfirm={() => {
               const id = confirmId;
               const action = confirmAction;
               setConfirmAction(null);
               setConfirmId(null);
+              setLinkedTransactionCount(null);
               if (id && action === "delete") void handleDelete(id);
               if (id && action === "disconnect") void handleDisconnectCard(id);
             }}

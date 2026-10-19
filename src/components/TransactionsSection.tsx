@@ -26,8 +26,9 @@ import {
   Repeat,
   MessageSquare,
   Filter,
+  Upload,
 } from "lucide-react";
-import { Transaction, TransactionSummary } from "@/lib/types";
+import { Account, CreditCard, Transaction, TransactionSummary } from "@/lib/types";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -42,6 +43,9 @@ import {
   updateTransaction,
   deleteTransaction,
   splitTransaction,
+  getAccounts,
+  getCreditCards,
+  importTransactions,
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
 import { useToast } from "./Toast";
@@ -49,6 +53,69 @@ import ConfirmDialog from "./ConfirmDialog";
 
 /* â"€â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 interface DonutSegment { category: string; label: string; color: string; emoji: string; amount: number; }
+
+interface ImportPreviewRow {
+  date: string;
+  name: string;
+  amount: number;
+  transaction_type: "income" | "expense";
+}
+
+function parseCsvLine(line: string): string[] {
+  const values: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' && line[i + 1] === '"' && quoted) { value += '"'; i++; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (char === "," && !quoted) { values.push(value.trim()); value = ""; continue; }
+    value += char;
+  }
+  values.push(value.trim());
+  return values;
+}
+
+function parseCsv(text: string): ImportPreviewRow[] {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(line => line.trim());
+  if (lines.length < 2) throw new Error("The CSV needs a header row and at least one transaction.");
+  const headers = parseCsvLine(lines[0]).map(header => header.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const find = (...names: string[]) => headers.findIndex(header => names.includes(header));
+  const dateIndex = find("date", "transactiondate", "posteddate");
+  const nameIndex = find("description", "name", "merchant", "payee");
+  const amountIndex = find("amount", "transactionamount");
+  const debitIndex = find("debit", "withdrawal", "charge");
+  const creditIndex = find("credit", "deposit", "payment");
+  const typeIndex = find("type", "transactiontype");
+  if (dateIndex < 0 || nameIndex < 0 || (amountIndex < 0 && debitIndex < 0 && creditIndex < 0)) {
+    throw new Error("Could not identify Date, Description, and Amount columns.");
+  }
+  const rows: ImportPreviewRow[] = [];
+  for (const line of lines.slice(1)) {
+    const cells = parseCsvLine(line);
+    const rawDate = cells[dateIndex]?.trim() ?? "";
+    const parsedDate = new Date(rawDate);
+    if (!rawDate || Number.isNaN(parsedDate.getTime())) continue;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+      ? rawDate
+      : `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}-${String(parsedDate.getDate()).padStart(2, "0")}`;
+    const parseAmount = (value: string | undefined) => Math.abs(parseFloat((value ?? "").replace(/[$,\s]/g, "")) || 0);
+    const rawAmount = amountIndex >= 0 ? (cells[amountIndex] ?? "") : "";
+    const type = (cells[typeIndex] ?? "").toLowerCase();
+    const amount = amountIndex >= 0
+      ? parseFloat(rawAmount.replace(/[$,\s]/g, "")) || 0
+      : parseAmount(cells[debitIndex]) || -parseAmount(cells[creditIndex]);
+    const isIncome = type.includes("credit") || type.includes("deposit") || type.includes("income") || amount < 0 || (creditIndex >= 0 && parseAmount(cells[creditIndex]) > 0 && parseAmount(cells[debitIndex]) === 0);
+    rows.push({
+      date,
+      name: cells[nameIndex]?.trim() || "Imported transaction",
+      amount: isIncome ? -Math.abs(amount) : Math.abs(amount),
+      transaction_type: isIncome ? "income" : "expense",
+    });
+  }
+  if (rows.length === 0) throw new Error("No valid transactions were found in the CSV.");
+  return rows;
+}
 
 function SpendingDonut({
   segments,
@@ -533,6 +600,13 @@ export default function TransactionsSection() {
   const [showAdd,  setShowAdd]  = useState(false);
   const [addForm,  setAddForm]  = useState<AddForm>(emptyForm);
   const [saving,   setSaving]   = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importRows, setImportRows] = useState<ImportPreviewRow[]>([]);
+  const [importSource, setImportSource] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
 
   // Accordion: which categories are open
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());
@@ -569,6 +643,13 @@ export default function TransactionsSection() {
   }, [year, month, viewMode]);
 
   useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    Promise.all([getAccounts(supabase), getCreditCards(supabase)])
+      .then(([loadedAccounts, loadedCards]) => { setAccounts(loadedAccounts); setCreditCards(loadedCards); })
+      .catch(error => console.error("Failed to load import accounts:", error));
+  }, []);
 
   /* â"€â"€ Group transactions by category (client-side) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   // Recurring detection (memoized on full transaction list)
@@ -672,6 +753,47 @@ export default function TransactionsSection() {
       });
       setAddForm(emptyForm); setShowAdd(false); fetchTransactions();
     } finally { setSaving(false); }
+  }
+
+  async function handleImportFile(file: File | undefined) {
+    if (!file) return;
+    setImportError("");
+    try {
+      setImportRows(parseCsv(await file.text()));
+    } catch (error) {
+      setImportRows([]);
+      setImportError(error instanceof Error ? error.message : "Could not read this CSV.");
+    }
+  }
+
+  async function handleImport() {
+    if (!importSource || importRows.length === 0) return;
+    setImporting(true);
+    try {
+      const [kind, id] = importSource.split(":");
+      const sourceName = kind === "account"
+        ? accounts.find(account => account.id === id)?.name
+        : creditCards.find(card => card.id === id)?.name;
+      const rows = importRows.map((row, index) => ({
+        ...row,
+        ...(kind === "account" ? { account_id: id } : { credit_card_id: id }),
+        import_fingerprint: `${kind}:${id}:${row.date}:${row.amount}:${row.name.toLowerCase().trim()}:${index}`,
+        source_name: kind === "account"
+          ? accounts.find(account => account.id === id)?.name
+          : creditCards.find(card => card.id === id)?.name,
+        merchant_name: row.name,
+      }));
+      const inserted = await importTransactions(createClient(), rows);
+      toast(`${inserted.length} transaction${inserted.length === 1 ? "" : "s"} imported to ${sourceName ?? "account"}`);
+      setImportRows([]);
+      setImportSource("");
+      setShowImport(false);
+      fetchTransactions();
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not import transactions.");
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function handleDelete(id: string) {
@@ -790,6 +912,10 @@ export default function TransactionsSection() {
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
               {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
             </button>
+            <button onClick={() => { setShowImport(!showImport); setImportError(""); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-accent/30 text-accent-light hover:bg-accent/10 transition-colors">
+              <Upload className="w-3.5 h-3.5" /> Import CSV
+            </button>
             <button onClick={() => setShowAdd(!showAdd)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
               <Plus className="w-3.5 h-3.5" /> Add
@@ -818,6 +944,48 @@ export default function TransactionsSection() {
       </div>
 
       {/* â"€â"€ Add form â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+      {showImport && (
+        <div className="mb-5 rounded-xl border border-accent/20 bg-background p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Import bank or credit-card transactions</p>
+              <p className="mt-1 text-[10px] text-foreground/40">Choose the account first. Re-importing the same rows will skip duplicates.</p>
+            </div>
+            <button type="button" onClick={() => setShowImport(false)} className="text-foreground/40 hover:text-foreground"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label className="text-[10px] text-foreground/50">
+              Account or card
+              <select value={importSource} onChange={event => setImportSource(event.target.value)} className="mt-1 w-full rounded-lg border border-border/50 bg-card px-2.5 py-2 text-xs text-foreground">
+                <option value="">Choose a source…</option>
+                {accounts.filter(account => account.type === "bank" || account.type === "cash").length > 0 && <optgroup label="Bank and cash accounts">{accounts.filter(account => account.type === "bank" || account.type === "cash").map(account => <option key={account.id} value={`account:${account.id}`}>{account.name}</option>)}</optgroup>}
+                {creditCards.length > 0 && <optgroup label="Credit cards">{creditCards.map(card => <option key={card.id} value={`card:${card.id}`}>{card.name}</option>)}</optgroup>}
+              </select>
+            </label>
+            <label className="text-[10px] text-foreground/50 sm:col-span-2">
+              CSV file
+              <input type="file" accept=".csv,text/csv" onChange={event => void handleImportFile(event.target.files?.[0])} className="mt-1 block w-full rounded-lg border border-border/50 bg-card px-2.5 py-1.5 text-xs text-foreground file:mr-2 file:rounded file:border-0 file:bg-accent/10 file:px-2 file:py-1 file:text-xs file:text-accent-light" />
+            </label>
+          </div>
+          {importError && <p className="mt-3 rounded-lg border border-red/20 bg-red/5 px-3 py-2 text-xs text-red">{importError}</p>}
+          {importRows.length > 0 && (
+            <div className="mt-3 rounded-lg border border-border/30 bg-card/40 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-foreground">{importRows.length} rows ready</span>
+                <span className="text-foreground/45">{formatCurrency(importRows.reduce((sum, row) => sum + (row.transaction_type === "income" ? -row.amount : row.amount), 0))} net imported</span>
+              </div>
+              <div className="mt-2 max-h-28 overflow-auto space-y-1">
+                {importRows.slice(0, 5).map((row, index) => <div key={`${row.date}-${index}`} className="flex justify-between gap-3 text-[10px] text-foreground/55"><span>{row.date} · {row.name}</span><span className={row.transaction_type === "income" ? "text-green" : "text-red"}>{row.transaction_type === "income" ? "+" : "−"}{formatCurrency(Math.abs(row.amount))}</span></div>)}
+                {importRows.length > 5 && <p className="text-[10px] text-foreground/30">and {importRows.length - 5} more…</p>}
+              </div>
+              <button type="button" onClick={() => void handleImport()} disabled={!importSource || importing}
+                className="mt-3 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
+                {importing ? "Importing…" : "Import transactions"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {showAdd && (
         <div className="mb-5 p-4 rounded-xl bg-background border border-accent/20">
           <p className="text-sm font-semibold text-foreground mb-3">Add transaction</p>
