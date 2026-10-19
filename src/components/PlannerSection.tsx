@@ -619,7 +619,7 @@ function MonthCard({
   }
 
   const positive  = net >= 0;
-  const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0 || projectedRefund > 0 || projectedTaxDue > 0;
+  const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0 || projectedRefund > 0;
 
   return (
     <div onClick={() => onSelectMonth(year, month)} className={`relative rounded-2xl border flex flex-col transition-all cursor-pointer ${
@@ -695,12 +695,6 @@ function MonthCard({
                   <span className="text-green font-semibold tabular-nums">+{formatCurrency(projectedRefund)}</span>
                 </div>
               )}
-              {projectedTaxDue > 0 && (
-                <div className="flex items-center justify-between rounded-xl bg-rose-400/10 px-2 py-2 sm:px-4 sm:py-2.5 text-[10px] sm:text-xs">
-                  <span className="flex items-center gap-1.5 sm:gap-2.5 text-rose-300"><span>🧾</span><span className="font-medium">Estimated tax payment</span></span>
-                  <span className="font-semibold tabular-nums text-rose-400">−{formatCurrency(projectedTaxDue)}</span>
-                </div>
-              )}
               <p className="text-[9px] text-foreground/30 italic pt-0.5">Bonuses & vests show as separate rows below</p>
             </div>
           )}
@@ -712,8 +706,8 @@ function MonthCard({
           // For the current month, already-paid charges are netted out of monthlyExpenses;
           // surface that as a credit row so the popover total matches the figure shown.
           const paidAdj       = Math.max(0, chargesSum - monthlyExpenses);
-          const totalSpend    = monthlyExpenses + scenarioSpend;
-          const hasPopover    = spendBreakdown.length > 0;
+          const totalSpend    = monthlyExpenses + scenarioSpend + projectedTaxDue;
+          const hasPopover    = spendBreakdown.length > 0 || projectedTaxDue > 0;
           return (
             <div className={`relative group/sp px-1.5 sm:px-3 py-1.5 sm:py-2 ${hasPopover ? "cursor-help" : ""}`}>
               <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Spend</div>
@@ -732,6 +726,12 @@ function MonthCard({
                       <span className="text-red/80 font-semibold tabular-nums shrink-0">−{formatCurrency(e.items.reduce((si, it) => si + it.amount, 0))}</span>
                     </div>
                   ))}
+                  {projectedTaxDue > 0 && (
+                    <div className="flex items-center justify-between gap-3 text-[10px]">
+                      <span className="text-foreground/60 truncate">Estimated tax payment</span>
+                      <span className="text-red/80 font-semibold tabular-nums shrink-0">−{formatCurrency(projectedTaxDue)}</span>
+                    </div>
+                  )}
                   {paidAdj > 0 && (
                     <div className="flex items-center justify-between gap-3 text-[10px]">
                       <span className="text-foreground/50 truncate">Already paid this month</span>
