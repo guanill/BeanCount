@@ -233,6 +233,14 @@ export async function updateAccount(
 }
 
 export async function deleteAccount(supabase: SupabaseClient, id: string) {
+  const { data: account, error: accountError } = await supabase.from("accounts").select("name").eq("id", id).single();
+  if (accountError) throw accountError;
+  const { error: snapshotError } = await supabase
+    .from("transactions")
+    .update({ source_name: account.name })
+    .eq("account_id", id)
+    .is("source_name", null);
+  if (snapshotError) throw snapshotError;
   const { error } = await supabase.from("accounts").delete().eq("id", id);
   if (error) throw error;
 }
@@ -352,6 +360,14 @@ export async function updateCreditCard(
 }
 
 export async function deleteCreditCard(supabase: SupabaseClient, id: string) {
+  const { data: card, error: cardError } = await supabase.from("credit_cards").select("name").eq("id", id).single();
+  if (cardError) throw cardError;
+  const { error: snapshotError } = await supabase
+    .from("transactions")
+    .update({ source_name: card.name })
+    .eq("credit_card_id", id)
+    .is("source_name", null);
+  if (snapshotError) throw snapshotError;
   const { error } = await supabase.from("credit_cards").delete().eq("id", id);
   if (error) throw error;
 }
@@ -601,7 +617,7 @@ export async function getTransactions(
 
   const transactions: Transaction[] = (data ?? []).map((row: any) => ({
     ...row,
-    account_name: sourceMap.get(row.account_id) ?? sourceMap.get(row.credit_card_id) ?? null,
+    account_name: sourceMap.get(row.account_id) ?? sourceMap.get(row.credit_card_id) ?? row.source_name ?? null,
   }));
 
   // Calculate summary (excluding ignored)
@@ -694,6 +710,47 @@ export async function createTransaction(
     .single();
   if (error) throw error;
   return data as Transaction;
+}
+
+export async function importTransactions(
+  supabase: SupabaseClient,
+  rows: Array<{
+    account_id?: string;
+    credit_card_id?: string;
+    amount: number;
+    date: string;
+    name: string;
+    merchant_name?: string;
+    transaction_type?: string;
+    import_fingerprint: string;
+    source_name?: string;
+  }>
+) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+  const payload = rows.map(row => {
+    const guess = guessCategory(row.name, row.amount, row.merchant_name);
+    return {
+      user_id: user.id,
+      account_id: row.account_id ?? null,
+      credit_card_id: row.credit_card_id ?? null,
+      source_name: row.source_name ?? null,
+      amount: row.amount,
+      date: row.date,
+      name: row.name,
+      merchant_name: row.merchant_name ?? null,
+      category: guess.category,
+      transaction_type: row.transaction_type ?? guess.type,
+      is_manual: true,
+      import_fingerprint: row.import_fingerprint,
+    };
+  });
+  const { data, error } = await supabase
+    .from("transactions")
+    .upsert(payload, { onConflict: "user_id,import_fingerprint", ignoreDuplicates: true })
+    .select();
+  if (error) throw error;
+  return data ?? [];
 }
 
 export async function updateTransaction(

@@ -81,6 +81,7 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
   const [syncErrors, setSyncErrors] = useState<Record<string, SyncError>>({});
   const [confirmAction, setConfirmAction] = useState<"delete" | "disconnect" | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [linkedTransactionCount, setLinkedTransactionCount] = useState<number | null>(null);
 
   const linkedAccounts = accounts.filter((a) => a.teller_account_id);
   const hasLinked = linkedAccounts.length > 0;
@@ -95,6 +96,22 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete account:", e);
       toast("Failed to delete account: " + msg, "error");
+    }
+  }
+
+  async function requestDelete(id: string) {
+    try {
+      const { count, error } = await createClient()
+        .from("transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("account_id", id);
+      if (error) throw error;
+      setLinkedTransactionCount(count ?? 0);
+      setConfirmId(id);
+      setConfirmAction("delete");
+    } catch (error) {
+      console.error("Failed to check linked transactions:", error);
+      toast("Could not check transactions linked to this account. Please try again.", "error");
     }
   }
 
@@ -375,7 +392,7 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                             <Unlink className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {!automaticHoldings && <button onClick={() => { setConfirmAction("delete"); setConfirmId(account.id); }} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
+                        {!automaticHoldings && <button onClick={() => void requestDelete(account.id)} className="p-1 text-foreground/30 hover:text-red transition-colors" title="Delete">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>}
                       </div>
@@ -420,14 +437,17 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
         <ConfirmDialog
           open={confirmAction !== null}
           title={confirmAction === "delete" ? "Delete account?" : "Disconnect account?"}
-          description={confirmAction === "delete" ? "This will permanently remove the account." : "The account will stay but stop syncing from Teller."}
+          description={confirmAction === "delete"
+            ? `This permanently removes the account. ${linkedTransactionCount ?? 0} linked transaction${linkedTransactionCount === 1 ? "" : "s"} will remain in your spending history, unlinked from the account${linkedTransactionCount ? ", with the account name retained" : ""}.`
+            : "The account will stay but stop syncing from Teller."}
           confirmLabel={confirmAction === "delete" ? "Delete" : "Disconnect"}
-          onCancel={() => { setConfirmAction(null); setConfirmId(null); }}
+          onCancel={() => { setConfirmAction(null); setConfirmId(null); setLinkedTransactionCount(null); }}
           onConfirm={() => {
             const id = confirmId;
             const action = confirmAction;
             setConfirmAction(null);
             setConfirmId(null);
+            setLinkedTransactionCount(null);
             if (id && action === "delete") void handleDelete(id);
             if (id && action === "disconnect") void handleDisconnect(id);
           }}
