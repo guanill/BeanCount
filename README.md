@@ -66,6 +66,8 @@ and the planner includes a day-level payment calendar.
 The Tax Center estimates Washington tax using federal income tax, Social Security,
 Medicare, and WA Cares payroll deductions. Washington has no individual state
 income tax, and the Tax Center displays this estimate as a visual breakdown.
+When expected withholding is blank, the refund projection uses each applicable
+salary schedule's withholding percentage against unpaid future paychecks.
 Payroll deductions are estimated from wages; actual pay-stub withholding should
 be used for the final refund estimate.
 

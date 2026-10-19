@@ -122,6 +122,23 @@ function expectedSalaryAfterNow(periods: TaxConfig["salaryPeriods"], year: numbe
   return total;
 }
 
+function expectedWithholdingAfterNow(periods: TaxConfig["salaryPeriods"], year: number): number {
+  if (year < CURRENT_YEAR) return 0;
+  let total = 0;
+  const firstMonth = year === CURRENT_YEAR ? CURRENT_MONTH : 1;
+  for (let month = firstMonth; month <= 12; month++) {
+    const period = salaryPeriodForMonth(periods, year, month);
+    const salary = salaryForMonth(periods, year, month);
+    const days = period ? paycheckDays(period) : [];
+    const remainingSalary = year === CURRENT_YEAR && month === CURRENT_MONTH
+      ? (days.length > 0 ? salary * days.filter(day => !paycheckPaid(period!, year, month, day)).length / days.length : 0)
+      : salary;
+    const rate = Math.max(0, Math.min(100, period?.withholdingRate ?? 0)) / 100;
+    total += remainingSalary * rate;
+  }
+  return total;
+}
+
 export default function TaxCenter() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [record, setRecord] = useState<TaxYearRecord>({});
@@ -221,12 +238,8 @@ export default function TaxCenter() {
     () => computeAnnualTax(projectedGross.total, filingStatus, year, projectedGross.wages),
     [filingStatus, projectedGross, year],
   );
-  const estimatedRemainingTaxFallback = useMemo(() => {
-    if (!projectedTax) return 0;
-    return Math.max(0, projectedTax.total - amount(record.actualWithholding) - amount(record.estimatedPayments) - amount(record.taxCredits));
-  }, [projectedTax, record]);
-
   const hasExpectedWithholdingOverride = (record.expectedRemainingWithholding ?? "").trim() !== "";
+  const expectedWithholdingFallback = expectedWithholdingAfterNow(salaryPeriods, year);
 
   const totals = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0
@@ -234,7 +247,7 @@ export default function TaxCenter() {
       : salaryReceivedToDate(salaryPeriods, year);
     const expectedWithholding = hasExpectedWithholdingOverride
       ? amount(record.expectedRemainingWithholding)
-      : estimatedRemainingTaxFallback;
+      : expectedWithholdingFallback;
     const withholding = amount(record.actualWithholding) + expectedWithholding;
     const investments = amount(record.investmentProceeds) - amount(record.investmentCostBasis);
     const otherIncome = (record.otherIncome ?? []).reduce((sum, item) => sum + amount(item.amount), 0);
@@ -242,20 +255,17 @@ export default function TaxCenter() {
       ? amount(record.expectedRemainingGross)
       : expectedSalaryAfterNow(salaryPeriods, year);
     return { income: actualGross + expectedFromSalary + otherIncome, withholding, investments, otherIncome };
-  }, [estimatedRemainingTaxFallback, hasExpectedWithholdingOverride, record, salaryPeriods, year]);
+  }, [expectedWithholdingFallback, hasExpectedWithholdingOverride, record, salaryPeriods, year]);
 
   const estimatedRefund = useMemo(() => {
     if (!projectedTax) return null;
-    // A blank forecast is unknown future withholding, not money already paid.
-    // Keep the tax-due fallback in the withholding summary, but do not use it
-    // as paid withholding when calculating the refund estimate.
     const expectedWithholding = hasExpectedWithholdingOverride
       ? amount(record.expectedRemainingWithholding)
-      : 0;
+      : expectedWithholdingFallback;
     const paid = amount(record.actualWithholding) + expectedWithholding
       + amount(record.estimatedPayments) + amount(record.taxCredits);
     return paid - projectedTax.total;
-  }, [hasExpectedWithholdingOverride, projectedTax, record]);
+  }, [expectedWithholdingFallback, hasExpectedWithholdingOverride, projectedTax, record]);
 
   const incomeComplete = amount(record.actualGrossIncome) > 0 && amount(record.actualWithholding) >= 0;
   const investmentComplete = amount(record.investmentProceeds) > 0 || amount(record.dividends) > 0 || amount(record.realizedCapitalGain) !== 0;
@@ -278,8 +288,6 @@ export default function TaxCenter() {
       />
     </label>
   );
-
-  const expectedWithholdingFallback = estimatedRemainingTaxFallback;
 
   const saveRefundStatus = async (received: boolean) => {
     setSaving(true);
@@ -422,7 +430,7 @@ export default function TaxCenter() {
               placeholder={expectedWithholdingFallback > 0 ? formatCurrency(expectedWithholdingFallback) : "Future pay"}
               className="mt-1 w-full rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs text-foreground placeholder-foreground/25" />
             <span className="mt-1 block text-[9px] text-foreground/30">
-              {record.expectedRemainingWithholding ? "Manual override" : expectedWithholdingFallback > 0 ? "Estimated tax still due after paid amounts" : "Add income to estimate"}
+              {record.expectedRemainingWithholding ? "Manual override" : expectedWithholdingFallback > 0 ? "From salary schedule × withholding %" : "Add a salary schedule"}
             </span>
           </label>
         </div></div>}
