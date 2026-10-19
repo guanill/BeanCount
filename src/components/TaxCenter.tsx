@@ -220,11 +220,13 @@ export default function TaxCenter() {
     return Math.max(0, tax.total - amount(record.actualWithholding) - amount(record.estimatedPayments) - amount(record.taxCredits));
   }, [actualGrossFallback, expectedGrossFallback, filingStatus, record, year]);
 
+  const hasExpectedWithholdingOverride = (record.expectedRemainingWithholding ?? "").trim() !== "";
+
   const totals = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0
       ? amount(record.actualGrossIncome)
       : salaryReceivedToDate(salaryPeriods, year);
-    const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
+    const expectedWithholding = hasExpectedWithholdingOverride
       ? amount(record.expectedRemainingWithholding)
       : estimatedRemainingTaxFallback;
     const withholding = amount(record.actualWithholding) + expectedWithholding;
@@ -234,7 +236,7 @@ export default function TaxCenter() {
       ? amount(record.expectedRemainingGross)
       : expectedSalaryAfterNow(salaryPeriods, year);
     return { income: actualGross + expectedFromSalary + otherIncome, withholding, investments, otherIncome };
-  }, [estimatedRemainingTaxFallback, record, salaryPeriods, year]);
+  }, [estimatedRemainingTaxFallback, hasExpectedWithholdingOverride, record, salaryPeriods, year]);
 
   const estimatedRefund = useMemo(() => {
     const actualGross = amount(record.actualGrossIncome) > 0
@@ -248,13 +250,16 @@ export default function TaxCenter() {
     if (gross + otherIncome <= 0) return null;
     const tax = computeAnnualTax(gross + otherIncome, filingStatus, year);
     if (!tax) return null;
-    const expectedWithholding = amount(record.expectedRemainingWithholding) > 0
+    // A blank forecast is unknown future withholding, not money already paid.
+    // Keep the tax-due fallback in the withholding summary, but do not use it
+    // as paid withholding when calculating the refund estimate.
+    const expectedWithholding = hasExpectedWithholdingOverride
       ? amount(record.expectedRemainingWithholding)
-      : estimatedRemainingTaxFallback;
+      : 0;
     const paid = amount(record.actualWithholding) + expectedWithholding
       + amount(record.estimatedPayments) + amount(record.taxCredits);
     return paid - tax.total;
-  }, [estimatedRemainingTaxFallback, filingStatus, record, salaryPeriods, year]);
+  }, [filingStatus, hasExpectedWithholdingOverride, record, salaryPeriods, year]);
 
   const incomeComplete = amount(record.actualGrossIncome) > 0 && amount(record.actualWithholding) >= 0;
   const investmentComplete = amount(record.investmentProceeds) > 0 || amount(record.dividends) > 0 || amount(record.realizedCapitalGain) !== 0;
