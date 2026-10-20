@@ -73,12 +73,19 @@ be used for the final refund estimate. If the projection is negative, the
 expected tax payment is shown on the planner calendar as an expense rather
 than as income.
 
-Transactions can be imported from bank and credit-card CSV exports by choosing
-the destination account before uploading. Imports recognize common Date,
+Transactions can be imported from bank and credit-card CSV exports. The app
+tries to identify the destination from the file name or an explicit account/card
+number column; including the account/card last four digits in its saved name
+helps match exports that include those digits. If the match is missing or
+ambiguous, choose the destination manually. Imports recognize common Date,
 Description, Amount, Debit, and Credit columns, categorize rows automatically,
 and skip rows already imported from that account. Account deletion warns about
 linked transactions; transactions remain in history with the former account
-name retained. Apply
+name retained. The import panel shows saved CSV transaction counts by month for
+the selected account or card, the months represented in the selected file, and
+the latest transaction creation time for that source. Coverage updates when the
+source selection changes. This time reflects when the latest transaction was
+first added; skipped duplicate imports do not refresh it. Apply
 `supabase/migrations/20261018000000_transaction_import_fingerprints.sql`
 before using CSV imports or deleting accounts/cards with linked transactions.
 

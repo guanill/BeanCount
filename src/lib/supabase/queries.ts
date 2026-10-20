@@ -698,6 +698,52 @@ export async function getTransactionMonthCoverage(
   return counts;
 }
 
+export async function getTransactionSourceCoverage(
+  supabase: SupabaseClient,
+  sourceKind: "account" | "card",
+  sourceId: string,
+  year: number
+): Promise<{ monthCounts: Record<number, number>; latestAddedAt: string | null }> {
+  const sourceColumn = sourceKind === "account" ? "account_id" : "credit_card_id";
+  const latestAddedQuery = supabase
+    .from("transactions")
+    .select("created_at")
+    .eq(sourceColumn, sourceId)
+    .not("import_fingerprint", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const { data: latestData, error: latestError } = await latestAddedQuery;
+  if (latestError) throw latestError;
+
+  const monthCounts: Record<number, number> = {};
+  const pageSize = 1000;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("id, date")
+      .eq(sourceColumn, sourceId)
+      .not("import_fingerprint", "is", null)
+      .gte("date", `${year}-01-01`)
+      .lt("date", `${year + 1}-01-01`)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+
+    for (const transaction of data ?? []) {
+      const transactionMonth = Number(transaction.date.slice(5, 7));
+      monthCounts[transactionMonth] = (monthCounts[transactionMonth] ?? 0) + 1;
+    }
+
+    if ((data?.length ?? 0) < pageSize) break;
+    offset += pageSize;
+  }
+
+  return { monthCounts, latestAddedAt: latestData?.created_at ?? null };
+}
+
 export async function createTransaction(
   supabase: SupabaseClient,
   tx: {
