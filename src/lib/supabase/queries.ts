@@ -703,18 +703,24 @@ export async function getTransactionSourceCoverage(
   sourceKind: "account" | "card",
   sourceId: string,
   year: number
-): Promise<{ monthCounts: Record<number, number>; latestAddedAt: string | null }> {
+): Promise<{ monthCounts: Record<number, number>; latestAddedAt: string | null; totalTransactionCount: number }> {
   const sourceColumn = sourceKind === "account" ? "account_id" : "credit_card_id";
-  const latestAddedQuery = supabase
-    .from("transactions")
-    .select("created_at")
-    .eq(sourceColumn, sourceId)
-    .not("import_fingerprint", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const { data: latestData, error: latestError } = await latestAddedQuery;
+  const [{ data: latestData, error: latestError }, { count, error: countError }] = await Promise.all([
+    supabase
+      .from("transactions")
+      .select("created_at")
+      .eq(sourceColumn, sourceId)
+      .not("import_fingerprint", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .eq(sourceColumn, sourceId),
+  ]);
   if (latestError) throw latestError;
+  if (countError) throw countError;
 
   const monthCounts: Record<number, number> = {};
   const pageSize = 1000;
@@ -741,7 +747,25 @@ export async function getTransactionSourceCoverage(
     offset += pageSize;
   }
 
-  return { monthCounts, latestAddedAt: latestData?.created_at ?? null };
+  return {
+    monthCounts,
+    latestAddedAt: latestData?.created_at ?? null,
+    totalTransactionCount: count ?? 0,
+  };
+}
+
+export async function deleteTransactionsForSource(
+  supabase: SupabaseClient,
+  sourceKind: "account" | "card",
+  sourceId: string
+): Promise<number> {
+  const sourceColumn = sourceKind === "account" ? "account_id" : "credit_card_id";
+  const { error, count } = await supabase
+    .from("transactions")
+    .delete({ count: "exact" })
+    .eq(sourceColumn, sourceId);
+  if (error) throw error;
+  return count ?? 0;
 }
 
 export async function createTransaction(
