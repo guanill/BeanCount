@@ -666,6 +666,38 @@ export async function getTransactions(
   };
 }
 
+export async function getTransactionMonthCoverage(
+  supabase: SupabaseClient,
+  year: number
+): Promise<Record<number, number>> {
+  const counts: Record<number, number> = {};
+  const pageSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("id, date")
+      .gte("date", `${year}-01-01`)
+      .lt("date", `${year + 1}-01-01`)
+      .not("import_fingerprint", "is", null)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+
+    for (const transaction of data ?? []) {
+      const transactionMonth = Number(transaction.date.slice(5, 7));
+      counts[transactionMonth] = (counts[transactionMonth] ?? 0) + 1;
+    }
+
+    if ((data?.length ?? 0) < pageSize) break;
+    offset += pageSize;
+  }
+
+  return counts;
+}
+
 export async function createTransaction(
   supabase: SupabaseClient,
   tx: {
