@@ -45,6 +45,7 @@ import {
   splitTransaction,
   getAccounts,
   getCreditCards,
+  getTransactionMonthCoverage,
   importTransactions,
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
@@ -592,6 +593,9 @@ export default function TransactionsSection() {
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary,      setSummary]      = useState<TransactionSummary | null>(null);
+  const [monthCoverage, setMonthCoverage] = useState<Record<number, number>>({});
+  const [coverageLoading, setCoverageLoading] = useState(true);
+  const [coverageError, setCoverageError] = useState(false);
   const [loading,  setLoading]  = useState(true);
   const [syncing,  setSyncing]  = useState(false);
   const [syncMsg,  setSyncMsg]  = useState<string | null>(null);
@@ -635,8 +639,20 @@ export default function TransactionsSection() {
       const data = await fetchTransactionsFromSupabase(supabase, filters);
       setTransactions(data.transactions ?? []);
       setSummary(data.summary ?? null);
+      setCoverageLoading(true);
+      setCoverageError(false);
+      try {
+        setMonthCoverage(await getTransactionMonthCoverage(supabase, year));
+      } catch (err) {
+        console.error("Failed to fetch transaction month coverage:", err);
+        setCoverageError(true);
+      } finally {
+        setCoverageLoading(false);
+      }
     } catch (err) {
       console.error("Failed to fetch transactions:", err);
+      setCoverageError(true);
+      setCoverageLoading(false);
     } finally {
       setLoading(false);
     }
@@ -922,23 +938,64 @@ export default function TransactionsSection() {
             </button>
           </div>
         </div>
-        <div className="flex items-center justify-center gap-2">
-          <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
-            {(["month", "year"] as const).map((m) => (
-              <button key={m} onClick={() => setViewMode(m)}
-                className={`px-3 py-1.5 transition-colors ${viewMode === m ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
-                {m.charAt(0).toUpperCase() + m.slice(1)}
+        <div className="space-y-2">
+          <div className="flex items-center justify-center gap-2">
+            <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
+              {(["month", "year"] as const).map((m) => (
+                <button key={m} onClick={() => setViewMode(m)}
+                  className={`px-3 py-1.5 transition-colors ${viewMode === m ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                  {m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
+                <ChevronLeft className="w-4 h-4" />
               </button>
-            ))}
+              <span className="text-sm font-semibold text-foreground min-w-28 text-center">{periodLabel}</span>
+              <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-sm font-semibold text-foreground min-w-28 text-center">{periodLabel}</span>
-            <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
-              <ChevronRight className="w-4 h-4" />
-            </button>
+          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 gap-1.5 sm:grid-cols-12">
+            {MONTHS.map((monthName, index) => {
+              const monthNumber = index + 1;
+              const transactionCount = monthCoverage[monthNumber] ?? 0;
+              const hasTransactions = transactionCount > 0;
+              const isCurrentMonth = year === new Date().getFullYear() && monthNumber === new Date().getMonth() + 1;
+              const isSelected = viewMode === "month" && month === monthNumber;
+              const status = [
+                `${transactionCount} CSV transaction${transactionCount === 1 ? "" : "s"}`,
+                isCurrentMonth ? "current month, still in progress" : "",
+              ].filter(Boolean).join("; ");
+              return (
+                <button
+                  key={monthName}
+                  type="button"
+                  onClick={() => { setMonth(monthNumber); setViewMode("month"); }}
+                  aria-label={`${monthName} ${year}: ${status}`}
+                  aria-pressed={isSelected}
+                  title={`${monthName} ${year}: ${status}`}
+                  className={`relative rounded-md border px-1 py-1.5 text-[10px] font-medium transition-colors ${
+                    hasTransactions
+                      ? "border-green/30 bg-green/10 text-green"
+                      : isCurrentMonth
+                        ? "border-yellow-500/30 bg-yellow-500/5 text-yellow-400"
+                        : "border-border/30 text-foreground/40 hover:border-border/60 hover:text-foreground/70"
+                  } ${isSelected ? "ring-1 ring-accent" : ""}`}
+                >
+                  {monthName.slice(0, 3)}
+                  {isCurrentMonth && <span aria-hidden="true" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-yellow-400" />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-foreground/45">
+            <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2 w-2 rounded-sm bg-green" />CSV transactions imported</span>
+            <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-yellow-400" />Current month in progress</span>
+            {coverageLoading && <span>Loading coverage…</span>}
+            {coverageError && <span role="status" className="text-yellow-400">Month coverage unavailable</span>}
           </div>
         </div>
       </div>
