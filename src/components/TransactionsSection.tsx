@@ -36,6 +36,7 @@ const MONTHS = [
 ];
 import { CATEGORIES, getCategoryMeta } from "@/lib/categories";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { detectCsvImportSource } from "@/lib/csv-source-detection";
 import { createClient } from "@/lib/supabase/client";
 import {
   getTransactions as fetchTransactionsFromSupabase,
@@ -46,6 +47,7 @@ import {
   getAccounts,
   getCreditCards,
   getTransactionMonthCoverage,
+  getTransactionSourceCoverage,
   importTransactions,
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
@@ -607,6 +609,17 @@ export default function TransactionsSection() {
   const [showImport, setShowImport] = useState(false);
   const [importRows, setImportRows] = useState<ImportPreviewRow[]>([]);
   const [importSource, setImportSource] = useState("");
+  const [importCsvText, setImportCsvText] = useState("");
+  const [importFileName, setImportFileName] = useState("");
+  const [sourceAutoDetected, setSourceAutoDetected] = useState(false);
+  const [sourceDetectionMessage, setSourceDetectionMessage] = useState("");
+  const [sourceCoverage, setSourceCoverage] = useState<{
+    source: string;
+    monthCounts: Record<number, number>;
+    latestAddedAt: string | null;
+  } | null>(null);
+  const [sourceCoverageLoading, setSourceCoverageLoading] = useState(false);
+  const [sourceCoverageError, setSourceCoverageError] = useState(false);
   const [importError, setImportError] = useState("");
   const [importing, setImporting] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -666,6 +679,64 @@ export default function TransactionsSection() {
       .then(([loadedAccounts, loadedCards]) => { setAccounts(loadedAccounts); setCreditCards(loadedCards); })
       .catch(error => console.error("Failed to load import accounts:", error));
   }, []);
+
+  useEffect(() => {
+    if (!showImport || !importSource) {
+      setSourceCoverage(null);
+      setSourceCoverageError(false);
+      setSourceCoverageLoading(false);
+      return;
+    }
+
+    const [kind, sourceId] = importSource.split(":");
+    if ((kind !== "account" && kind !== "card") || !sourceId) return;
+
+    let active = true;
+    setSourceCoverage(null);
+    setSourceCoverageLoading(true);
+    setSourceCoverageError(false);
+    getTransactionSourceCoverage(createClient(), kind, sourceId, year)
+      .then(coverage => { if (active) setSourceCoverage({ source: importSource, ...coverage }); })
+      .catch(error => {
+        console.error("Failed to load selected source CSV coverage:", error);
+        if (active) setSourceCoverageError(true);
+      })
+      .finally(() => { if (active) setSourceCoverageLoading(false); });
+
+    return () => { active = false; };
+  }, [showImport, importSource, year]);
+
+  useEffect(() => {
+    if (!importCsvText || !importFileName) return;
+    const sources = [
+      ...accounts.filter(account => account.type === "bank" || account.type === "cash")
+        .map(account => ({ value: `account:${account.id}`, name: account.name })),
+      ...creditCards.map(card => ({ value: `card:${card.id}`, name: card.name })),
+    ];
+    const detected = detectCsvImportSource(importFileName, importCsvText, sources);
+    if (detected) {
+      setImportSource(detected);
+      setSourceAutoDetected(true);
+      const detectedSource = sources.find(source => source.value === detected);
+      setSourceDetectionMessage(`Matched ${detectedSource?.name ?? "source"} from the file.`);
+    } else {
+      setImportSource("");
+      setSourceAutoDetected(false);
+      setSourceDetectionMessage("Could not identify one source from this file. Choose an account or card below.");
+    }
+  }, [importCsvText, importFileName, accounts, creditCards]);
+
+  const importPreviewMonths = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of importRows) {
+      const key = row.date.slice(0, 7);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return Array.from(counts, ([key, count]) => {
+      const [rowYear, rowMonth] = key.split("-").map(Number);
+      return { key, label: `${MONTHS[rowMonth - 1]} ${rowYear}`, count };
+    }).sort((a, b) => a.key.localeCompare(b.key));
+  }, [importRows]);
 
   /* â"€â"€ Group transactions by category (client-side) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   // Recurring detection (memoized on full transaction list)
@@ -775,9 +846,18 @@ export default function TransactionsSection() {
     if (!file) return;
     setImportError("");
     try {
-      setImportRows(parseCsv(await file.text()));
+      const csvText = await file.text();
+      setImportRows(parseCsv(csvText));
+      setImportCsvText(csvText);
+      setImportFileName(file.name);
+      setSourceDetectionMessage("Checking the file for a matching account or card…");
     } catch (error) {
       setImportRows([]);
+      setImportCsvText("");
+      setImportFileName("");
+      setImportSource("");
+      setSourceAutoDetected(false);
+      setSourceDetectionMessage("");
       setImportError(error instanceof Error ? error.message : "Could not read this CSV.");
     }
   }
@@ -803,6 +883,10 @@ export default function TransactionsSection() {
       toast(`${inserted.length} transaction${inserted.length === 1 ? "" : "s"} imported to ${sourceName ?? "account"}`);
       setImportRows([]);
       setImportSource("");
+      setImportCsvText("");
+      setImportFileName("");
+      setSourceAutoDetected(false);
+      setSourceDetectionMessage("");
       setShowImport(false);
       fetchTransactions();
     } catch (error) {
@@ -910,6 +994,11 @@ export default function TransactionsSection() {
     if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1);
   }
   const periodLabel = viewMode === "year" ? String(year) : `${MONTHS[month - 1]} ${year}`;
+  const [importSourceKind, importSourceId] = importSource.split(":");
+  const selectedImportSourceName = importSourceKind === "account"
+    ? accounts.find(account => account.id === importSourceId)?.name
+    : creditCards.find(card => card.id === importSourceId)?.name;
+  const activeSourceCoverage = sourceCoverage?.source === importSource ? sourceCoverage : null;
 
   /* â"€â"€ Render â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   return (
@@ -1006,14 +1095,18 @@ export default function TransactionsSection() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-foreground">Import bank or credit-card transactions</p>
-              <p className="mt-1 text-[10px] text-foreground/40">Choose the account first. Re-importing the same rows will skip duplicates.</p>
+              <p className="mt-1 text-[10px] text-foreground/40">We’ll match the filename or an Account/Card Number column when possible. Add a card’s last four digits to its name to match masked CSVs; otherwise choose the source manually. Duplicate rows are skipped.</p>
             </div>
             <button type="button" onClick={() => setShowImport(false)} className="text-foreground/40 hover:text-foreground"><X className="h-4 w-4" /></button>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <label className="text-[10px] text-foreground/50">
               Account or card
-              <select value={importSource} onChange={event => setImportSource(event.target.value)} className="mt-1 w-full rounded-lg border border-border/50 bg-card px-2.5 py-2 text-xs text-foreground">
+              <select value={importSource} onChange={event => {
+                setImportSource(event.target.value);
+                setSourceAutoDetected(false);
+                setSourceDetectionMessage(event.target.value ? "Source selected manually." : "");
+              }} className="mt-1 w-full rounded-lg border border-border/50 bg-card px-2.5 py-2 text-xs text-foreground">
                 <option value="">Choose a source…</option>
                 {accounts.filter(account => account.type === "bank" || account.type === "cash").length > 0 && <optgroup label="Bank and cash accounts">{accounts.filter(account => account.type === "bank" || account.type === "cash").map(account => <option key={account.id} value={`account:${account.id}`}>{account.name}</option>)}</optgroup>}
                 {creditCards.length > 0 && <optgroup label="Credit cards">{creditCards.map(card => <option key={card.id} value={`card:${card.id}`}>{card.name}</option>)}</optgroup>}
@@ -1024,12 +1117,72 @@ export default function TransactionsSection() {
               <input type="file" accept=".csv,text/csv" onChange={event => void handleImportFile(event.target.files?.[0])} className="mt-1 block w-full rounded-lg border border-border/50 bg-card px-2.5 py-1.5 text-xs text-foreground file:mr-2 file:rounded file:border-0 file:bg-accent/10 file:px-2 file:py-1 file:text-xs file:text-accent-light" />
             </label>
           </div>
+          <div className="mt-3 rounded-lg border border-border/30 bg-card/40 p-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-xs font-semibold text-foreground">
+                {importSource
+                  ? `Saved CSV coverage · ${selectedImportSourceName ?? "Selected source"} · ${year}`
+                  : `Saved CSV coverage · Choose an account or card · ${year}`}
+              </p>
+              {importSource && activeSourceCoverage?.latestAddedAt && (
+                <p className="text-[10px] text-foreground/50">
+                  Latest transaction added {new Date(activeSourceCoverage.latestAddedAt).toLocaleString()}
+                </p>
+              )}
+            </div>
+            <div className="mt-2 grid grid-cols-6 gap-1 sm:grid-cols-12">
+              {MONTHS.map((monthName, index) => {
+                const count = activeSourceCoverage?.monthCounts[index + 1] ?? 0;
+                const isCurrentMonth = year === new Date().getFullYear() && index === new Date().getMonth();
+                const coverageReady = Boolean(importSource && activeSourceCoverage && !sourceCoverageLoading && !sourceCoverageError);
+                return (
+                  <div
+                    key={monthName}
+                    title={importSource && coverageReady ? `${monthName} ${year}: ${count} CSV transaction${count === 1 ? "" : "s"} for this source` : `${monthName} ${year}`}
+                    className={`rounded-md border px-1 py-1.5 text-center text-[10px] ${
+                      !importSource
+                        ? "border-border/30 text-foreground/35"
+                        : count > 0
+                          ? "border-green/30 bg-green/10 text-green"
+                          : isCurrentMonth
+                            ? "border-yellow-500/30 bg-yellow-500/5 text-yellow-400"
+                            : "border-border/30 text-foreground/35"
+                    }`}
+                  >
+                    <span className="block">{monthName.slice(0, 3)}</span>
+                    <span className="block font-semibold">{coverageReady ? count : "—"}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <p className="text-[10px] text-foreground/40">
+                {importSource
+                  ? "Counts are saved CSV transactions by transaction date. The latest-added time is when the newest transaction was first saved; skipped duplicates do not update it."
+                  : "Choose a source to load its saved month coverage. The counts update when you switch accounts or cards."}
+              </p>
+              {sourceCoverageLoading && <p role="status" className="text-[10px] text-foreground/50">Loading coverage…</p>}
+              {sourceCoverageError && <p role="status" className="text-[10px] text-yellow-400">Could not load coverage.</p>}
+            </div>
+          </div>
+          {sourceDetectionMessage && (
+            <p role="status" className={`mt-2 text-[10px] ${sourceAutoDetected ? "text-green" : "text-foreground/45"}`}>
+              {sourceDetectionMessage}
+            </p>
+          )}
           {importError && <p className="mt-3 rounded-lg border border-red/20 bg-red/5 px-3 py-2 text-xs text-red">{importError}</p>}
           {importRows.length > 0 && (
             <div className="mt-3 rounded-lg border border-border/30 bg-card/40 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className="font-semibold text-foreground">{importRows.length} rows ready</span>
                 <span className="text-foreground/45">{formatCurrency(importRows.reduce((sum, row) => sum + (row.transaction_type === "income" ? -row.amount : row.amount), 0))} net imported</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {importPreviewMonths.map(({ key, label, count }) => (
+                  <span key={key} className="rounded-md border border-accent/20 bg-accent/5 px-2 py-1 text-[10px] text-foreground/65">
+                    {label} · {count} row{count === 1 ? "" : "s"} in file
+                  </span>
+                ))}
               </div>
               <div className="mt-2 max-h-28 overflow-auto space-y-1">
                 {importRows.slice(0, 5).map((row, index) => <div key={`${row.date}-${index}`} className="flex justify-between gap-3 text-[10px] text-foreground/55"><span>{row.date} · {row.name}</span><span className={row.transaction_type === "income" ? "text-green" : "text-red"}>{row.transaction_type === "income" ? "+" : "−"}{formatCurrency(Math.abs(row.amount))}</span></div>)}
