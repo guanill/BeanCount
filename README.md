@@ -88,5 +88,8 @@ source selection changes. This time reflects when the latest transaction was
 first added; skipped duplicate imports do not refresh it. Apply
 `supabase/migrations/20261018000000_transaction_import_fingerprints.sql`
 before using CSV imports or deleting accounts/cards with linked transactions.
+The import panel also lets you permanently delete all transactions linked to
+the selected account or card after confirming the source and transaction count;
+this does not delete the account or card itself.
 
 Run the unit tests with `npm test` (Node 22+).

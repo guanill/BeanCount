@@ -48,6 +48,7 @@ import {
   getCreditCards,
   getTransactionMonthCoverage,
   getTransactionSourceCoverage,
+  deleteTransactionsForSource,
   importTransactions,
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
@@ -617,9 +618,13 @@ export default function TransactionsSection() {
     source: string;
     monthCounts: Record<number, number>;
     latestAddedAt: string | null;
+    totalTransactionCount: number;
   } | null>(null);
   const [sourceCoverageLoading, setSourceCoverageLoading] = useState(false);
   const [sourceCoverageError, setSourceCoverageError] = useState(false);
+  const [sourceCoverageRefresh, setSourceCoverageRefresh] = useState(0);
+  const [deleteSource, setDeleteSource] = useState<{ kind: "account" | "card"; id: string; name: string; count: number } | null>(null);
+  const [deletingSource, setDeletingSource] = useState(false);
   const [importError, setImportError] = useState("");
   const [importing, setImporting] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -704,7 +709,7 @@ export default function TransactionsSection() {
       .finally(() => { if (active) setSourceCoverageLoading(false); });
 
     return () => { active = false; };
-  }, [showImport, importSource, year]);
+  }, [showImport, importSource, year, sourceCoverageRefresh]);
 
   useEffect(() => {
     if (!importCsvText || !importFileName) return;
@@ -893,6 +898,27 @@ export default function TransactionsSection() {
       setImportError(error instanceof Error ? error.message : "Could not import transactions.");
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleDeleteSourceTransactions() {
+    if (!deleteSource) return;
+    setDeletingSource(true);
+    try {
+      const deletedCount = await deleteTransactionsForSource(
+        createClient(),
+        deleteSource.kind,
+        deleteSource.id,
+      );
+      toast(`${deletedCount} transaction${deletedCount === 1 ? "" : "s"} deleted from ${deleteSource.name}`);
+      setDeleteSource(null);
+      setSourceCoverageRefresh(value => value + 1);
+      void fetchTransactions();
+    } catch (error) {
+      console.error("Failed to delete transactions for source:", error);
+      toast(error instanceof Error ? `Could not delete transactions: ${error.message}` : "Could not delete transactions for this source.", "error");
+    } finally {
+      setDeletingSource(false);
     }
   }
 
@@ -1164,6 +1190,25 @@ export default function TransactionsSection() {
               {sourceCoverageLoading && <p role="status" className="text-[10px] text-foreground/50">Loading coverage…</p>}
               {sourceCoverageError && <p role="status" className="text-[10px] text-yellow-400">Could not load coverage.</p>}
             </div>
+            {importSource && activeSourceCoverage && activeSourceCoverage.totalTransactionCount > 0 && (
+              <button
+                type="button"
+                disabled={sourceCoverageLoading || deletingSource}
+                onClick={() => {
+                  if ((importSourceKind === "account" || importSourceKind === "card") && importSourceId) {
+                    setDeleteSource({
+                      kind: importSourceKind,
+                      id: importSourceId,
+                      name: selectedImportSourceName ?? "selected source",
+                      count: activeSourceCoverage.totalTransactionCount,
+                    });
+                  }
+                }}
+                className="mt-3 rounded-lg border border-red/30 px-2.5 py-1.5 text-[10px] font-semibold text-red transition-colors hover:bg-red/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Delete all {activeSourceCoverage.totalTransactionCount} transactions for this source
+              </button>
+            )}
           </div>
           {sourceDetectionMessage && (
             <p role="status" className={`mt-2 text-[10px] ${sourceAutoDetected ? "text-green" : "text-foreground/45"}`}>
@@ -1544,6 +1589,14 @@ export default function TransactionsSection() {
         confirmLabel="Delete"
         onCancel={() => setDeleteId(null)}
         onConfirm={() => { const id = deleteId; setDeleteId(null); if (id) void handleDelete(id); }}
+      />
+      <ConfirmDialog
+        open={deleteSource !== null}
+        title={`Delete transactions from ${deleteSource?.name ?? "this source"}?`}
+        description={`This permanently deletes ${deleteSource?.count ?? 0} transactions linked to this account or card, including CSV imports, synced transactions, and manual entries. The account/card itself will not be deleted. This action cannot be undone.`}
+        confirmLabel={deletingSource ? "Deleting…" : "Delete all transactions"}
+        onCancel={() => { if (!deletingSource) setDeleteSource(null); }}
+        onConfirm={() => { void handleDeleteSourceTransactions(); }}
       />
     </div>
   );
