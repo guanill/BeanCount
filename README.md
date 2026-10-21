@@ -90,6 +90,9 @@ first added; skipped duplicate imports do not refresh it. Apply
 before using CSV imports or deleting accounts/cards with linked transactions.
 The import panel also lets you permanently delete all transactions linked to
 the selected account or card after confirming the source and transaction count;
-this does not delete the account or card itself.
+this does not delete the account or card itself. It also provides a separate
+cleanup action for transactions with a Teller transaction ID, including rows
+whose original account has been deleted; it does not affect CSV/manual rows
+without a Teller ID.
 
 Run the unit tests with `npm test` (Node 22+).

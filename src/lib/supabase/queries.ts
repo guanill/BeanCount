@@ -768,6 +768,24 @@ export async function deleteTransactionsForSource(
   return count ?? 0;
 }
 
+export async function getTellerTransactionCount(supabase: SupabaseClient): Promise<number> {
+  const { count, error } = await supabase
+    .from("transactions")
+    .select("id", { count: "exact", head: true })
+    .not("teller_transaction_id", "is", null);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function deleteTellerTransactions(supabase: SupabaseClient): Promise<number> {
+  const { error, count } = await supabase
+    .from("transactions")
+    .delete({ count: "exact" })
+    .not("teller_transaction_id", "is", null);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 export async function createTransaction(
   supabase: SupabaseClient,
   tx: {
