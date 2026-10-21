@@ -49,6 +49,8 @@ import {
   getTransactionMonthCoverage,
   getTransactionSourceCoverage,
   deleteTransactionsForSource,
+  getTellerTransactionCount,
+  deleteTellerTransactions,
   importTransactions,
 } from "@/lib/supabase/queries";
 import { callEdgeFunction } from "@/lib/supabase/functions";
@@ -625,6 +627,11 @@ export default function TransactionsSection() {
   const [sourceCoverageRefresh, setSourceCoverageRefresh] = useState(0);
   const [deleteSource, setDeleteSource] = useState<{ kind: "account" | "card"; id: string; name: string; count: number } | null>(null);
   const [deletingSource, setDeletingSource] = useState(false);
+  const [tellerTransactionCount, setTellerTransactionCount] = useState<number | null>(null);
+  const [tellerCountLoading, setTellerCountLoading] = useState(false);
+  const [tellerCountError, setTellerCountError] = useState(false);
+  const [deleteTellerConfirmation, setDeleteTellerConfirmation] = useState(false);
+  const [deletingTellerTransactions, setDeletingTellerTransactions] = useState(false);
   const [importError, setImportError] = useState("");
   const [importing, setImporting] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -710,6 +717,27 @@ export default function TransactionsSection() {
 
     return () => { active = false; };
   }, [showImport, importSource, year, sourceCoverageRefresh]);
+
+  useEffect(() => {
+    if (!showImport) {
+      setTellerTransactionCount(null);
+      setTellerCountError(false);
+      return;
+    }
+
+    let active = true;
+    setTellerCountLoading(true);
+    setTellerCountError(false);
+    getTellerTransactionCount(createClient())
+      .then(count => { if (active) setTellerTransactionCount(count); })
+      .catch(error => {
+        console.error("Failed to count Teller-linked transactions:", error);
+        if (active) setTellerCountError(true);
+      })
+      .finally(() => { if (active) setTellerCountLoading(false); });
+
+    return () => { active = false; };
+  }, [showImport, sourceCoverageRefresh]);
 
   useEffect(() => {
     if (!importCsvText || !importFileName) return;
@@ -919,6 +947,22 @@ export default function TransactionsSection() {
       toast(error instanceof Error ? `Could not delete transactions: ${error.message}` : "Could not delete transactions for this source.", "error");
     } finally {
       setDeletingSource(false);
+    }
+  }
+
+  async function handleDeleteTellerTransactions() {
+    setDeletingTellerTransactions(true);
+    try {
+      const deletedCount = await deleteTellerTransactions(createClient());
+      toast(`${deletedCount} Teller transaction${deletedCount === 1 ? "" : "s"} deleted`);
+      setDeleteTellerConfirmation(false);
+      setSourceCoverageRefresh(value => value + 1);
+      void fetchTransactions();
+    } catch (error) {
+      console.error("Failed to delete Teller-linked transactions:", error);
+      toast(error instanceof Error ? `Could not delete Teller transactions: ${error.message}` : "Could not delete Teller transactions.", "error");
+    } finally {
+      setDeletingTellerTransactions(false);
     }
   }
 
@@ -1142,6 +1186,28 @@ export default function TransactionsSection() {
               CSV file
               <input type="file" accept=".csv,text/csv" onChange={event => void handleImportFile(event.target.files?.[0])} className="mt-1 block w-full rounded-lg border border-border/50 bg-card px-2.5 py-1.5 text-xs text-foreground file:mr-2 file:rounded file:border-0 file:bg-accent/10 file:px-2 file:py-1 file:text-xs file:text-accent-light" />
             </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/30 bg-card/40 p-3">
+            <div>
+              <p className="text-xs font-semibold text-foreground">Old Teller transactions</p>
+              <p className="mt-1 text-[10px] text-foreground/45">
+                {tellerCountLoading
+                  ? "Checking for transactions linked to Teller…"
+                  : tellerCountError
+                    ? "Could not load the Teller transaction count."
+                    : `${tellerTransactionCount ?? 0} transactions still have a Teller transaction ID, including ones no longer linked to an account.`}
+              </p>
+            </div>
+            {(tellerTransactionCount ?? 0) > 0 && (
+              <button
+                type="button"
+                disabled={tellerCountLoading || tellerCountError || deletingTellerTransactions}
+                onClick={() => setDeleteTellerConfirmation(true)}
+                className="rounded-lg border border-red/30 px-2.5 py-1.5 text-[10px] font-semibold text-red transition-colors hover:bg-red/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Delete {tellerTransactionCount} Teller transactions
+              </button>
+            )}
           </div>
           <div className="mt-3 rounded-lg border border-border/30 bg-card/40 p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1597,6 +1663,14 @@ export default function TransactionsSection() {
         confirmLabel={deletingSource ? "Deleting…" : "Delete all transactions"}
         onCancel={() => { if (!deletingSource) setDeleteSource(null); }}
         onConfirm={() => { void handleDeleteSourceTransactions(); }}
+      />
+      <ConfirmDialog
+        open={deleteTellerConfirmation}
+        title="Delete old Teller transactions?"
+        description={`This permanently deletes all ${tellerTransactionCount ?? 0} transactions with a Teller transaction ID, including orphaned transactions whose account was deleted. It will not delete CSV-imported or manual transactions unless they also have a Teller transaction ID. This action cannot be undone.`}
+        confirmLabel={deletingTellerTransactions ? "Deleting…" : "Delete Teller transactions"}
+        onCancel={() => { if (!deletingTellerTransactions) setDeleteTellerConfirmation(false); }}
+        onConfirm={() => { void handleDeleteTellerTransactions(); }}
       />
     </div>
   );
