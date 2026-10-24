@@ -272,9 +272,21 @@ function TxRow({
         </p>
         <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 flex-wrap">
           <span className="text-[10px] sm:text-xs text-foreground/40">{formatDate(tx.date)}</span>
-          <span className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded-full hidden sm:inline" style={{ backgroundColor: meta.color + "20", color: meta.color }}>
-            {meta.label}
-          </span>
+          <select
+            value={tx.category}
+            aria-label={`Category for ${tx.merchant_name || tx.name}`}
+            title="Change category"
+            onClick={event => event.stopPropagation()}
+            onChange={event => onReclassify(tx.id, event.target.value)}
+            className="max-w-32 cursor-pointer rounded-full border-0 px-1.5 py-0.5 text-[10px] sm:text-xs focus:outline-none focus:ring-1 focus:ring-accent"
+            style={{ backgroundColor: meta.color + "20", color: meta.color }}
+          >
+            {Object.entries(CATEGORIES).map(([key, category]) => (
+              <option key={key} value={key} className="bg-card text-foreground">
+                {category.emoji} {category.label}
+              </option>
+            ))}
+          </select>
           {tx.account_name && <span className="text-[10px] sm:text-xs text-foreground/30 truncate max-w-24 sm:max-w-40">{tx.account_name}</span>}
           {isRecurring && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-purple-400/70"><Repeat className="w-2.5 h-2.5" /> recurring</span>}
           {isIgnored && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>}

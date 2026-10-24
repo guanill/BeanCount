@@ -95,4 +95,13 @@ cleanup action for transactions with a Teller transaction ID, including rows
 whose original account has been deleted; it does not affect CSV/manual rows
 without a Teller ID.
 
+When you change a transaction's category, BeanCount remembers that category for
+the normalized merchant on your user profile. It applies to future matching
+transactions from CSV imports, manual entries, Teller, and Plaid across your
+accounts; this does not run a bulk rewrite of existing transactions. Apply
+`supabase/migrations/20261021031810_remember_merchant_categories.sql` to enable
+this feature. The keyword fallback also covers a broader set of merchants and
+transaction descriptions across the existing categories; transfers are
+classified as incoming or outgoing based on the transaction amount.
+
 Run the unit tests with `npm test` (Node 22+).

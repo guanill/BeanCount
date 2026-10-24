@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { getSupabaseClient, getSupabaseAdmin } from "../_shared/supabase.ts";
 import { tellerFetch, TellerTransaction } from "../_shared/teller.ts";
-import { guessCategory } from "../_shared/categories.ts";
+import { applyMerchantCategoryRule, guessCategory, normalizeMerchantKey } from "../_shared/categories.ts";
 
 function tellerCategoryToKey(cat: string | null): string {
   if (!cat) return "other";
@@ -69,6 +69,14 @@ serve(async (req) => {
     console.log("[sync-tx] User:", user.id);
 
     const admin = getSupabaseAdmin();
+    const { data: categoryRules, error: categoryRulesError } = await admin
+      .from("merchant_category_rules")
+      .select("merchant_key, category, transaction_type")
+      .eq("user_id", user.id);
+    if (categoryRulesError) throw categoryRulesError;
+    const categoryRuleMap = new Map(
+      (categoryRules ?? []).map(rule => [rule.merchant_key, rule]),
+    );
 
     const { data: accountTokens, error: atErr } = await admin.from("integration_tokens")
       .select("entity_id, access_token")
@@ -150,7 +158,13 @@ serve(async (req) => {
         const rows = posted.map(tx => {
           const amount = parseFloat(tx.amount);
           const merchantName = tx.details?.counterparty?.name ?? null;
-          const { category: catKey, txType } = classifyTellerTransaction(tx, merchantName);
+          const fallback = classifyTellerTransaction(tx, merchantName);
+          const merchantKey = normalizeMerchantKey(merchantName || tx.description);
+          const learnedRule = merchantKey ? categoryRuleMap.get(merchantKey) : undefined;
+          const classification = applyMerchantCategoryRule(
+            { category: fallback.category, type: fallback.txType },
+            learnedRule,
+          );
           return {
             id: crypto.randomUUID(),
             user_id: user.id,
@@ -158,8 +172,8 @@ serve(async (req) => {
             credit_card_id: row.isCard ? row.id : null,
             teller_transaction_id: tx.id,
             amount, date: tx.date, name: tx.description,
-            merchant_name: merchantName, category: catKey,
-            subcategory: null, transaction_type: txType, is_manual: false,
+            merchant_name: merchantName, category: classification.category,
+            subcategory: null, transaction_type: classification.type, is_manual: false,
           };
         });
 

@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { Configuration, PlaidApi, PlaidEnvironments } from "npm:plaid@26";
 import { corsHeaders } from "../_shared/cors.ts";
 import { getSupabaseClient, getSupabaseAdmin } from "../_shared/supabase.ts";
-import { plaidCategoryToKey, guessCategory } from "../_shared/categories.ts";
+import { applyMerchantCategoryRule, plaidCategoryToKey, guessCategory, normalizeMerchantKey } from "../_shared/categories.ts";
 
 function getPlaidClient() {
   const env = Deno.env.get("PLAID_ENV") || "sandbox";
@@ -29,6 +29,14 @@ serve(async (req) => {
 
     const admin = getSupabaseAdmin();
     const plaid = getPlaidClient();
+    const { data: categoryRules, error: categoryRulesError } = await admin
+      .from("merchant_category_rules")
+      .select("merchant_key, category, transaction_type")
+      .eq("user_id", user.id);
+    if (categoryRulesError) throw categoryRulesError;
+    const categoryRuleMap = new Map(
+      (categoryRules ?? []).map(rule => [rule.merchant_key, rule]),
+    );
 
     const { data: tokens } = await admin.from("integration_tokens")
       .select("entity_id, access_token")
@@ -81,10 +89,17 @@ serve(async (req) => {
 
         for (const tx of added) {
           const plaidPrimary = (tx.personal_finance_category as { primary?: string } | null)?.primary ?? "";
-          const catKey = plaidPrimary
+          const fallbackCategory = plaidPrimary
             ? plaidCategoryToKey(plaidPrimary)
             : guessCategory(tx.name, tx.amount, tx.merchant_name ?? null).category;
-          const txType = tx.amount < 0 ? "income" : catKey.startsWith("transfer") ? "transfer" : "expense";
+          const fallbackType = tx.amount < 0
+            ? "income"
+            : fallbackCategory.startsWith("transfer") ? "transfer" : "expense";
+          const merchantKey = normalizeMerchantKey(tx.merchant_name ?? tx.name);
+          const classification = applyMerchantCategoryRule(
+            { category: fallbackCategory, type: fallbackType },
+            merchantKey ? categoryRuleMap.get(merchantKey) : undefined,
+          );
           const accountId = accountMap.get(tx.account_id) ?? null;
 
           await admin.from("transactions").upsert({
@@ -96,9 +111,9 @@ serve(async (req) => {
             date: tx.date,
             name: tx.name,
             merchant_name: tx.merchant_name ?? null,
-            category: catKey,
+            category: classification.category,
             subcategory: (tx.personal_finance_category as { detailed?: string } | null)?.detailed ?? null,
-            transaction_type: txType,
+            transaction_type: classification.type,
             is_manual: false,
           }, { onConflict: "plaid_transaction_id", ignoreDuplicates: true });
           totalAdded++;
@@ -106,13 +121,20 @@ serve(async (req) => {
 
         for (const tx of modified) {
           const plaidPrimary = (tx.personal_finance_category as { primary?: string } | null)?.primary ?? "";
-          const catKey = plaidPrimary ? plaidCategoryToKey(plaidPrimary) : "other";
-          const txType = tx.amount < 0 ? "income" : catKey.startsWith("transfer") ? "transfer" : "expense";
+          const fallbackCategory = plaidPrimary ? plaidCategoryToKey(plaidPrimary) : "other";
+          const fallbackType = tx.amount < 0
+            ? "income"
+            : fallbackCategory.startsWith("transfer") ? "transfer" : "expense";
+          const merchantKey = normalizeMerchantKey(tx.merchant_name ?? tx.name);
+          const classification = applyMerchantCategoryRule(
+            { category: fallbackCategory, type: fallbackType },
+            merchantKey ? categoryRuleMap.get(merchantKey) : undefined,
+          );
 
           await admin.from("transactions").update({
             amount: tx.amount, date: tx.date, name: tx.name,
             merchant_name: tx.merchant_name ?? null,
-            category: catKey, transaction_type: txType,
+            category: classification.category, transaction_type: classification.type,
           }).eq("plaid_transaction_id", tx.transaction_id);
         }
 
