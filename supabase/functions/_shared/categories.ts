@@ -64,13 +64,12 @@ export function plaidCategoryToKey(plaidPrimary: string): string {
   return map[plaidPrimary] ?? "other";
 }
 
+const TRANSFER_PATTERN = /zelle|venmo|cash.?app|paypal.?transfer|square.?cash|google.?pay.?send|apple.?cash|wire.?transfer|peer.?to.?peer|account.?transfer|between.?accounts|online.?transfer|ach.?transfer/i;
+
 /** Keyword-based fallback for manual transactions */
 const KEYWORD_RULES: Array<{ pattern: RegExp; category: string }> = [
   // -- Income --
-  { pattern: /salary|payroll|direct.?dep|paycheck|wages|commission|bonus.?pay|employer|reimbursement|tax.?refund|irs.?refund/i, category: "income" },
-
-  // -- Transfers (person-to-person; catch before other rules) --
-  { pattern: /zelle|venmo|cash.?app|paypal.?transfer|square.?cash|google.?pay.?send|apple.?cash|wire.?transfer|peer.?to.?peer/i, category: "transfer_out" },
+  { pattern: /salary|payroll|direct.?dep|paycheck|wages|commission|bonus.?pay|employer|reimbursement|tax.?refund|irs.?refund|dividend.?payment|interest.?payment|cashback.?reward/i, category: "income" },
 
   // -- Groceries (before food_and_drink to win on grocery stores) --
   { pattern: /whole.?foods|trader.?joe|safeway|kroger|aldi|publix|wegmans|sprouts|h-?e-?b|ralph|vons|albertson|costco|sam.?s.?club|bj.?s.?wholes|market.?basket|stop.?&.?shop|giant.?food|food.?lion|meijer|save.?a.?lot|winn.?dixie|piggly.?wiggly|hy.?vee|fresh.?market|lidl|winco|grocery.?outlet|smart.?&.?final|key.?food|stater.?bros|hannaford|price.?chopper|lucky.?supermarket|brookshire|dillons|fry.?s.?food|king.?sooper|pick.?n.?save|sendik|mart.?grocery|grocery|supermarket|food.?store/i, category: "groceries" },
@@ -115,21 +114,41 @@ const KEYWORD_RULES: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /loan.?payment|student.?loan.?pay|car.?loan|auto.?loan|mortgage.?payment|nelnet|navient|sallie.?mae|mohela|aidvantage|great.?lakes.?loan|fed.?loan.?serv|discover.?student|sofi.?loan|earnest.?loan/i, category: "loan_payments" },
 
   // -- Bank Fees --
-  { pattern: /overdraft.?fee|nsf.?fee|monthly.?fee|maintenance.?fee|atm.?fee|wire.?fee|foreign.?transaction|service.?charge|late.?fee|returned.?item.?fee|account.?fee|bank.?fee/i, category: "bank_fees" },
+  { pattern: /overdraft.?fee|nsf.?fee|monthly.?fee|maintenance.?fee|atm.?fee|wire.?fee|wire.?transfer.?fee|ach.?transfer.?fee|foreign.?transaction|service.?charge|late.?fee|returned.?item.?fee|account.?fee|bank.?fee/i, category: "bank_fees" },
 
   // -- Government --
   { pattern: /irs.?payment|irs.?direct|tax.?payment|state.?tax|dmv.?fee|court.?fine|traffic.?fine|parking.?ticket|govt.?fee|government.?pay|us.?treasury|social.?security/i, category: "government" },
 
+  // -- Additional common merchants and transaction descriptors --
+  { pattern: /hmart|h.?mart|99.?ranch|mitsuwa|market.?of.?choice|fresh.?thyme|food.?bazaar|asian.?market/i, category: "groceries" },
+  { pattern: /dutch.?bros|culver.?s|popeyes|kfc|p.?terry|portillo|jersey.?mike|dutchbros/i, category: "food_and_drink" },
+  { pattern: /evgo|electrify.?america|chargepoint|tesla.?supercharger|blink.?charging|autozone|o.?reilly.?auto|advance.?auto.?parts|car.?wash|jiffy.?lube|midas.?auto|discount.?tire|les.?schwab/i, category: "transportation" },
+  { pattern: /icloud|apple.?services|ring.?subscription|nest.?aware|amazon.?prime|google.?storage|google.?workspace|microsoft.?365|xbox.?game.?pass|playstation.?plus/i, category: "subscriptions" },
+  { pattern: /disneyland|disney.?world|universal.?studios|six.?flags|cedar.?point|seaworld|zoo.?admission|museum.?admission|broadway.?ticket|sports.?ticket/i, category: "entertainment" },
+  { pattern: /kaiser.?permanente|providence.?health|sutter.?health|fred.?meyer.?pharmacy|costco.?pharmacy|mark.?cuban.?cost.?plus|planned.?parenthood.?health|fresenius|davita/i, category: "medical" },
+  { pattern: /rover|wag.?walking|pet.?valu|mud.?bay|pet.?supplies|veterinary|vet.?services/i, category: "pets" },
+  { pattern: /edx|linkedin.?learning|oreilly.?learning|pearson.?education|mcgraw.?hill|school.?tuition|daycare|child.?care|preschool/i, category: "education" },
+  { pattern: /affirm|klarna|afterpay|zip.?pay|sezzle|pay.?in.?4|auto.?finance|car.?payment/i, category: "loan_payments" },
+  { pattern: /pse.?energy|puget.?sound.?energy|seattle.?city.?light|water.?and.?sewer|waste.?management|republic.?services|t.?mobile|verizon.?wireless|at.?and.?t.?mobility|mint.?mobile|visible.?wireless/i, category: "rent_and_utilities" },
+
   // -- Shopping (broad retail -- must come after more specific rules) --
-  { pattern: /amazon(?!.?music|.?prime.?video)|walmart|target|ebay|etsy|best.?buy|costco(?!.?food)|tjmaxx|tj.?maxx|marshalls|ross.?stores|nordstrom|macy.?s|bloomingdale|saks|neiman.?marcus|gap.?inc|old.?navy|banana.?republic|h&m|zara|forever.?21|uniqlo|nike.?store|adidas.?store|under.?armour|lululemon|apple.?store|samsung.?store|microsoft.?store|buy.?buy.?baby|toys.?r.?us|five.?below|dollar.?general|dollar.?tree|family.?dollar|big.?lots|tuesday.?morning|overstock|chewy(?!.?com)|shopify.?purchase|online.?store/i, category: "shopping" },
+  { pattern: /amazon(?!.?music|.?prime.?video)|walmart|target|ebay|etsy|best.?buy|costco(?!.?food)|tjmaxx|tj.?maxx|marshalls|ross.?stores|nordstrom|macy.?s|bloomingdale|saks|neiman.?marcus|gap.?inc|old.?navy|banana.?republic|h&m|zara|forever.?21|uniqlo|nike.?store|adidas.?store|under.?armour|lululemon|apple.?store|samsung.?store|microsoft.?store|buy.?buy.?baby|toys.?r.?us|five.?below|dollar.?general|dollar.?tree|family.?dollar|big.?lots|tuesday.?morning|overstock|chewy(?!.?com)|shopify.?purchase|online.?store|temu|shein|aliexpress/i, category: "shopping" },
 ];
 
 export function guessCategory(name: string, amount: number, merchantName?: string | null): { category: string; type: TransactionType } {
+  const targets = [merchantName, name].filter(Boolean) as string[];
+  const isTransfer = targets.some(target => TRANSFER_PATTERN.test(target));
+  const isFee = targets.some(target => /fee|service.?charge|commission/i.test(target));
+  if (isTransfer && !isFee) {
+    return amount < 0
+      ? { category: "transfer_in", type: "transfer" }
+      : { category: "transfer_out", type: "transfer" };
+  }
+
   // Negative amount = credit (money coming in)
   if (amount < 0) return { category: "income", type: "income" };
 
   // Test merchant name first (cleaner signal), then fall back to full description
-  const targets = [merchantName, name].filter(Boolean) as string[];
   for (const target of targets) {
     for (const rule of KEYWORD_RULES) {
       if (rule.pattern.test(target)) {
@@ -143,4 +162,19 @@ export function guessCategory(name: string, amount: number, merchantName?: strin
 
 export function getCategoryMeta(key: string): CategoryMeta {
   return CATEGORIES[key] ?? CATEGORIES.other;
+}
+
+export function normalizeMerchantKey(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const key = value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  return key.length > 0 && key.length <= 500 ? key : null;
+}
+
+export function applyMerchantCategoryRule(
+  fallback: { category: string; type: TransactionType },
+  rule?: { category: string; transaction_type: TransactionType } | null,
+): { category: string; type: TransactionType } {
+  return rule
+    ? { category: rule.category, type: rule.transaction_type }
+    : fallback;
 }

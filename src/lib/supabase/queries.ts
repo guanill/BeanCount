@@ -11,7 +11,7 @@ import type {
   TransactionSummary,
   NetWorthSnapshot,
 } from "@/lib/types";
-import { CATEGORIES, getCategoryMeta, guessCategory } from "@/lib/categories";
+import { applyMerchantCategoryRule, CATEGORIES, getCategoryMeta, guessCategory, normalizeMerchantKey, type TransactionType } from "@/lib/categories";
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
@@ -786,6 +786,25 @@ export async function deleteTellerTransactions(supabase: SupabaseClient): Promis
   return count ?? 0;
 }
 
+interface MerchantCategoryRule {
+  merchant_key: string;
+  category: string;
+  transaction_type: TransactionType;
+}
+
+async function getMerchantCategoryRules(
+  supabase: SupabaseClient,
+  merchantKeys: string[],
+): Promise<Map<string, MerchantCategoryRule>> {
+  if (merchantKeys.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from("merchant_category_rules")
+    .select("merchant_key, category, transaction_type")
+    .in("merchant_key", merchantKeys);
+  if (error) throw error;
+  return new Map((data ?? []).map(rule => [rule.merchant_key, rule as MerchantCategoryRule]));
+}
+
 export async function createTransaction(
   supabase: SupabaseClient,
   tx: {
@@ -803,8 +822,18 @@ export async function createTransaction(
   const amt = tx.amount;
   let category = tx.category;
   let txType = tx.transaction_type;
+  const merchantKey = normalizeMerchantKey(tx.merchant_name || txName);
+  const rules = await getMerchantCategoryRules(supabase, merchantKey ? [merchantKey] : []);
+  const savedRule = merchantKey ? rules.get(merchantKey) : undefined;
 
-  if (!category || !txType) {
+  if (savedRule && (!category || category === "other")) {
+    const result = applyMerchantCategoryRule(
+      { category: category ?? "other", type: CATEGORIES[category ?? "other"].type },
+      savedRule,
+    );
+    category = result.category;
+    txType = result.type;
+  } else if (!category || !txType) {
     const guess = guessCategory(txName, amt, tx.merchant_name);
     category = category || guess.category;
     txType = txType || guess.type;
@@ -848,8 +877,14 @@ export async function importTransactions(
 ) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
+  const merchantKeys = [...new Set(rows
+    .map(row => normalizeMerchantKey(row.merchant_name || row.name))
+    .filter((key): key is string => key !== null))];
+  const categoryRules = await getMerchantCategoryRules(supabase, merchantKeys);
   const payload = rows.map(row => {
     const guess = guessCategory(row.name, row.amount, row.merchant_name);
+    const merchantKey = normalizeMerchantKey(row.merchant_name || row.name);
+    const savedRule = merchantKey ? categoryRules.get(merchantKey) : undefined;
     return {
       user_id: user.id,
       account_id: row.account_id ?? null,
@@ -859,8 +894,8 @@ export async function importTransactions(
       date: row.date,
       name: row.name,
       merchant_name: row.merchant_name ?? null,
-      category: guess.category,
-      transaction_type: row.transaction_type ?? guess.type,
+      category: applyMerchantCategoryRule(guess, savedRule).category,
+      transaction_type: savedRule?.transaction_type ?? row.transaction_type ?? guess.type,
       is_manual: true,
       import_fingerprint: row.import_fingerprint,
     };
@@ -885,6 +920,20 @@ export async function updateTransaction(
     is_ignored: boolean;
   }>
 ) {
+  let merchantRule: { user_id: string; merchant_key: string } | null = null;
+  if (updates.category && CATEGORIES[updates.category]) {
+    const { data: current, error: currentError } = await supabase
+      .from("transactions")
+      .select("user_id, merchant_name, name")
+      .eq("id", id)
+      .single();
+    if (currentError) throw currentError;
+    const merchantKey = normalizeMerchantKey(current.merchant_name || current.name);
+    if (merchantKey) {
+      merchantRule = { user_id: current.user_id, merchant_key: merchantKey };
+    }
+  }
+
   const { data, error } = await supabase
     .from("transactions")
     .update(updates)
@@ -892,6 +941,18 @@ export async function updateTransaction(
     .select()
     .single();
   if (error) throw error;
+  if (merchantRule && updates.category) {
+    const categoryMeta = CATEGORIES[updates.category];
+    const { error: ruleError } = await supabase
+      .from("merchant_category_rules")
+      .upsert({
+        ...merchantRule,
+        category: updates.category,
+        transaction_type: updates.transaction_type ?? categoryMeta.type,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,merchant_key" });
+    if (ruleError) throw ruleError;
+  }
   return data as Transaction;
 }
 

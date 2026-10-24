@@ -163,6 +163,24 @@ CREATE INDEX idx_transactions_account_id ON transactions(account_id) WHERE accou
 CREATE UNIQUE INDEX idx_teller_transaction_id ON transactions(teller_transaction_id) WHERE teller_transaction_id IS NOT NULL;
 
 -- ============================================================
+-- USER MERCHANT CATEGORY RULES
+-- ============================================================
+CREATE TABLE merchant_category_rules (
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  merchant_key text NOT NULL CHECK (length(merchant_key) BETWEEN 1 AND 500),
+  category text NOT NULL CHECK (category IN (
+    'income', 'transfer_in', 'transfer_out', 'food_and_drink', 'groceries',
+    'shopping', 'subscriptions', 'transportation', 'entertainment',
+    'rent_and_utilities', 'medical', 'personal_care', 'travel',
+    'loan_payments', 'home_improvement', 'education', 'pets', 'donations',
+    'general_services', 'government', 'bank_fees', 'other'
+  )),
+  transaction_type transaction_type NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, merchant_key)
+);
+
+-- ============================================================
 -- LIABILITIES
 -- ============================================================
 CREATE TABLE liabilities (
@@ -254,7 +272,7 @@ DECLARE
   tbl text;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'accounts', 'stock_holdings', 'net_worth_snapshots', 'credit_cards', 'debts_owed', 'transactions',
+    'accounts', 'stock_holdings', 'net_worth_snapshots', 'credit_cards', 'debts_owed', 'transactions', 'merchant_category_rules',
     'liabilities', 'loans', 'plaid_sync_cursors', 'planner_configs'
   ])
   LOOP
