@@ -381,7 +381,7 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-sm font-bold text-foreground">{formatCurrency(account.balance, account.currency)}</span>
-                      <div className="hidden group-hover:flex items-center gap-1">
+                      <div className="flex sm:hidden sm:group-hover:flex items-center gap-1">
                         {!automaticHoldings && !isLinked && (
                           <button onClick={() => startEdit(account)} className="p-1 text-foreground/30 hover:text-accent transition-colors" title="Edit">
                             <Pencil className="w-3.5 h-3.5" />

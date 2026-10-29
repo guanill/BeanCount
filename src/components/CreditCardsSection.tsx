@@ -451,7 +451,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
                           </p>
                           <p className="text-xs text-foreground/40">Min: {formatCurrency(card.min_payment)}</p>
                         </div>
-                        <div className="hidden group-hover:flex items-center gap-1">
+                        <div className="flex sm:hidden sm:group-hover:flex items-center gap-1">
                           {!card.teller_account_id && (
                             <button onClick={() => startEdit(card)} className="p-1 text-foreground/30 hover:text-accent transition-colors">
                               <Pencil className="w-3.5 h-3.5" />
