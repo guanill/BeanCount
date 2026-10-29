@@ -263,7 +263,7 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-green">{formatCurrency(debt.amount)}</span>
-                    <div className="hidden group-hover:flex items-center gap-1">
+                    <div className="flex sm:hidden sm:group-hover:flex items-center gap-1">
                       <button onClick={() => markPaid(debt.id)} className="p-1 text-foreground/30 hover:text-green transition-colors" title="Mark as paid">
                         <Check className="w-3.5 h-3.5" />
                       </button>

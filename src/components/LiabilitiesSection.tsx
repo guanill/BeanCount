@@ -272,7 +272,7 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-red-400">-{formatCurrency(l.amount)}</span>
-                    <div className="hidden group-hover:flex items-center gap-1">
+                    <div className="flex sm:hidden sm:group-hover:flex items-center gap-1">
                       <button onClick={() => startEdit(l)} className="p-1 text-foreground/30 hover:text-accent transition-colors">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
