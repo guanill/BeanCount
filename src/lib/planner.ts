@@ -16,6 +16,23 @@ export interface RecurringChargeLike {
   paidOverride?: { month: string; paid: boolean };
 }
 
+export function togglePaydayStatus(
+  day: number,
+  paidPaydays: number[],
+  unpaidPaydays: number[],
+): { paidPaydays: number[]; unpaidPaydays: number[] } {
+  const isPaid = paidPaydays.includes(day) && !unpaidPaydays.includes(day);
+  return isPaid
+    ? {
+        paidPaydays: paidPaydays.filter(value => value !== day),
+        unpaidPaydays: [...new Set([...unpaidPaydays, day])],
+      }
+    : {
+        paidPaydays: [...new Set([...paidPaydays, day])],
+        unpaidPaydays: unpaidPaydays.filter(value => value !== day),
+      };
+}
+
 export function getSalaryForMonth(periods: SalaryPeriodLike[], year: number, month: number): number {
   const applicable = periods
     .filter(p => p.startYear < year || (p.startYear === year && p.startMonth <= month))
