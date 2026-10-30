@@ -13,7 +13,7 @@ import {
 } from "@/lib/tax";
 import {
   chargeActiveInMonth, chargeEndMonth, chargePaidThisMonth, chargesForMonth,
-  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth,
+  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth, togglePaydayStatus,
   loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt,
 } from "@/lib/planner";
 
@@ -578,7 +578,6 @@ interface PaycheckMarker {
   amount: number;
   due: boolean;
   paid: boolean;
-  enabled: boolean;
 }
 
 function MonthCard({
@@ -667,10 +666,12 @@ function MonthCard({
           {isToday && paychecks.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {paychecks.map(paycheck => (
-                <button key={paycheck.id} type="button" disabled={!paycheck.enabled}
-                  onClick={() => onTogglePaycheck(paycheck.periodId, paycheck.day)}
+                <button key={paycheck.id} type="button"
+                  aria-label={paycheck.paid ? `Mark ${paycheck.day} paycheck as unpaid` : `Mark ${paycheck.day} paycheck as paid`}
+                  title={paycheck.paid ? "Click to undo this paid mark" : "Mark this paycheck paid, including if it arrived early"}
+                  onClick={event => { event.stopPropagation(); onTogglePaycheck(paycheck.periodId, paycheck.day); }}
                   className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
-                {paycheck.paid ? `${paycheck.day} paid` : `${paycheck.day} upcoming`}
+                {paycheck.paid ? `${paycheck.day} paid` : `Mark ${paycheck.day} paid`}
                 </button>
               ))}
             </div>
@@ -2142,11 +2143,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         if (period.id !== periodId) return period;
         const paid = period.paidPaydays?.[monthKey] ?? [];
         const unpaid = period.unpaidPaydays?.[monthKey] ?? [];
-        const isPaid = !unpaid.includes(day) && (paid.includes(day) || day <= CUR_DAY);
+        const status = togglePaydayStatus(day, paid, unpaid);
         return {
           ...period,
-          paidPaydays: { ...(period.paidPaydays ?? {}), [monthKey]: isPaid ? paid.filter(value => value !== day) : [...paid, day] },
-          unpaidPaydays: { ...(period.unpaidPaydays ?? {}), [monthKey]: isPaid ? [...new Set([...unpaid, day])] : unpaid.filter(value => value !== day) },
+          paidPaydays: { ...(period.paidPaydays ?? {}), [monthKey]: status.paidPaydays },
+          unpaidPaydays: { ...(period.unpaidPaydays ?? {}), [monthKey]: status.unpaidPaydays },
         };
       }),
     }));
@@ -2571,11 +2572,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   const days = paycheckDays(period);
                   const paid = period.paidPaydays?.[THIS_MONTH_KEY] ?? [];
                   const unpaid = period.unpaidPaydays?.[THIS_MONTH_KEY] ?? [];
-                  return days.map((day, index) => {
+                  return days.map(day => {
                     const isPaid = paid.includes(day) && !unpaid.includes(day);
-                    const previousPaid = index === 0 || (
-                      paid.includes(days[index - 1]) && !unpaid.includes(days[index - 1])
-                    );
                     return {
                     id: `${period.id}-${day}`,
                     periodId: period.id,
@@ -2584,7 +2582,6 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                     amount: netSalary / days.length,
                     due: CUR_DAY >= day,
                     paid: isPaid,
-                    enabled: CUR_DAY >= day && previousPaid,
                   };
                   });
                 })

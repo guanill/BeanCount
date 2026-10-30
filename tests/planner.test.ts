@@ -5,6 +5,7 @@ import {
   chargesForMonth,
   projectLoanBalanceAt,
   salaryPaidThisMonth,
+  togglePaydayStatus,
 } from "../src/lib/planner.ts";
 import { formatDate, parseDateOnly } from "../src/lib/format.ts";
 
@@ -21,6 +22,16 @@ test("salary payday supports semimonthly schedules", () => {
   const schedule = { startYear: 2026, startMonth: 1, monthlySalary: 5000, payFrequency: "semimonthly" as const, payDay1: 15, payDay2: 30 };
   assert.equal(salaryPaidThisMonth(schedule, new Date(2026, 0, 14)), false);
   assert.equal(salaryPaidThisMonth(schedule, new Date(2026, 0, 15)), true);
+});
+
+test("a later paycheck can be marked paid early, without marking the first paycheck", () => {
+  const status = togglePaydayStatus(30, [], []);
+  assert.deepEqual(status, { paidPaydays: [30], unpaidPaydays: [] });
+});
+
+test("a payday marked paid can be explicitly toggled back to unpaid", () => {
+  const status = togglePaydayStatus(30, [15, 30], []);
+  assert.deepEqual(status, { paidPaydays: [15], unpaidPaydays: [30] });
 });
 
 test("loan payoff projection never returns a negative balance", () => {
