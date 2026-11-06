@@ -52,6 +52,19 @@ export const TAX_TABLES: Record<number, TaxYearTable> = {
     medicareAddlThreshold: MEDICARE_ADDL_THRESHOLD,
     waCaresRate: 0.0058,
   },
+  // 2027 — brackets and standard deductions per IRS inflation adjustments; SS wage base is still an estimate.
+  2027: {
+    brackets: {
+      single: [[0,12800,.10],[12800,52050,.12],[52050,111100,.22],[111100,211400,.24],[211400,264550,.32],[264550,661375,.35],[661375,Infinity,.37]],
+      mfj:    [[0,25600,.10],[25600,104100,.12],[104100,222200,.22],[222200,422800,.24],[422800,529100,.32],[529100,793650,.35],[793650,Infinity,.37]],
+      mfs:    [[0,12800,.10],[12800,52050,.12],[52050,111100,.22],[111100,211400,.24],[211400,264550,.32],[264550,396825,.35],[396825,Infinity,.37]],
+      hoh:    [[0,18250,.10],[18250,74400,.12],[74400,111050,.22],[111050,211400,.24],[211400,264550,.32],[264550,661375,.35],[661375,Infinity,.37]],
+    },
+    standardDeduction: { single: 16600, mfj: 33200, mfs: 16600, hoh: 24925 },
+    ssWageBase: 192000,
+    medicareAddlThreshold: MEDICARE_ADDL_THRESHOLD,
+    waCaresRate: 0.0058,
+  },
 };
 
 /** Table for the given year — closest earlier year if missing, earliest table as last resort. */
