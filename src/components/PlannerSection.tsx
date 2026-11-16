@@ -325,8 +325,23 @@ function getBonusAmount(b: RecurringBonus, salary: number, scenario: "low" | "mi
   return toAmt(b.amount ?? 0);
 }
 
+interface CalcLine {
+  label: string;
+  /** Signed effect on the month: positive adds to the balance, negative subtracts. */
+  amount: number;
+  detail?: string;
+  /** Marks the combined loan line so the card can itemize it per loan. */
+  key?: "loans";
+}
+
 interface MonthData {
   year: number; month: number; balance: number; net: number; salary: number; netSalary: number;
+  /** Balance carried into this month, before any of the lines below. */
+  startBalance: number;
+  /** Part of startBalance that is an adjustment rather than your actual balance. */
+  openingAdjust?: number;
+  /** Every amount that turns startBalance into balance. */
+  lines: CalcLine[];
   /** All cash in for the month: net salary + net bonuses/vests + positive one-time events. */
   inflow: number;
   /** All cash out: charges/expenses + loans + scenario spends + negative one-time events. */
@@ -399,8 +414,56 @@ function projectBalances(
     const inflow  = Math.max(0, netSalary - paidSalary) + vestSum + bonusSum + evtPos + projectedRefund;
     const outflow = expenseTotal + scenarioSum + evtNeg + projectedTaxDue;
     const net = inflow - outflow;
+
+    const monthEvents = config.events.filter(e => e.year === y && e.month === m);
+    const monthVests = vestEvs.filter(e => e.year === y && e.month === m);
+    const monthBonuses = (config.recurringBonuses ?? [])
+      .filter(b => b.month === m && b.startYear <= y && (b.endYear === null || b.endYear >= y));
+    const lines: CalcLine[] = [];
+    if (salary > 0) {
+      lines.push({
+        label: "Take-home salary", amount: netSalary,
+        detail: `${formatCurrency(salary)} gross − ${formatCurrency(Math.max(0, salary - netSalary))} tax`,
+      });
+      if (paidSalary > 0) lines.push({ label: "Paychecks already received", amount: -paidSalary, detail: "already in your balance" });
+    }
+    if (monthVests.length > 0) {
+      const gross = monthVests.reduce((s, e) => s + e.amount, 0);
+      lines.push({
+        label: "Stock vests", amount: vestSum,
+        detail: `${monthVests.map(e => e.label).join(", ")} · ${formatCurrency(gross)} before withholding`,
+      });
+    }
+    if (monthBonuses.length > 0) {
+      const gross = monthBonuses.reduce((s, b) => s + getBonusAmount(b, salary, scenario), 0);
+      lines.push({
+        label: "Bonuses", amount: bonusSum,
+        detail: `${monthBonuses.map(b => b.label).join(", ")} · ${formatCurrency(gross)} before withholding`,
+      });
+    }
+    for (const e of monthEvents) {
+      if (e.amount > 0 && !receivedRefundEventIds.has(e.id)) lines.push({ label: e.label, amount: e.amount });
+    }
+    if (projectedRefund > 0) lines.push({ label: "Expected tax refund", amount: projectedRefund });
+    if (charges.length > 0) {
+      for (const c of charges) {
+        if (chargeActiveInMonth(c, y, m)) lines.push({ label: c.label, amount: -c.amount, detail: "recurring charge" });
+      }
+    } else if (config.monthlyExpenses > 0) {
+      lines.push({ label: "Estimated monthly expenses", amount: -config.monthlyExpenses });
+    }
+    if (loanAmt > 0) lines.push({ label: "Loan payments", amount: -loanAmt, key: "loans" });
+    for (const s of (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)) {
+      lines.push({ label: s.label, amount: -s.items.reduce((sum, it) => sum + it.amount, 0), detail: "planned spend" });
+    }
+    for (const e of monthEvents) {
+      if (e.amount < 0) lines.push({ label: e.label, amount: e.amount });
+    }
+    if (projectedTaxDue > 0) lines.push({ label: "Estimated tax payment", amount: -projectedTaxDue });
+
+    const startBalance = balance;
     balance += net;
-    result.push({ year: y, month: m, balance, net, salary, netSalary, inflow, outflow });
+    result.push({ year: y, month: m, balance, net, salary, netSalary, startBalance, lines, inflow, outflow });
   }
   return result;
 }
@@ -587,7 +650,7 @@ interface PaycheckMarker {
 }
 
 function MonthCard({
-  year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, isPast, isToday, isCalendarSelected,
+  year, month, salary, netSalary, salaryReceived, salaryDue, paychecks, monthlyExpenses, events, vestEvents, recurBonuses, loanPaymentsTotal, loanBreakdown, spendBreakdown, scenarioEvents, balance, net, startBalance, openingAdjust, calcLines, isPast, isToday, isCalendarSelected,
   projectedRefund, projectedTaxDue, onAddEvent, onRemoveEvent, onSelectMonth,
   onTogglePaycheck,
 }: {
@@ -601,6 +664,7 @@ function MonthCard({
   scenarioEvents: ScenarioEvent[];
   projectedRefund: number; projectedTaxDue: number;
   balance: number; net: number;
+  startBalance: number; openingAdjust: number; calcLines: CalcLine[];
   isPast: boolean; isToday: boolean; isCalendarSelected: boolean;
   onAddEvent: (ev: Omit<PlannerEvent, "id">) => void;
   onRemoveEvent: (id: string) => void;
@@ -608,6 +672,7 @@ function MonthCard({
   onTogglePaycheck: (id: string, day: number) => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const [showCalc, setShowCalc] = useState(false);
   const [form, setForm]     = useState<AddEventForm>(EMPTY_FORM);
 
   function submit() {
@@ -647,12 +712,66 @@ function MonthCard({
             </span>
           )}
         </div>
-        <span className={`text-[10px] sm:text-xs font-bold tabular-nums px-1 sm:px-2 py-0.5 rounded-lg ${
-          positive ? "bg-green/10 text-green" : "bg-red/10 text-red"
-        }`}>
-          {positive ? "+" : ""}{formatCurrency(net)}
-        </span>
+        <div className="flex items-center gap-1">
+          <button type="button"
+            aria-label={`${showCalc ? "Hide" : "Show"} how the ${MONTHS_SHORT[month - 1]} balance is calculated`}
+            aria-expanded={showCalc}
+            title="Show how this month's balance is calculated"
+            onClick={event => { event.stopPropagation(); setShowCalc(v => !v); }}
+            className={`p-1 rounded-lg transition-colors ${showCalc ? "bg-accent/15 text-accent" : "text-foreground/35 hover:text-accent hover:bg-accent/10"}`}>
+            <Calculator className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+          </button>
+          <span className={`text-[10px] sm:text-xs font-bold tabular-nums px-1 sm:px-2 py-0.5 rounded-lg ${
+            positive ? "bg-green/10 text-green" : "bg-red/10 text-red"
+          }`}>
+            {positive ? "+" : ""}{formatCurrency(net)}
+          </span>
+        </div>
       </div>
+
+      {showCalc && (
+        <div onClick={event => event.stopPropagation()} className="mx-2.5 sm:mx-4 mb-2 rounded-xl border border-border/30 bg-background/40 p-2 sm:p-3 space-y-1 cursor-default">
+          <div className="text-[9px] uppercase tracking-wider text-foreground/40 mb-1">How {MONTHS_SHORT[month - 1]} adds up</div>
+          <div className="flex items-start justify-between gap-2 text-[10px]">
+            <span className="text-foreground/70">{isToday ? "Current balance" : "Balance carried in"}</span>
+            <span className="tabular-nums font-semibold text-foreground">{formatCurrency(startBalance - openingAdjust)}</span>
+          </div>
+          {openingAdjust > 0 && (
+            <div className="flex items-start justify-between gap-2 text-[10px]">
+              <span className="text-foreground/55 min-w-0">Recurring charges already paid<span className="block text-[9px] text-foreground/35">added back; the full month is subtracted below</span></span>
+              <span className="tabular-nums font-semibold text-green/80 shrink-0">+{formatCurrency(openingAdjust)}</span>
+            </div>
+          )}
+          {calcLines.flatMap(line => {
+            const rows = line.key === "loans" && loanBreakdown.length > 0
+              ? loanBreakdown.map(l => ({
+                  label: l.name, amount: -l.amount,
+                  detail: l.day ? `loan · due ${ordinalDay(l.day)}` : "loan payment",
+                }))
+              : [line];
+            return rows.map((row, index) => (
+              <div key={`${line.label}-${index}`} className="flex items-start justify-between gap-2 text-[10px]">
+                <span className="text-foreground/55 min-w-0">
+                  <span className="break-words">{row.label}</span>
+                  {row.detail && <span className="block text-[9px] text-foreground/35 break-words">{row.detail}</span>}
+                </span>
+                <span className={`tabular-nums font-semibold shrink-0 ${row.amount >= 0 ? "text-green/80" : "text-red/80"}`}>
+                  {row.amount >= 0 ? "+" : "−"}{formatCurrency(Math.abs(row.amount))}
+                </span>
+              </div>
+            ));
+          })}
+          {calcLines.length === 0 && <div className="text-[10px] text-foreground/35">Nothing planned this month.</div>}
+          <div className="flex items-center justify-between gap-2 text-[10px] border-t border-border/30 pt-1 mt-1">
+            <span className="text-foreground/60">Net change</span>
+            <span className={`tabular-nums font-semibold ${net >= 0 ? "text-green" : "text-red"}`}>{net >= 0 ? "+" : "−"}{formatCurrency(Math.abs(net))}</span>
+          </div>
+          <div className="flex items-center justify-between gap-2 text-[11px] font-bold">
+            <span className="text-foreground/80">Ending balance</span>
+            <span className={`tabular-nums ${balance >= 0 ? "text-foreground" : "text-red"}`}>{formatCurrency(balance)}</span>
+          </div>
+        </div>
+      )}
 
       {/* Big balance */}
       <div className="px-2.5 sm:px-4 pb-2 sm:pb-4 pt-0.5 overflow-hidden">
@@ -1923,7 +2042,8 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     // again unless we compensate here.
     const adjustedConfig = { ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust };
     const all = projectBalances(adjustedConfig, CUR_YEAR, CUR_MONTH, totalMonths, "mid", getLoanPaymentsForMonth, taxFilingStatus);
-    return all.filter(d => d.year === viewYear);
+    return all.filter(d => d.year === viewYear)
+      .map(d => d.year === CUR_YEAR && d.month === CUR_MONTH && paidAdjust > 0 ? { ...d, openingAdjust: paidAdjust } : d);
   }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, paidAdjust, taxFilingStatus]);
 
   // ── summary stats for the viewed year, summed straight off the projection months so
@@ -2631,6 +2751,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 loanBreakdown={getLoanBreakdownForMonth(d.year, d.month)}
                 spendBreakdown={getSpendBreakdownForMonth(d.year, d.month)}
                 balance={d.balance} net={d.net}
+                startBalance={d.startBalance} openingAdjust={d.openingAdjust ?? 0} calcLines={d.lines}
                 isPast={isPast} isToday={isToday} isCalendarSelected={isCalendarSelected}
                 onAddEvent={addEvent} onRemoveEvent={removeEvent} onSelectMonth={selectCalendarMonth}
               />

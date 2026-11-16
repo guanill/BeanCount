@@ -656,6 +656,9 @@ function LoanCard({ loan, onRefresh }: { loan: Loan; onRefresh: () => void }) {
               <div className="text-right shrink-0">
                 <p className="text-base font-bold text-red-400 tabular-nums">{formatCurrency(loan.balance)}</p>
                 <p className="text-[10px] text-foreground/30 tabular-nums">{formatCurrency(loan.monthly_payment)}/mo</p>
+                <p className="text-[10px] text-foreground/40">
+                  {loan.payment_day ? `Due the ${loan.payment_day}${[11, 12, 13].includes(loan.payment_day % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[loan.payment_day % 10] ?? "th"}` : "No due day set"}
+                </p>
               </div>
               <div className="flex items-center gap-0.5 shrink-0 ml-1">
                 <button onClick={startEdit}
