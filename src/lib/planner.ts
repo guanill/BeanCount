@@ -16,12 +16,22 @@ export interface RecurringChargeLike {
   paidOverride?: { month: string; paid: boolean };
 }
 
+export function isPaydayPaid(
+  day: number,
+  paidPaydays: number[],
+  unpaidPaydays: number[],
+  currentDay: number,
+): boolean {
+  return !unpaidPaydays.includes(day) && (paidPaydays.includes(day) || currentDay >= day);
+}
+
 export function togglePaydayStatus(
   day: number,
   paidPaydays: number[],
   unpaidPaydays: number[],
+  currentDay: number,
 ): { paidPaydays: number[]; unpaidPaydays: number[] } {
-  const isPaid = paidPaydays.includes(day) && !unpaidPaydays.includes(day);
+  const isPaid = isPaydayPaid(day, paidPaydays, unpaidPaydays, currentDay);
   return isPaid
     ? {
         paidPaydays: paidPaydays.filter(value => value !== day),

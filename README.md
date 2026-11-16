@@ -58,8 +58,11 @@ Overview asset totals and net worth while quotes are available. Apply
 Planner salary periods support monthly, twice-monthly, biweekly, and weekly
 pay schedules, optional payday numbers, actual paycheck withholding, and optional
 year-to-date gross pay and tax-withheld tracking
-percentage. The current-month planner card indicates whether the configured
-payday has arrived; the percentage is used for take-home projections. Recurring
+percentage. The current-month planner card assumes each paycheck is paid on its
+configured payday (the 15th by default); this does not verify a bank deposit.
+You can mark a paycheck paid early or mark it unpaid if it is late. These
+per-month overrides also apply to planner and tax projections. The withholding
+percentage is used for take-home projections. Recurring
 charges can likewise be auto-marked paid after their configured billing day,
 and the planner includes a day-level payment calendar.
 

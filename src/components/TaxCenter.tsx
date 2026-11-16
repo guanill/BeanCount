@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { getPlannerConfig, upsertPlannerConfig } from "@/lib/supabase/queries";
 import { formatCurrency } from "@/lib/format";
 import { computeAnnualTax, type FilingStatus } from "@/lib/tax";
+import { isPaydayPaid } from "@/lib/planner";
 
 interface TaxYearRecord {
   actualGrossIncome?: string;
@@ -57,6 +58,7 @@ type TaxInputKey = Exclude<keyof TaxYearRecord, "refundReceived" | "otherIncome"
 
 const CURRENT_YEAR = new Date().getFullYear();
 const CURRENT_MONTH = new Date().getMonth() + 1;
+const CURRENT_DAY = new Date().getDate();
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, index) => CURRENT_YEAR - 1 + index);
 
 function amount(value: string | undefined): number {
@@ -86,7 +88,7 @@ function paycheckPaid(period: NonNullable<TaxConfig["salaryPeriods"]>[number], y
   const key = `${year}-${String(month).padStart(2, "0")}`;
   const paid = period.paidPaydays?.[key] ?? [];
   const unpaid = period.unpaidPaydays?.[key] ?? [];
-  return paid.includes(day) && !unpaid.includes(day);
+  return isPaydayPaid(day, paid, unpaid, CURRENT_DAY);
 }
 
 function salaryReceivedToDate(periods: TaxConfig["salaryPeriods"], year: number): number {
