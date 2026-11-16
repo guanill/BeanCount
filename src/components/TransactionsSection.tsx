@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronLeft,
@@ -56,6 +56,7 @@ import {
 import { callEdgeFunction } from "@/lib/supabase/functions";
 import { useToast } from "./Toast";
 import ConfirmDialog from "./ConfirmDialog";
+import SpendingFlow from "./SpendingFlow";
 
 /* â"€â"€â"€ Donut chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
 interface DonutSegment { category: string; label: string; color: string; emoji: string; amount: number; }
@@ -610,10 +611,13 @@ export default function TransactionsSection() {
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary,      setSummary]      = useState<TransactionSummary | null>(null);
+  const [chartView, setChartView] = useState<"flow" | "donut">("flow");
   const [monthCoverage, setMonthCoverage] = useState<Record<number, number>>({});
   const [coverageLoading, setCoverageLoading] = useState(true);
   const [coverageError, setCoverageError] = useState(false);
   const [loading,  setLoading]  = useState(true);
+  const [transactionsError, setTransactionsError] = useState(false);
+  const fetchRequestId = useRef(0);
   const [syncing,  setSyncing]  = useState(false);
   const [syncMsg,  setSyncMsg]  = useState<string | null>(null);
   const [query,    setQuery]    = useState("");
@@ -668,30 +672,39 @@ export default function TransactionsSection() {
 
   /* â"€â"€ Data fetching â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
   const fetchTransactions = useCallback(async () => {
+    const requestId = ++fetchRequestId.current;
     setLoading(true);
+    setTransactionsError(false);
     try {
       const supabase = createClient();
       const filters: { month?: number; year?: number } = { year };
       if (viewMode === "month") filters.month = month;
       const data = await fetchTransactionsFromSupabase(supabase, filters);
+      if (requestId !== fetchRequestId.current) return;
       setTransactions(data.transactions ?? []);
       setSummary(data.summary ?? null);
       setCoverageLoading(true);
       setCoverageError(false);
       try {
-        setMonthCoverage(await getTransactionMonthCoverage(supabase, year));
+        const coverage = await getTransactionMonthCoverage(supabase, year);
+        if (requestId === fetchRequestId.current) setMonthCoverage(coverage);
       } catch (err) {
         console.error("Failed to fetch transaction month coverage:", err);
-        setCoverageError(true);
+        if (requestId === fetchRequestId.current) setCoverageError(true);
       } finally {
-        setCoverageLoading(false);
+        if (requestId === fetchRequestId.current) setCoverageLoading(false);
       }
     } catch (err) {
       console.error("Failed to fetch transactions:", err);
-      setCoverageError(true);
-      setCoverageLoading(false);
+      if (requestId === fetchRequestId.current) {
+        setTransactions([]);
+        setSummary(null);
+        setTransactionsError(true);
+        setCoverageError(true);
+        setCoverageLoading(false);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestId.current) setLoading(false);
     }
   }, [year, month, viewMode]);
 
@@ -1404,6 +1417,11 @@ export default function TransactionsSection() {
 
       {loading ? (
         <div className="text-center py-16 space-y-2"><span className="text-2xl animate-bounce inline-block">🫘</span><p className="text-foreground/30 text-sm">Loading transactions...</p></div>
+      ) : transactionsError ? (
+        <div role="alert" className="rounded-xl border border-red/30 p-6 text-center text-sm text-red">
+          Could not load transactions for this period.{" "}
+          <button type="button" onClick={() => void fetchTransactions()} className="underline">Try again</button>
+        </div>
       ) : transactions.length === 0 ? (
         <div className="rounded-2xl border border-border/30 p-16 text-center space-y-2">
           <div className="text-4xl mb-3">🫘</div>
@@ -1414,6 +1432,15 @@ export default function TransactionsSection() {
         <div className="space-y-4">
 
           {/* â"€â"€ Donut chart (full width) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+          <div className="flex w-fit items-center gap-1 rounded-xl border border-border/40 bg-background p-1 mx-auto" aria-label="Spending chart view">
+            {(["flow", "donut"] as const).map(chart => (
+              <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
+                className={`rounded-lg px-4 py-1.5 text-xs font-medium ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                {chart === "flow" ? "Income flow" : "Category donut"}
+              </button>
+            ))}
+          </div>
+          {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
           <div className="flex flex-col items-center gap-4">
             <div className="w-44 h-44 sm:w-56 sm:h-56">
               <SpendingDonut
@@ -1450,6 +1477,7 @@ export default function TransactionsSection() {
               )}
             </div>
           </div>
+          )}
 
           {/* â"€â"€ Category accordion + transaction list â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
           <div className="min-w-0 space-y-3">
