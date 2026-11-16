@@ -113,5 +113,7 @@ accounts; this does not run a bulk rewrite of existing transactions. Apply
 this feature. The keyword fallback also covers a broader set of merchants and
 transaction descriptions across the existing categories; transfers are
 classified as incoming or outgoing based on the transaction amount.
+Unrecognized or ambiguous descriptions remain in Other rather than being
+assigned a category based on a guess.
 
 Run the unit tests with `npm test` (Node 22+).
