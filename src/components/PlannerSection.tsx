@@ -173,6 +173,12 @@ const CUR_MONTH      = NOW.getMonth() + 1;
 const CUR_DAY        = NOW.getDate();
 const THIS_MONTH_KEY = `${CUR_YEAR}-${String(CUR_MONTH).padStart(2, "0")}`;
 
+function ordinalDay(day: number): string {
+  const mod100 = day % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${day}th`;
+  return `${day}${({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[day % 10] ?? "th"}`;
+}
+
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
 /** 1 → "1st", 2 → "2nd", 15 → "15th" … */
@@ -590,7 +596,7 @@ function MonthCard({
   vestEvents: VestEvent[];
   recurBonuses: RecurringBonus[];
   loanPaymentsTotal: number;
-  loanBreakdown: Array<{ id: string; name: string; amount: number }>;
+  loanBreakdown: Array<{ id: string; name: string; amount: number; day: number | null }>;
   spendBreakdown: Array<{ id: string; label: string; amount: number }>;
   scenarioEvents: ScenarioEvent[];
   projectedRefund: number; projectedTaxDue: number;
@@ -756,11 +762,18 @@ function MonthCard({
           <div className="relative group/lo px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
             <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Loans</div>
             <div className="text-[9px] sm:text-xs font-semibold text-accent/70 tabular-nums break-all leading-tight">−{formatCurrency(loanPaymentsTotal)}</div>
+                        {loanBreakdown.some(l => l.day) && (
+                          <div className="mt-0.5 space-y-0.5">
+                            {loanBreakdown.filter(l => l.day).map(l => (
+                              <div key={l.id} className="text-[8px] sm:text-[9px] text-foreground/40 truncate">{l.name}: {ordinalDay(l.day!)}</div>
+                            ))}
+                          </div>
+                        )}
             {loanBreakdown.length > 0 && (
               <div className="invisible group-hover/lo:visible opacity-0 group-hover/lo:opacity-100 transition-opacity absolute z-30 right-0 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[180px] space-y-1 pointer-events-none">
                 {loanBreakdown.map(l => (
                   <div key={l.id} className="flex items-center justify-between gap-3 text-[10px]">
-                    <span className="text-foreground/60 truncate">{l.name}</span>
+                    <span className="text-foreground/60 truncate">{l.name}{l.day ? ` · due ${ordinalDay(l.day)}` : ""}</span>
                     <span className="text-accent/80 font-semibold tabular-nums shrink-0">−{formatCurrency(l.amount)}</span>
                   </div>
                 ))}
@@ -1844,20 +1857,20 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   );
 
   const getLoanBreakdownForMonth = useCallback(
-    (y: number, m: number): Array<{ id: string; name: string; amount: number }> => {
-      const out: Array<{ id: string; name: string; amount: number }> = [];
+    (y: number, m: number): Array<{ id: string; name: string; amount: number; day: number | null }> => {
+      const out: Array<{ id: string; name: string; amount: number; day: number | null }> = [];
       for (const l of loans) {
         const ov = payoffOverrides[l.id];
         if (isLoanPayoffMonth(ov, y, m)) {
           const remaining = projectLoanBalanceAt(l, y, m);
-          if (remaining > 0) out.push({ id: l.id, name: `${l.name} (payoff)`, amount: remaining });
+          if (remaining > 0) out.push({ id: l.id, name: `${l.name} (payoff)`, amount: remaining, day: l.payment_day });
           continue;
         }
         if (isLoanPaidOffBy(ov, y, m)) continue;
         if (isAfterPayoff(naturalPayoffEnd[l.id], y, m)) continue;
         if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) continue;
         const amt = loanPaymentForMonth(l, y, m);
-        if (amt > 0) out.push({ id: l.id, name: l.name, amount: amt });
+        if (amt > 0) out.push({ id: l.id, name: l.name, amount: amt, day: l.payment_day });
       }
       return out;
     },
