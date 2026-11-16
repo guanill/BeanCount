@@ -12,6 +12,7 @@ import type {
   NetWorthSnapshot,
 } from "@/lib/types";
 import { applyMerchantCategoryRule, CATEGORIES, getCategoryMeta, guessCategory, normalizeMerchantKey, type TransactionType } from "@/lib/categories";
+import { collectPages } from "@/lib/pagination";
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
@@ -567,10 +568,10 @@ export async function getTransactions(
 ): Promise<{ transactions: Transaction[]; summary: TransactionSummary }> {
   let query = supabase
     .from("transactions")
-    .select("*")
+    .select("*", { count: "exact" })
     .order("date", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(500);
+    .order("id", { ascending: false });
 
   // Apply date filter
   if (filters.month && filters.year) {
@@ -599,8 +600,12 @@ export async function getTransactions(
     );
   }
 
-  const { data, error } = await query;
-  if (error) throw error;
+  const data = await collectPages<Transaction>(async (offset, pageSize) => {
+    const { data: page, count, error } = await query.range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    if (count === null) throw new Error("Could not count transactions for the selected period");
+    return { rows: page ?? [], count };
+  });
 
   // Map account + credit card names from separate lookups
   const accountIds = [...new Set((data ?? []).map((r: any) => r.account_id).filter(Boolean))];

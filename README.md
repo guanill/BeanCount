@@ -95,6 +95,13 @@ cleanup action for transactions with a Teller transaction ID, including rows
 whose original account has been deleted; it does not affect CSV/manual rows
 without a Teller ID.
 
+The Spending tab includes an income-flow diagram for the selected month or year,
+with recorded income sources on the left and spending categories on the right.
+It excludes ignored transactions and transfers. A shortfall means spending exceeds
+recorded income, while income less spending is not necessarily money saved. The
+diagram and summary cover the full selected period and do not change with list
+filters; use the chart selector to switch back to the category donut.
+
 When you change a transaction's category, BeanCount remembers that category for
 the normalized merchant on your user profile. It applies to future matching
 transactions from CSV imports, manual entries, Teller, and Plaid across your
