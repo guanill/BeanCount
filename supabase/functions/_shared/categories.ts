@@ -68,6 +68,14 @@ const TRANSFER_PATTERN = /zelle|venmo|cash.?app|paypal.?transfer|square.?cash|go
 
 /** Keyword-based fallback for manual transactions */
 const KEYWORD_RULES: Array<{ pattern: RegExp; category: string }> = [
+  // Specific merchant descriptors before the broader category rules.
+  { pattern: /\b(?:trip\.com|klook|airalo)\b/i, category: "travel" },
+  { pattern: /\b(?:mrt[\s-]*bem\b|tfl[\s-]+travel\b|toyota[\s-]*rent[\s-]*lease)/i, category: "transportation" },
+  { pattern: /\b(?:shopee(?:th)?|tiktok[\s-]*shop|brickseek(?:\.com)?)\b/i, category: "shopping" },
+  { pattern: /\b(?:tesco[\s-]*stores|thrive[\s-]*market)\b/i, category: "groceries" },
+  { pattern: /\blemonade[\s-]*insurance\b/i, category: "rent_and_utilities" },
+  { pattern: /\bcapital[\s-]*one[\s-]*member[\s-]*fee\b/i, category: "bank_fees" },
+
   // -- Income --
   { pattern: /salary|payroll|direct.?dep|paycheck|wages|commission|bonus.?pay|employer|reimbursement|tax.?refund|irs.?refund|dividend.?payment|interest.?payment|cashback.?reward/i, category: "income" },
 
@@ -148,6 +156,10 @@ export function guessCategory(name: string, amount: number, merchantName?: strin
   // Negative amount = credit (money coming in)
   if (amount < 0) return { category: "income", type: "income" };
 
+  if (targets.some(target => /^\s*offer\s*:/i.test(target))) {
+    return { category: "other", type: "expense" };
+  }
+
   // Test merchant name first (cleaner signal), then fall back to full description
   for (const target of targets) {
     for (const rule of KEYWORD_RULES) {
@@ -158,6 +170,20 @@ export function guessCategory(name: string, amount: number, merchantName?: strin
     }
   }
   return { category: "other", type: "expense" };
+}
+
+export function classifyPlaidFallback(
+  primary: string,
+  name: string,
+  amount: number,
+  merchantName?: string | null,
+): { category: string; type: TransactionType } {
+  const category = plaidCategoryToKey(primary);
+  if (category === "other") return guessCategory(name, amount, merchantName);
+  return {
+    category,
+    type: amount < 0 ? "income" : category.startsWith("transfer") ? "transfer" : "expense",
+  };
 }
 
 export function getCategoryMeta(key: string): CategoryMeta {

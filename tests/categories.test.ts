@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyMerchantCategoryRule, guessCategory, normalizeMerchantKey } from "../src/lib/categories.ts";
-import { guessCategory as guessEdgeCategory } from "../supabase/functions/_shared/categories.ts";
+import { classifyPlaidFallback, guessCategory as guessEdgeCategory } from "../supabase/functions/_shared/categories.ts";
 
 test("normalizes merchant names consistently", () => {
   assert.equal(normalizeMerchantKey("  ACME, Inc. #123  "), "acme inc 123");
@@ -62,4 +62,34 @@ test("classifies incoming and outgoing transfers by amount direction", () => {
     type: "transfer",
   });
   assert.equal(guessCategory("Wire transfer fee", 25).category, "bank_fees");
+});
+
+test("recognizes additional travel, retail, transit and billing descriptors", () => {
+  const examples = [
+    ["Trip.com", "travel"],
+    ["Klook Travel Technology", "travel"],
+    ["AIRALO", "travel"],
+    ["MRT-BEM", "transportation"],
+    ["TFL TRAVEL CH", "transportation"],
+    ["TOYOTARENTLEASEYAMANASHI", "transportation"],
+    ["SHOPEETH BANGKOK TH", "shopping"],
+    ["PAYPAL *TIKTOK SHOP", "shopping"],
+    ["BRICKSEEK.COM", "shopping"],
+    ["TESCO STORES", "groceries"],
+    ["THRIVE MARKET", "groceries"],
+    ["LEMONADE INSURANCE", "rent_and_utilities"],
+    ["CAPITAL ONE MEMBER FEE", "bank_fees"],
+    ["Unidentified merchant", "other"],
+    ["Offer:Airalo", "other"],
+  ] as const;
+  for (const [description, expected] of examples) {
+    assert.equal(guessCategory(description, 10).category, expected, description);
+    assert.equal(guessEdgeCategory(description, 10).category, expected, description);
+  }
+});
+
+test("Plaid falls back to merchant descriptions for unmapped categories", () => {
+  assert.deepEqual(classifyPlaidFallback("UNKNOWN", "Trip.com", 10), { category: "travel", type: "expense" });
+  assert.deepEqual(classifyPlaidFallback("", "Unidentified merchant", 10), { category: "other", type: "expense" });
+  assert.deepEqual(classifyPlaidFallback("GENERAL_MERCHANDISE", "Trip.com", 10), { category: "shopping", type: "expense" });
 });
