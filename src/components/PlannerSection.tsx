@@ -13,7 +13,7 @@ import {
 } from "@/lib/tax";
 import {
   chargeActiveInMonth, chargeEndMonth, chargePaidThisMonth, chargesForMonth,
-  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth, togglePaydayStatus,
+  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth, isPaydayPaid, togglePaydayStatus,
   loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt,
 } from "@/lib/planner";
 
@@ -358,8 +358,8 @@ function projectBalances(
       ? (activeSalary.payFrequency === "semimonthly" ? [activeSalary.payDay1 ?? 15, activeSalary.payDay2 ?? 30] : [activeSalary.payDay1 ?? 15])
       : [];
     const paidSalary = y === CUR_YEAR && m === CUR_MONTH
-      ? payDays.filter(day => !(activeSalary?.unpaidPaydays?.[monthKey] ?? []).includes(day) &&
-          (activeSalary?.paidPaydays?.[monthKey] ?? []).includes(day)).length *
+      ? payDays.filter(day => isPaydayPaid(day, activeSalary?.paidPaydays?.[monthKey] ?? [],
+          activeSalary?.unpaidPaydays?.[monthKey] ?? [], CUR_DAY)).length *
         (payDays.length > 0 ? netSalary / payDays.length : 0)
       : 0;
     const receivedRefundEventIds = new Set(Object.values(config.taxYearTracking ?? {})
@@ -662,18 +662,21 @@ function MonthCard({
         <div className="relative group/inc px-1.5 sm:px-3 py-1.5 sm:py-2 cursor-help">
           <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Income</div>
           <div className="text-[9px] sm:text-xs font-semibold text-green/80 tabular-nums break-all leading-tight">+{formatCurrency(Math.max(0, netSalary - salaryReceived) + projectedRefund)}</div>
-          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived >= netSalary ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? `Paid ${formatCurrency(salaryReceived)}` : salaryDue > salaryReceived ? `${formatCurrency(Math.max(0, salaryDue - salaryReceived))} income left` : "Income expected later"}</div>}
+          {isToday && salary > 0 && <div className={`text-[9px] mt-0.5 ${salaryReceived >= netSalary ? "text-green" : "text-foreground/35"}`}>{salaryReceived >= netSalary ? `Paid ${formatCurrency(salaryReceived)}` : salaryDue > 0 ? `${formatCurrency(salaryDue)} income left` : "Income expected later"}</div>}
           {isToday && paychecks.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {paychecks.map(paycheck => (
-                <button key={paycheck.id} type="button"
-                  aria-label={paycheck.paid ? `Mark ${paycheck.day} paycheck as unpaid` : `Mark ${paycheck.day} paycheck as paid`}
-                  title={paycheck.paid ? "Click to undo this paid mark" : "Mark this paycheck paid, including if it arrived early"}
-                  onClick={event => { event.stopPropagation(); onTogglePaycheck(paycheck.periodId, paycheck.day); }}
-                  className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
-                {paycheck.paid ? `${paycheck.day} paid` : `Mark ${paycheck.day} paid`}
-                </button>
-              ))}
+            <div className="mt-1">
+              <div className="flex flex-wrap gap-1">
+                {paychecks.map(paycheck => (
+                  <button key={paycheck.id} type="button"
+                    aria-label={paycheck.paid ? `Mark ${paycheck.day} paycheck as unpaid` : `Mark ${paycheck.day} paycheck as paid`}
+                    title={paycheck.paid ? "Paychecks are assumed paid on payday. Click to mark unpaid." : "Mark this paycheck paid, including if it arrived early"}
+                    onClick={event => { event.stopPropagation(); onTogglePaycheck(paycheck.periodId, paycheck.day); }}
+                    className={`rounded border px-1 py-0.5 text-[8px] ${paycheck.paid ? "border-green/30 text-green" : paycheck.due ? "border-accent/30 text-accent" : "border-border/20 text-foreground/25"}`}>
+                  {paycheck.paid ? `${paycheck.day} paid` : `Mark ${paycheck.day} paid`}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-[8px] text-foreground/40">Assumed paid on payday; tap to change.</div>
             </div>
           )}
           {salary > 0 && (
@@ -2143,7 +2146,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         if (period.id !== periodId) return period;
         const paid = period.paidPaydays?.[monthKey] ?? [];
         const unpaid = period.unpaidPaydays?.[monthKey] ?? [];
-        const status = togglePaydayStatus(day, paid, unpaid);
+        const status = togglePaydayStatus(day, paid, unpaid, CUR_DAY);
         return {
           ...period,
           paidPaydays: { ...(period.paidPaydays ?? {}), [monthKey]: status.paidPaydays },
@@ -2573,7 +2576,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                   const paid = period.paidPaydays?.[THIS_MONTH_KEY] ?? [];
                   const unpaid = period.unpaidPaydays?.[THIS_MONTH_KEY] ?? [];
                   return days.map(day => {
-                    const isPaid = paid.includes(day) && !unpaid.includes(day);
+                    const isPaid = isPaydayPaid(day, paid, unpaid, CUR_DAY);
                     return {
                     id: `${period.id}-${day}`,
                     periodId: period.id,
@@ -2587,7 +2590,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 })
               : [];
             const salaryReceived = currentMonthPaychecks.filter(p => p.paid).reduce((sum, p) => sum + p.amount, 0);
-            const salaryDue = currentMonthPaychecks.filter(p => p.due).reduce((sum, p) => sum + p.amount, 0);
+            const salaryDue = currentMonthPaychecks.filter(p => p.due && !p.paid).reduce((sum, p) => sum + p.amount, 0);
             const projectedRefund = Object.values(config.taxYearTracking ?? {})
               .filter(taxYear => !taxYear.refundReceived
                 && taxYear.expectedRefundDate?.startsWith(`${d.year}-${String(d.month).padStart(2, "0")}-`))
