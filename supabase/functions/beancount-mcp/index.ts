@@ -172,6 +172,28 @@ const TOOLS = [
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   },
+  {
+    name: "update_loan",
+    description:
+      "Update a loan's balance, monthly_payment, interest_rate, payment_day, original_amount, deferral_months, deferral_type, or notes. Identify by loan_id or loan_name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        loan_id: { type: "string", description: "Loan UUID (optional if loan_name is given)." },
+        loan_name: { type: "string", description: "Loan name (case-insensitive match)." },
+        balance: { type: "number", description: "Updated current loan balance." },
+        monthly_payment: { type: "number", description: "Updated monthly payment amount." },
+        interest_rate: { type: "number", description: "Updated APR percentage (e.g. 5.5 for 5.5%)." },
+        original_amount: { type: "number", description: "Updated original loan principal." },
+        payment_day: { type: "integer", minimum: 1, maximum: 31, description: "Day of month payment is due (1-31)." },
+        deferral_months: { type: "integer", minimum: 0, description: "Remaining deferral months." },
+        deferral_type: { type: "string", enum: ["subsidized", "unsubsidized"], description: "Loan deferral type." },
+        notes: { type: "string", description: "Updated notes." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  },
 ];
 
 async function authenticateRequest(req: Request): Promise<string | null> {
@@ -549,6 +571,82 @@ async function handleToolCall(
       if (insertErr) return errResult(`Failed to add transaction: ${insertErr.message}`);
 
       return okResult({ created: true, transaction: inserted });
+    }
+
+    case "update_loan": {
+      const updates: Record<string, unknown> = {};
+      for (const field of ["balance", "monthly_payment", "interest_rate", "original_amount"] as const) {
+        if (args[field] !== undefined) {
+          const val = Number(args[field]);
+          if (!Number.isFinite(val) || val < 0) {
+            return errResult(`${field} must be a non-negative number.`);
+          }
+          updates[field] = val;
+        }
+      }
+      if (args.payment_day !== undefined) {
+        const day = Number(args.payment_day);
+        if (!Number.isInteger(day) || day < 1 || day > 31) {
+          return errResult("payment_day must be an integer between 1 and 31.");
+        }
+        updates.payment_day = day;
+      }
+      if (args.deferral_months !== undefined) {
+        const months = Number(args.deferral_months);
+        if (!Number.isInteger(months) || months < 0) {
+          return errResult("deferral_months must be a non-negative integer.");
+        }
+        updates.deferral_months = months;
+      }
+      if (args.deferral_type !== undefined) {
+        if (args.deferral_type !== "subsidized" && args.deferral_type !== "unsubsidized") {
+          return errResult("deferral_type must be 'subsidized' or 'unsubsidized'.");
+        }
+        updates.deferral_type = args.deferral_type;
+      }
+      if (args.notes !== undefined) {
+        updates.notes = typeof args.notes === "string" ? args.notes : null;
+      }
+      if (Object.keys(updates).length === 0) {
+        return errResult(
+          "Provide at least one field to update (balance, monthly_payment, interest_rate, original_amount, payment_day, deferral_months, deferral_type, notes)."
+        );
+      }
+
+      const { data: loans, error: fetchErr } = await admin
+        .from("loans")
+        .select("id, name, type, balance, original_amount, interest_rate, monthly_payment, payment_day, deferral_months, deferral_type, notes")
+        .eq("user_id", userId);
+      if (fetchErr) return errResult(`Database error: ${fetchErr.message}`);
+
+      const resolved = resolveNamedEntity(
+        loans ?? [],
+        typeof args.loan_id === "string" ? args.loan_id : undefined,
+        typeof args.loan_name === "string" ? args.loan_name : undefined,
+        "loan"
+      );
+      if (!resolved.ok) return errResult(resolved.error);
+
+      const target = resolved.match;
+      const { data: updated, error: updateErr } = await admin
+        .from("loans")
+        .update(updates)
+        .eq("id", target.id)
+        .eq("user_id", userId)
+        .select("id, name, type, balance, original_amount, interest_rate, monthly_payment, payment_day, deferral_months, deferral_type, notes, updated_at")
+        .single();
+      if (updateErr) return errResult(`Failed to update loan: ${updateErr.message}`);
+
+      return okResult({
+        updated: true,
+        loan: updated,
+        previous: {
+          balance: Number(target.balance),
+          monthly_payment: Number(target.monthly_payment),
+          interest_rate: Number(target.interest_rate),
+          payment_day: target.payment_day,
+        },
+      });
     }
 
     default:
