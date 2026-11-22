@@ -117,3 +117,28 @@ Unrecognized or ambiguous descriptions remain in Other rather than being
 assigned a category based on a guess.
 
 Run the unit tests with `npm test` (Node 22+).
+
+## ChatGPT / MCP Integration
+
+BeanCount includes a remote MCP (Model Context Protocol) server as a Supabase Edge Function at
+`supabase/functions/beancount-mcp/index.ts`. It supports reading net worth, accounts, transactions,
+spending summaries, holdings, and loans, plus safe confirmation-gated updates (`update_account_balance`,
+`update_credit_card_balance`, `add_transaction`). It never exposes `integration_tokens` or delete actions.
+
+### Deploy & Connect to ChatGPT
+
+1. **Generate a secret token and set Supabase Edge Function secrets** (get your `user_id` from
+   Supabase Dashboard → Authentication → Users):
+   ```bash
+   supabase secrets set BEANCOUNT_MCP_TOKEN="<your-long-random-secret>"
+   supabase secrets set BEANCOUNT_MCP_USER_ID="<your-supabase-user-uuid>"
+   ```
+2. **Deploy the MCP Edge Function:**
+   ```bash
+   supabase functions deploy beancount-mcp --no-verify-jwt
+   ```
+3. **Add to ChatGPT:**
+   - Open ChatGPT → **Settings → Apps & Connectors → Create / Add Custom MCP** (enable Developer Mode if prompted).
+   - **Server URL:** `https://<YOUR_PROJECT_REF>.supabase.co/functions/v1/beancount-mcp`
+   - **Authentication:** Bearer token → paste your `BEANCOUNT_MCP_TOKEN` (or append `?token=<BEANCOUNT_MCP_TOKEN>` if your client does not support custom headers).
+   - Once connected, you can ask ChatGPT *"What's my net worth?"*, *"How much did I spend on groceries this month?"*, or *"Update my Chase Checking balance to $2,450"* (ChatGPT will ask you to confirm before writing, and your BeanCount dashboard updates live via Realtime).
