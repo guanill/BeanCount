@@ -22,7 +22,11 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const supabase = getSupabaseClient(req.headers.get("Authorization")!);
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    const supabase = getSupabaseClient(authHeader);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
@@ -50,18 +54,30 @@ serve(async (req) => {
     }
 
     let synced = 0;
+    const errors: string[] = [];
     for (const [accessToken, rows] of byToken.entries()) {
-      const res = await plaid.accountsBalanceGet({ access_token: accessToken });
-      for (const pa of res.data.accounts) {
-        const matched = rows.find((r) => r.plaid_account_id === pa.account_id);
-        if (!matched) continue;
-        const balance = pa.balances.current ?? pa.balances.available ?? 0;
-        await admin.from("accounts").update({ balance, plaid_last_synced: new Date().toISOString() }).eq("id", matched.id);
-        synced++;
+      try {
+        const res = await plaid.accountsBalanceGet({ access_token: accessToken });
+        for (const pa of res.data.accounts) {
+          const matched = rows.find((r) => r.plaid_account_id === pa.account_id);
+          if (!matched) continue;
+          const balance = pa.balances.current ?? pa.balances.available ?? 0;
+          await admin
+            .from("accounts")
+            .update({ balance, plaid_last_synced: new Date().toISOString() })
+            .eq("id", matched.id)
+            .eq("user_id", user.id);
+          synced++;
+        }
+      } catch (itemErr) {
+        errors.push((itemErr as Error).message || "Plaid item sync failed");
       }
     }
 
-    return new Response(JSON.stringify({ synced }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify(errors.length ? { synced, errors } : { synced }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import { DashboardData, NetWorthSnapshot } from "@/lib/types";
 import NetWorthHero from "./NetWorthHero";
 import AccountSection from "./AccountSection";
@@ -9,16 +10,23 @@ import CreditCardsSection from "./CreditCardsSection";
 import DebtsSection from "./DebtsSection";
 import AssetBreakdown from "./AssetBreakdown";
 import FinalTotals from "./FinalTotals";
-import TransactionsSection from "./TransactionsSection";
-import PlannerSection from "./PlannerSection";
-import TaxCenter from "./TaxCenter";
-import LoansSection from "./LoansSection";
 import LiabilitiesSection from "./LiabilitiesSection";
+import NetWorthHistory from "./NetWorthHistory";
+import TabErrorBoundary from "./TabErrorBoundary";
 import { RefreshCw, Bean, LayoutDashboard, Receipt, Sparkles, Landmark, Calculator, LogOut, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { getDashboardData } from "@/lib/supabase/queries";
-import { getNetWorthHistory, saveNetWorthSnapshot } from "@/lib/supabase/queries";
-import NetWorthHistory from "./NetWorthHistory";
+import { getDashboardData, getNetWorthHistory, saveNetWorthSnapshot } from "@/lib/supabase/queries";
+
+const TabLoader = () => (
+  <div className="py-16 flex items-center justify-center text-sm text-foreground/50">
+    Loading...
+  </div>
+);
+
+const TransactionsSection = dynamic(() => import("./TransactionsSection"), { loading: TabLoader });
+const PlannerSection = dynamic(() => import("./PlannerSection"), { loading: TabLoader });
+const TaxCenter = dynamic(() => import("./TaxCenter"), { loading: TabLoader });
+const LoansSection = dynamic(() => import("./LoansSection"), { loading: TabLoader });
 
 type View = "overview" | "spending" | "planner" | "tax" | "loans";
 const VIEWS: View[] = ["overview", "spending", "planner", "tax", "loans"];
@@ -39,6 +47,12 @@ export default function Dashboard() {
   const [stockHoldingsValue, setStockHoldingsValue] = useState<number | null>(null);
   const [cryptoHoldingsValue, setCryptoHoldingsValue] = useState<number | null>(null);
   const [netWorthHistory, setNetWorthHistory] = useState<NetWorthSnapshot[]>([]);
+  const [spendingMounted, setSpendingMounted] = useState(() => readViewFromHash() === "spending");
+  const lastSavedSnapshotKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (view === "spending") setSpendingMounted(true);
+  }, [view]);
 
   // Sync view → URL hash, and respond to back/forward navigation.
   useEffect(() => {
@@ -83,31 +97,39 @@ export default function Dashboard() {
     fetchData();
   }, [fetchData]);
 
-  // Realtime: auto-refresh when any table changes
+  // Realtime: auto-refresh when any overview table changes (debounced to avoid refetch storms)
   useEffect(() => {
     const supabase = createClient();
     const tables = [
       "accounts",
       "credit_cards",
-      "transactions",
       "debts_owed",
       "liabilities",
       "loans",
       "stock_holdings",
       "planner_configs",
     ];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        fetchData();
+      }, 500);
+    };
     const channel = supabase.channel("dashboard-realtime");
     for (const table of tables) {
-      channel.on("postgres_changes" as any, { event: "*", schema: "public", table }, () => {
-        fetchData();
-      });
+      channel.on("postgres_changes" as any, { event: "*", schema: "public", table }, scheduleRefresh);
     }
     channel.subscribe((status, err) => {
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
         console.error("Dashboard realtime channel error:", err ?? status);
       }
     });
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (timer) clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
   }, [fetchData]);
 
   const handleRefresh = () => {
@@ -127,6 +149,35 @@ export default function Dashboard() {
   const effectiveNetWorth = data
     ? data.totals.netWorth - data.totals.stockTotal - data.totals.cryptoTotal + effectiveStockTotal + effectiveCryptoTotal
     : 0;
+
+  // Keep today's net worth snapshot synced when live stock/crypto quotes arrive.
+  useEffect(() => {
+    if (!data) return;
+    if (stockHoldingsValue === null && cryptoHoldingsValue === null) return;
+    const key = [
+      effectiveNetWorth.toFixed(2),
+      effectiveAssetsTotal.toFixed(2),
+      effectiveStockTotal.toFixed(2),
+      effectiveCryptoTotal.toFixed(2),
+    ].join("|");
+    if (lastSavedSnapshotKey.current === key) return;
+    const timer = setTimeout(async () => {
+      try {
+        const supabase = createClient();
+        await saveNetWorthSnapshot(supabase, {
+          net_worth: effectiveNetWorth,
+          assets_total: effectiveAssetsTotal,
+          stock_total: effectiveStockTotal,
+          crypto_total: effectiveCryptoTotal,
+        });
+        lastSavedSnapshotKey.current = key;
+        setNetWorthHistory(await getNetWorthHistory(supabase));
+      } catch (historyError) {
+        console.error("Failed to sync live net worth snapshot:", historyError);
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [data, stockHoldingsValue, cryptoHoldingsValue, effectiveNetWorth, effectiveAssetsTotal, effectiveStockTotal, effectiveCryptoTotal]);
 
   if (loading) {
     return (
@@ -250,6 +301,7 @@ export default function Dashboard() {
               netWorth={effectiveNetWorth}
               assetsTotal={effectiveAssetsTotal}
               creditCardDebt={data.totals.creditCardDebt}
+              liabilitiesTotal={data.totals.liabilitiesTotal}
             />
             <NetWorthHistory snapshots={netWorthHistory} />
 
@@ -331,14 +383,30 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* Keep TransactionsSection mounted to preserve state across tab switches */}
-        <div className={view === "spending" ? "" : "hidden"}>
-          <TransactionsSection />
-        </div>
+        {/* Lazy-load TransactionsSection on first visit, then keep mounted to preserve filter state */}
+        {spendingMounted && (
+          <div className={view === "spending" ? "" : "hidden"}>
+            <TabErrorBoundary name="Spending">
+              <TransactionsSection />
+            </TabErrorBoundary>
+          </div>
+        )}
 
-        {view === "loans" && <LoansSection />}
-        {view === "planner" && <PlannerSection netWorth={effectiveNetWorth} stockTotal={effectiveStockTotal} loans={data.loans} />}
-        {view === "tax" && <TaxCenter />}
+        {view === "loans" && (
+          <TabErrorBoundary name="Loans">
+            <LoansSection />
+          </TabErrorBoundary>
+        )}
+        {view === "planner" && (
+          <TabErrorBoundary name="Planner">
+            <PlannerSection netWorth={effectiveNetWorth} stockTotal={effectiveStockTotal} loans={data.loans} />
+          </TabErrorBoundary>
+        )}
+        {view === "tax" && (
+          <TabErrorBoundary name="Tax Center">
+            <TaxCenter />
+          </TabErrorBoundary>
+        )}
 
         {/* Footer */}
         <footer className="text-center py-6 text-foreground/20 text-xs">

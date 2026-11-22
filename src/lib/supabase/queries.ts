@@ -23,22 +23,6 @@ export async function getDashboardData(
     supabase
       .from("accounts")
       .select("*")
-      .eq("type", "bank")
-      .order("balance", { ascending: false }),
-    supabase
-      .from("accounts")
-      .select("*")
-      .eq("type", "stock")
-      .order("balance", { ascending: false }),
-    supabase
-      .from("accounts")
-      .select("*")
-      .eq("type", "crypto")
-      .order("balance", { ascending: false }),
-    supabase
-      .from("accounts")
-      .select("*")
-      .eq("type", "cash")
       .order("balance", { ascending: false }),
     supabase
       .from("credit_cards")
@@ -56,19 +40,14 @@ export async function getDashboardData(
     supabase.from("loans").select("*").order("balance", { ascending: false }),
   ]);
   const queryNames = [
-    "bank accounts",
-    "stock accounts",
-    "crypto accounts",
-    "cash accounts",
+    "accounts",
     "credit cards",
     "debts owed",
-    "liabilities", "loans",
+    "liabilities",
+    "loans",
   ];
   const [
-    { data: bankAccounts },
-    { data: stockAccounts },
-    { data: cryptoAccounts },
-    { data: cashAccounts },
+    { data: allAccounts },
     { data: creditCards },
     { data: debtsOwed },
     { data: liabilities },
@@ -82,10 +61,17 @@ export async function getDashboardData(
     }
   }
 
-  const bank = (bankAccounts ?? []) as Account[];
-  const stock = (stockAccounts ?? []) as Account[];
-  const crypto = (cryptoAccounts ?? []) as Account[];
-  const cash = (cashAccounts ?? []) as Account[];
+  const accountsList = (allAccounts ?? []) as Account[];
+  const bank: Account[] = [];
+  const stock: Account[] = [];
+  const crypto: Account[] = [];
+  const cash: Account[] = [];
+  for (const account of accountsList) {
+    if (account.type === "bank") bank.push(account);
+    else if (account.type === "stock") stock.push(account);
+    else if (account.type === "crypto") crypto.push(account);
+    else if (account.type === "cash") cash.push(account);
+  }
   const cards = (creditCards ?? []) as CreditCard[];
   const debts = (debtsOwed ?? []) as DebtOwed[];
   const liabs = (liabilities ?? []) as Liability[];

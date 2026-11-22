@@ -11,6 +11,7 @@ import { getSupabaseClient } from "../_shared/supabase.ts";
 
 const JSON_HEADERS = { ...corsHeaders, "Content-Type": "application/json" };
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+const PROVIDER_TIMEOUT_MS = 5000;
 
 type AssetClass = "stock" | "crypto";
 
@@ -24,7 +25,10 @@ interface Quote {
 function yahoo(host: string) {
   return async function fromYahoo(symbol: string): Promise<Quote | null> {
     const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
-    const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const json = await res.json();
     const meta = json?.chart?.result?.[0]?.meta;
@@ -50,7 +54,10 @@ function money(v: unknown): number {
 function nasdaq(assetclass: "stocks" | "etf") {
   return async function fromNasdaq(symbol: string): Promise<Quote | null> {
     const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/info?assetclass=${assetclass}`;
-    const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const json = await res.json();
     const primary = json?.data?.primaryData;
@@ -82,7 +89,10 @@ function nasdaq(assetclass: "stocks" | "etf") {
  *  The stock providers have no crypto coverage at all, hence a separate family. */
 async function coinbase(symbol: string): Promise<Quote | null> {
   const url = `https://api.coinbase.com/v2/prices/${encodeURIComponent(symbol)}-USD/spot`;
-  const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+  });
   if (!res.ok) return null;
   const json = await res.json();
   const price = Number(json?.data?.amount);
