@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { applyMerchantCategoryRule, CATEGORIES, getCategoryMeta, guessCategory, normalizeMerchantKey, type TransactionType } from "@/lib/categories";
 import { collectPages } from "@/lib/pagination";
+import { canDeleteSplitOriginal } from "@/lib/transactions";
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
@@ -904,6 +905,7 @@ export async function updateTransaction(
   id: string,
   updates: Partial<{
     name: string;
+    merchant_name: string | null;
     category: string;
     transaction_type: string;
     amount: number;
@@ -925,9 +927,14 @@ export async function updateTransaction(
     }
   }
 
+  const payload =
+    updates.name !== undefined && updates.merchant_name === undefined
+      ? { ...updates, merchant_name: updates.name }
+      : updates;
+
   const { data, error } = await supabase
     .from("transactions")
-    .update(updates)
+    .update(payload)
     .eq("id", id)
     .select()
     .single();
@@ -971,31 +978,65 @@ export async function splitTransaction(
     .single();
   if (fetchError) throw fetchError;
 
-  // Mark original as ignored
-  const notes = original.notes
-    ? `${original.notes} [split]`
-    : "[split]";
-  await supabase
-    .from("transactions")
-    .update({ is_ignored: true, notes })
-    .eq("id", id);
-
-  // Create two new transactions
+  // Create two new transactions first so a failed insert never hides/deletes the original
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
   const base = {
     user_id: user.id,
-    account_id: original.account_id,
+    account_id: original.account_id ?? null,
+    credit_card_id: original.credit_card_id ?? null,
+    source_name: original.source_name ?? null,
     date: original.date,
     is_manual: true,
-    merchant_name: original.merchant_name,
   };
 
+  const toSignedAmount = (amount: number, type: string) =>
+    type === "income" ? -Math.abs(amount) : Math.abs(amount);
+
+  const nameA = a.name.trim() || original.merchant_name || original.name;
+  const nameB = b.name.trim() || original.merchant_name || original.name;
+
   const { error: insertError } = await supabase.from("transactions").insert([
-    { ...base, name: a.name, amount: a.amount, category: a.category, transaction_type: a.transaction_type },
-    { ...base, name: b.name, amount: b.amount, category: b.category, transaction_type: b.transaction_type },
+    {
+      ...base,
+      name: nameA,
+      merchant_name: nameA,
+      amount: toSignedAmount(a.amount, a.transaction_type),
+      category: a.category,
+      transaction_type: a.transaction_type,
+    },
+    {
+      ...base,
+      name: nameB,
+      merchant_name: nameB,
+      amount: toSignedAmount(b.amount, b.transaction_type),
+      category: b.category,
+      transaction_type: b.transaction_type,
+    },
   ]);
   if (insertError) throw insertError;
+
+  // Remove purely manual originals; keep imported/synced originals ignored with [split]
+  // so re-importing the same CSV or syncing bank feeds won't re-create duplicates.
+  if (canDeleteSplitOriginal(original)) {
+    const { error: deleteError } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", id);
+    if (deleteError) throw deleteError;
+  } else {
+    const existingNotes = (original.notes ?? "").trim();
+    const notes = existingNotes.includes("[split]")
+      ? existingNotes
+      : existingNotes
+        ? `${existingNotes} [split]`
+        : "[split]";
+    const { error: updateError } = await supabase
+      .from("transactions")
+      .update({ is_ignored: true, notes })
+      .eq("id", id);
+    if (updateError) throw updateError;
+  }
 }
 
 // ─── Planner Config ──────────────────────────────────────────────────────────

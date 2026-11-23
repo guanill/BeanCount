@@ -37,6 +37,12 @@ const MONTHS = [
 import { CATEGORIES, getCategoryMeta } from "@/lib/categories";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { detectCsvImportSource } from "@/lib/csv-source-detection";
+import {
+  defaultSplitNames,
+  filterVisibleTransactions,
+  sumActiveAmount,
+  sumActiveExpenses,
+} from "@/lib/transactions";
 import { createClient } from "@/lib/supabase/client";
 import {
   getTransactions as fetchTransactionsFromSupabase,
@@ -342,11 +348,12 @@ function TransactionDetailPanel({
 
   // Split state
   const origAmt = Math.abs(tx.amount);
-  const [splitAName, setSplitAName] = useState(tx.merchant_name || tx.name);
+  const initialSplitNames = defaultSplitNames(tx.merchant_name || tx.name);
+  const [splitAName, setSplitAName] = useState(initialSplitNames.yourPart);
   const [splitAAmt,  setSplitAAmt]  = useState((origAmt / 2).toFixed(2));
   const [splitACat,  setSplitACat]  = useState(tx.category);
   const [splitAType, setSplitAType] = useState(tx.transaction_type);
-  const [splitBName, setSplitBName] = useState(tx.merchant_name || tx.name);
+  const [splitBName, setSplitBName] = useState(initialSplitNames.otherPart);
   const [splitBCat,  setSplitBCat]  = useState(tx.category);
 
   const splitBAmtNum = Math.max(0, origAmt - parseFloat(splitAAmt || "0"));
@@ -366,7 +373,7 @@ function TransactionDetailPanel({
     setSaving(true);
     try {
       const updates: Record<string, string | number> = {
-        name: editName, category: editCategory, transaction_type: editType, notes: editNotes,
+        name: editName, merchant_name: editName, category: editCategory, transaction_type: editType, notes: editNotes,
       };
       if (tx.is_manual) {
         const n = parseFloat(editAmount);
@@ -533,11 +540,11 @@ function TransactionDetailPanel({
                 </button>
               </div>
               <div className="px-4 py-3 space-y-3 max-h-96 overflow-y-auto">
-                <p className="text-xs text-foreground/40">Original will be ignored; two new transactions created.</p>
+                <p className="text-xs text-foreground/40">Original will be replaced by these two split transactions.</p>
 
                 {/* Part A */}
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-foreground/50 uppercase tracking-wider">Part A</p>
+                  <p className="text-xs font-semibold text-foreground/50 uppercase tracking-wider">Part A (Your part)</p>
                   <input type="text" placeholder="Name" value={splitAName} onChange={e => setSplitAName(e.target.value)}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent" />
                   <div className="flex gap-2">
@@ -554,7 +561,7 @@ function TransactionDetailPanel({
 
                 {/* Part B */}
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-foreground/50 uppercase tracking-wider">Part B</p>
+                  <p className="text-xs font-semibold text-foreground/50 uppercase tracking-wider">Part B (Other part)</p>
                   <input type="text" placeholder="Name" value={splitBName} onChange={e => setSplitBName(e.target.value)}
                     className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent" />
                   <div className="flex gap-2">
@@ -797,12 +804,15 @@ export default function TransactionsSection() {
   }, [importRows]);
 
   /* â"€â"€ Group transactions by category (client-side) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
-  // Recurring detection (memoized on full transaction list)
-  const recurringIds = useMemo(() => detectRecurringIds(transactions), [transactions]);
+  // Hide original imported rows that were replaced by a split
+  const visibleTransactions = useMemo(() => filterVisibleTransactions(transactions), [transactions]);
+
+  // Recurring detection (memoized on visible transaction list)
+  const recurringIds = useMemo(() => detectRecurringIds(visibleTransactions), [visibleTransactions]);
 
   // Client-side filtered list: search + type + category + amount + date + recurring
   const filtered = useMemo(() => {
-    let list = transactions;
+    let list = visibleTransactions;
     if (typeFilter !== "all") list = list.filter(t => t.transaction_type === typeFilter);
     if (catFilter) list = list.filter(t => t.category === catFilter);
     if (recurringOnly) list = list.filter(t => recurringIds.has(t.id));
@@ -823,9 +833,9 @@ export default function TransactionsSection() {
     if (dateFrom) list = list.filter(t => t.date >= dateFrom);
     if (dateTo) list = list.filter(t => t.date <= dateTo);
     return [...list].sort((a, b) => b.date.localeCompare(a.date));
-  }, [transactions, typeFilter, catFilter, query, minAmount, maxAmount, dateFrom, dateTo, recurringOnly, recurringIds]);
+  }, [visibleTransactions, typeFilter, catFilter, query, minAmount, maxAmount, dateFrom, dateTo, recurringOnly, recurringIds]);
 
-  // Grouped by category (from filtered - used in accordion)
+  // Grouped by category (from filtered - used in accordion; totals exclude ignored transactions)
   const grouped = useMemo(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of filtered) {
@@ -836,7 +846,7 @@ export default function TransactionsSection() {
     return Array.from(map.entries())
       .map(([cat, txs]) => {
         const meta  = getCategoryMeta(cat);
-        const total = txs.reduce((s, t) => s + Math.abs(t.amount), 0);
+        const total = sumActiveAmount(txs);
         return { cat, meta, txs, total };
       })
       .sort((a, b) => b.total - a.total);
@@ -1488,10 +1498,10 @@ export default function TransactionsSection() {
               {(["all", "expense", "income", "transfer"] as const).map(t => {
                 const labels: Record<string, string> = { all: "All", expense: "💸 Expenses", income: "💰 Income", transfer: "🔄 Transfers" };
                 const counts: Record<string, number> = {
-                  all: transactions.length,
-                  expense:  transactions.filter(x => x.transaction_type === "expense").length,
-                  income:   transactions.filter(x => x.transaction_type === "income").length,
-                  transfer: transactions.filter(x => x.transaction_type === "transfer").length,
+                  all: visibleTransactions.length,
+                  expense:  visibleTransactions.filter(x => x.transaction_type === "expense").length,
+                  income:   visibleTransactions.filter(x => x.transaction_type === "income").length,
+                  transfer: visibleTransactions.filter(x => x.transaction_type === "transfer").length,
                 };
                 return (
                   <button key={t} onClick={() => setTypeFilter(t)}
@@ -1601,7 +1611,7 @@ export default function TransactionsSection() {
                 <div className="px-4 py-2 border-b border-border/20 flex items-center justify-between">
                   <span className="text-xs text-foreground/40">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
                   <span className="text-xs text-foreground/40 tabular-nums">
-                    {formatCurrency(filtered.filter(t => t.transaction_type === "expense").reduce((s, t) => s + Math.abs(t.amount), 0))} spent
+                    {formatCurrency(sumActiveExpenses(filtered))} spent
                   </span>
                 </div>
                 <div className="divide-y-0">
@@ -1670,9 +1680,9 @@ export default function TransactionsSection() {
             )}
 
             <p className="text-center text-xs text-foreground/20 pt-1">
-              {filtered.length === transactions.length
-                ? `${transactions.length} transaction${transactions.length !== 1 ? "s" : ""} · ${grouped.length} ${grouped.length !== 1 ? "categories" : "category"}`
-                : `${filtered.length} of ${transactions.length} shown`
+              {filtered.length === visibleTransactions.length
+                ? `${visibleTransactions.length} transaction${visibleTransactions.length !== 1 ? "s" : ""} · ${grouped.length} ${grouped.length !== 1 ? "categories" : "category"}`
+                : `${filtered.length} of ${visibleTransactions.length} shown`
               }
             </p>
           </div>

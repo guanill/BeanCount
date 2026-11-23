@@ -1767,6 +1767,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         .from("transactions")
         .select("name, merchant_name, date")
         .eq("transaction_type", "expense")
+        .eq("is_ignored", false)
         .gte("date", `${prefix}-01`)
         .lt("date", `${CUR_YEAR}-${pad(CUR_MONTH + 1 > 12 ? 1 : CUR_MONTH + 1)}-01`);
       const txs = data ?? [];
@@ -1902,6 +1903,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         .from("transactions")
         .select("name, merchant_name, amount, date, transaction_type")
         .eq("transaction_type", "expense")
+        .eq("is_ignored", false)
         .order("date", { ascending: false })
         .limit(500);
       const txs = (data ?? []) as Array<{ name: string; merchant_name: string | null; amount: number; date: string; transaction_type: string }>;
