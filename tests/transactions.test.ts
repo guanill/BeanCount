@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  attachRefundTag,
   canDeleteSplitOriginal,
   defaultSplitNames,
   filterVisibleTransactions,
   isSplitOriginal,
+  parseRefundLink,
   partitionVisibleTransactions,
+  rankRefundCandidates,
+  removeRefundTag,
+  stripRefundTag,
   sumActiveAmount,
   sumActiveExpenses,
 } from "../src/lib/transactions.ts";
@@ -107,5 +112,102 @@ test("canDeleteSplitOriginal only deletes purely manual transactions", () => {
       teller_transaction_id: null,
     }),
     false,
+  );
+});
+
+test("refund tag helpers attach, parse, strip, and remove cleanly without losing user notes", () => {
+  const tagged = attachRefundTag("Order #1234", {
+    role: "original",
+    partnerId: "tx-refund-1",
+    partnerDate: "2026-11-18",
+    partnerName: "Amazon: Refund [Prime]",
+  });
+
+  const parsed = parseRefundLink(tagged);
+  assert.deepEqual(parsed, {
+    role: "original",
+    partnerId: "tx-refund-1",
+    partnerDate: "2026-11-18",
+    partnerName: "Amazon Refund [Prime",
+  });
+  assert.equal(stripRefundTag(tagged), "Order #1234");
+  assert.equal(removeRefundTag(tagged), "Order #1234");
+  assert.equal(
+    removeRefundTag(
+      attachRefundTag(null, {
+        role: "refund",
+        partnerId: "tx-orig-1",
+        partnerDate: "2026-11-14",
+        partnerName: "Amazon",
+      }),
+    ),
+    null,
+  );
+});
+
+test("rankRefundCandidates prioritizes exact opposite-type merchant matches and excludes ignored rows", () => {
+  const purchase = {
+    id: "orig",
+    name: "Amazon Marketplace",
+    merchant_name: "Amazon",
+    amount: 49.99,
+    date: "2026-11-10",
+    transaction_type: "expense",
+    is_ignored: false,
+    notes: null,
+  };
+
+  const exactRefund = {
+    id: "ref-exact",
+    name: "Amazon Refund",
+    merchant_name: "Amazon",
+    amount: -49.99,
+    date: "2026-11-14",
+    transaction_type: "income",
+    is_ignored: false,
+    notes: null,
+  };
+  const partialRefund = {
+    id: "ref-partial",
+    name: "Amazon Partial",
+    merchant_name: "Amazon",
+    amount: -20,
+    date: "2026-11-15",
+    transaction_type: "income",
+    is_ignored: false,
+    notes: null,
+  };
+  const unrelated = {
+    id: "other",
+    name: "Starbucks",
+    merchant_name: "Starbucks",
+    amount: 6.5,
+    date: "2026-11-11",
+    transaction_type: "expense",
+    is_ignored: false,
+    notes: null,
+  };
+  const alreadyIgnored = {
+    id: "ign",
+    name: "Amazon",
+    merchant_name: "Amazon",
+    amount: -49.99,
+    date: "2026-11-12",
+    transaction_type: "income",
+    is_ignored: true,
+    notes: null,
+  };
+
+  const ranked = rankRefundCandidates(purchase, [
+    purchase,
+    unrelated,
+    alreadyIgnored,
+    partialRefund,
+    exactRefund,
+  ]);
+
+  assert.deepEqual(
+    ranked.map((t) => t.id),
+    ["ref-exact", "ref-partial", "other"],
   );
 });

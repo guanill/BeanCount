@@ -27,6 +27,7 @@ import {
   MessageSquare,
   Filter,
   Upload,
+  RotateCcw,
 } from "lucide-react";
 import { Account, CreditCard, Transaction } from "@/lib/types";
 
@@ -38,8 +39,12 @@ import { CATEGORIES, getCategoryMeta } from "@/lib/categories";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { detectCsvImportSource } from "@/lib/csv-source-detection";
 import {
+  attachRefundTag,
   defaultSplitNames,
+  parseRefundLink,
   partitionVisibleTransactions,
+  rankRefundCandidates,
+  stripRefundTag,
   sumActiveAmount,
   sumActiveExpenses,
 } from "@/lib/transactions";
@@ -50,6 +55,9 @@ import {
   updateTransaction,
   deleteTransaction,
   splitTransaction,
+  findRefundCandidates,
+  linkRefundTransactions,
+  unlinkRefundTransactions,
   getAccounts,
   getCreditCards,
   getTransactionMonthCoverage,
@@ -260,6 +268,8 @@ function TxRow({
   const isIncome  = tx.transaction_type === "income";
   const isIgnored = tx.is_ignored;
   const displayAmt = Math.abs(tx.amount);
+  const refundLink = parseRefundLink(tx.notes);
+  const cleanNotes = stripRefundTag(tx.notes);
 
   return (
     <div
@@ -296,9 +306,19 @@ function TxRow({
           </select>
           {tx.account_name && <span className="text-[10px] sm:text-xs text-foreground/30 truncate max-w-24 sm:max-w-40">{tx.account_name}</span>}
           {isRecurring && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-purple-400/70"><Repeat className="w-2.5 h-2.5" /> recurring</span>}
-          {isIgnored && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>}
+          {refundLink ? (
+            <span
+              title={`${refundLink.role === "original" ? "Refunded by" : "Refund for"} ${refundLink.partnerName} (${formatDate(refundLink.partnerDate)})`}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400 text-[10px] sm:text-xs"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              {refundLink.role === "original" ? "Refunded" : "Refund"}
+            </span>
+          ) : (
+            isIgnored && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/30"><EyeOff className="w-2.5 h-2.5" /> ignored</span>
+          )}
           {tx.is_manual && <span className="text-[10px] sm:text-xs text-foreground/25">manual</span>}
-          {tx.notes && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/25 italic truncate max-w-20 sm:max-w-32"><MessageSquare className="w-2.5 h-2.5 shrink-0" />{tx.notes}</span>}
+          {cleanNotes && <span className="flex items-center gap-0.5 text-[10px] sm:text-xs text-foreground/25 italic truncate max-w-20 sm:max-w-32"><MessageSquare className="w-2.5 h-2.5 shrink-0" />{cleanNotes}</span>}
         </div>
       </div>
 
@@ -321,29 +341,37 @@ interface SplitPart { name: string; amount: string; category: string; transactio
 
 function TransactionDetailPanel({
   tx,
+  candidates,
   onClose,
   onSave,
   onIgnore,
   onSplit,
+  onLinkRefund,
+  onUnlinkRefund,
   onDelete,
 }: {
   tx: Transaction;
+  candidates: Transaction[];
   onClose: () => void;
   onSave: (id: string, updates: Record<string, string | number>) => Promise<void>;
   onIgnore: (id: string, ignore: boolean) => Promise<void>;
   onSplit: (id: string, a: SplitPart, b: SplitPart) => Promise<void>;
+  onLinkRefund: (txId: string, partnerId: string, createNetDifference: boolean) => Promise<void>;
+  onUnlinkRefund: (txId: string) => Promise<void>;
   onDelete: (id: string) => void;
 }) {
   const meta = getCategoryMeta(tx.category);
   const isIgnored = tx.is_ignored;
-  const [mode, setMode] = useState<"view" | "edit" | "split">("view");
+  const refundLink = parseRefundLink(tx.notes);
+  const cleanNotes = stripRefundTag(tx.notes);
+  const [mode, setMode] = useState<"view" | "edit" | "split" | "refund">("view");
   const [saving, setSaving] = useState(false);
 
   // Edit state
   const [editName,     setEditName]     = useState(tx.merchant_name || tx.name);
   const [editCategory, setEditCategory] = useState(tx.category);
   const [editType,     setEditType]     = useState(tx.transaction_type);
-  const [editNotes,    setEditNotes]    = useState(tx.notes ?? "");
+  const [editNotes,    setEditNotes]    = useState(cleanNotes);
   const [editAmount,   setEditAmount]   = useState(String(Math.abs(tx.amount)));
 
   // Split state
@@ -355,6 +383,46 @@ function TransactionDetailPanel({
   const [splitAType, setSplitAType] = useState(tx.transaction_type);
   const [splitBName, setSplitBName] = useState(initialSplitNames.otherPart);
   const [splitBCat,  setSplitBCat]  = useState(tx.category);
+
+  // Refund link state
+  const [refundQuery, setRefundQuery] = useState("");
+  const [remoteCandidates, setRemoteCandidates] = useState<Transaction[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
+  const [createNetDiff, setCreateNetDiff] = useState(true);
+
+  useEffect(() => {
+    if (mode !== "refund") return;
+    let active = true;
+    setLoadingCandidates(true);
+    findRefundCandidates(createClient(), { id: tx.id, date: tx.date })
+      .then(rows => { if (active) setRemoteCandidates(rows); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoadingCandidates(false); });
+    return () => { active = false; };
+  }, [mode, tx.id, tx.date]);
+
+  const rankedRefundCandidates = useMemo(() => {
+    const byId = new Map<string, Transaction>();
+    for (const c of candidates) byId.set(c.id, c);
+    for (const c of remoteCandidates) if (!byId.has(c.id)) byId.set(c.id, c);
+    const ranked = rankRefundCandidates(tx, Array.from(byId.values()));
+    if (!refundQuery.trim()) return ranked.slice(0, 30);
+    const q = refundQuery.toLowerCase();
+    return ranked.filter(c =>
+      (c.merchant_name || c.name).toLowerCase().includes(q) ||
+      c.date.includes(q) ||
+      Math.abs(c.amount).toFixed(2).includes(q)
+    ).slice(0, 30);
+  }, [candidates, remoteCandidates, tx, refundQuery]);
+
+  const selectedPartner = useMemo(
+    () => rankedRefundCandidates.find(c => c.id === selectedPartnerId) ?? null,
+    [rankedRefundCandidates, selectedPartnerId],
+  );
+  const partialDiff = selectedPartner
+    ? Math.round(Math.abs(Math.abs(tx.amount) - Math.abs(selectedPartner.amount)) * 100) / 100
+    : 0;
 
   const splitBAmtNum = Math.max(0, origAmt - parseFloat(splitAAmt || "0"));
   const splitBAmount = splitBAmtNum.toFixed(2);
@@ -372,8 +440,9 @@ function TransactionDetailPanel({
   async function handleSave() {
     setSaving(true);
     try {
+      const notesToSave = refundLink ? attachRefundTag(editNotes, refundLink) : editNotes;
       const updates: Record<string, string | number> = {
-        name: editName, merchant_name: editName, category: editCategory, transaction_type: editType, notes: editNotes,
+        name: editName, merchant_name: editName, category: editCategory, transaction_type: editType, notes: notesToSave,
       };
       if (tx.is_manual) {
         const n = parseFloat(editAmount);
@@ -381,6 +450,21 @@ function TransactionDetailPanel({
       }
       await onSave(tx.id, updates);
       setMode("view");
+    } finally { setSaving(false); }
+  }
+
+  async function handleRefundConfirm() {
+    if (!selectedPartnerId) return;
+    setSaving(true);
+    try {
+      await onLinkRefund(tx.id, selectedPartnerId, partialDiff >= 0.01 && createNetDiff);
+    } finally { setSaving(false); }
+  }
+
+  async function handleUnlinkClick() {
+    setSaving(true);
+    try {
+      await onUnlinkRefund(tx.id);
     } finally { setSaving(false); }
   }
 
@@ -431,8 +515,30 @@ function TransactionDetailPanel({
               <div className="mx-4 mb-3 px-3 py-2 rounded-xl bg-background/60 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-foreground/50">
                 <span className="capitalize">{tx.transaction_type}</span>
                 {tx.account_name && <><span className="text-foreground/30">·</span><span className="font-medium text-foreground/60 truncate">{tx.account_name}</span></>}
-                {tx.notes && <><span className="text-foreground/30">·</span><span className="truncate max-w-24 italic">{tx.notes}</span></>}
+                {cleanNotes && <><span className="text-foreground/30">·</span><span className="truncate max-w-32 italic">{cleanNotes}</span></>}
               </div>
+
+              {/* Linked refund banner */}
+              {refundLink && (
+                <div className="mx-4 mb-3 px-3 py-2 rounded-xl bg-sky-500/10 border border-sky-500/20 space-y-1.5">
+                  <div className="flex items-start gap-1.5 text-xs text-sky-400">
+                    <RotateCcw className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span className="leading-snug">
+                      {refundLink.role === "original" ? "Refunded by" : "Refund for"}{" "}
+                      <span className="font-semibold">{refundLink.partnerName}</span>{" "}
+                      <span className="text-sky-400/70">({formatDate(refundLink.partnerDate)})</span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleUnlinkClick}
+                    disabled={saving}
+                    className="w-full py-1.5 rounded-lg bg-sky-500/15 text-sky-300 text-[11px] font-medium hover:bg-sky-500/25 disabled:opacity-40 transition-colors"
+                  >
+                    {saving ? "Unlinking…" : "Unlink refund & restore both"}
+                  </button>
+                </div>
+              )}
 
               {/* Action buttons */}
               <div className="px-4 pb-3 grid grid-cols-2 gap-2">
@@ -448,13 +554,21 @@ function TransactionDetailPanel({
                 ) : <div />}
               </div>
 
-              {/* Ignore + delete */}
+              {/* Link refund + Ignore + delete */}
               <div className="px-4 pb-4 space-y-1.5">
-                <button onClick={() => onIgnore(tx.id, !isIgnored)}
-                  className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-medium transition-colors ${isIgnored ? "border-accent/30 text-accent bg-accent/10 hover:bg-accent/20" : "border-border/40 text-foreground/40 hover:text-foreground/70 hover:border-border/60"}`}>
-                  {isIgnored ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                  {isIgnored ? "Un-ignore" : "Ignore transaction"}
-                </button>
+                {!isIgnored && !refundLink && (
+                  <button onClick={() => setMode("refund")}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-sky-500/25 bg-sky-500/10 text-sky-400 text-xs font-medium hover:bg-sky-500/20 transition-colors">
+                    <RotateCcw className="w-3.5 h-3.5" /> Link refund
+                  </button>
+                )}
+                {!refundLink && (
+                  <button onClick={() => onIgnore(tx.id, !isIgnored)}
+                    className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-medium transition-colors ${isIgnored ? "border-accent/30 text-accent bg-accent/10 hover:bg-accent/20" : "border-border/40 text-foreground/40 hover:text-foreground/70 hover:border-border/60"}`}>
+                    {isIgnored ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    {isIgnored ? "Un-ignore" : "Ignore transaction"}
+                  </button>
+                )}
                 {tx.is_manual && (
                   <button onClick={() => { onDelete(tx.id); onClose(); }}
                     className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-red-500/20 text-red-400 text-xs hover:bg-red-500/10 transition-colors">
@@ -586,6 +700,102 @@ function TransactionDetailPanel({
                 <button onClick={handleSplitConfirm} disabled={!splitValid || saving}
                   className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-accent/15 text-accent border border-accent/20 text-xs font-medium hover:bg-accent/25 disabled:opacity-40 transition-colors">
                   <Scissors className="w-3.5 h-3.5" />{saving ? "Splitting…" : "Confirm"}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── REFUND mode ── */}
+          {mode === "refund" && (
+            <>
+              <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-border/20">
+                <button onClick={() => setMode("view")} className="p-1 text-foreground/40 hover:text-foreground transition-colors">
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">Link refund</p>
+                  <p className="text-xs text-foreground/40 truncate">
+                    {tx.merchant_name || tx.name} · {formatCurrency(origAmt)}
+                  </p>
+                </div>
+                <button onClick={onClose} className="ml-auto p-1 text-foreground/30 hover:text-foreground transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="px-4 py-3 space-y-2.5">
+                <p className="text-xs text-foreground/40">
+                  Pick the matching refund or purchase. Both will move to Ignored and stay linked so you know why.
+                </p>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground/30" />
+                  <input
+                    type="text"
+                    value={refundQuery}
+                    onChange={e => setRefundQuery(e.target.value)}
+                    placeholder="Search merchant, date, or amount..."
+                    className="w-full bg-background border border-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-foreground placeholder:text-foreground/30 focus:outline-none focus:border-accent"
+                  />
+                </div>
+                <div className="max-h-52 overflow-y-auto space-y-1 pr-0.5">
+                  {loadingCandidates && rankedRefundCandidates.length === 0 ? (
+                    <p className="text-xs text-foreground/30 text-center py-6">Searching nearby transactions…</p>
+                  ) : rankedRefundCandidates.length === 0 ? (
+                    <p className="text-xs text-foreground/30 text-center py-6">No matching transactions found within ±90 days.</p>
+                  ) : (
+                    rankedRefundCandidates.map(cand => {
+                      const isSelected = selectedPartnerId === cand.id;
+                      const candAmt = Math.abs(cand.amount);
+                      const isExact = Math.abs(candAmt - origAmt) < 0.01;
+                      const isCandIncome = cand.transaction_type === "income";
+                      return (
+                        <button
+                          key={cand.id}
+                          type="button"
+                          onClick={() => setSelectedPartnerId(cand.id)}
+                          className={`w-full text-left px-2.5 py-2 rounded-xl border transition-colors flex items-center justify-between gap-2 ${
+                            isSelected
+                              ? "border-sky-500/50 bg-sky-500/15"
+                              : "border-border/30 bg-background/40 hover:bg-background/80"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-foreground truncate">{cand.merchant_name || cand.name}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] text-foreground/40">{formatDate(cand.date)}</span>
+                              {isExact && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-green-500/15 text-green-400">
+                                  Exact match
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <span className={`text-xs font-bold tabular-nums shrink-0 ${isCandIncome ? "text-green-400" : "text-foreground/80"}`}>
+                            {isCandIncome ? "+" : "-"}{formatCurrency(candAmt)}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                {selectedPartner && partialDiff >= 0.01 && (
+                  <label className="flex items-start gap-2 p-2.5 rounded-xl bg-background/60 border border-border/30 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={createNetDiff}
+                      onChange={e => setCreateNetDiff(e.target.checked)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span className="text-[11px] text-foreground/60 leading-snug">
+                      Partial refund: keep a net expense of <strong className="text-foreground">{formatCurrency(partialDiff)}</strong> for the difference
+                    </span>
+                  </label>
+                )}
+              </div>
+              <div className="px-4 py-3 border-t border-border/20 flex gap-2">
+                <button onClick={() => setMode("view")} className="flex-1 py-2 rounded-xl border border-border/40 text-foreground/50 text-xs hover:text-foreground transition-colors">Cancel</button>
+                <button onClick={handleRefundConfirm} disabled={!selectedPartnerId || saving}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-sky-500/15 text-sky-400 border border-sky-500/30 text-xs font-medium hover:bg-sky-500/25 disabled:opacity-40 transition-colors">
+                  <RotateCcw className="w-3.5 h-3.5" />{saving ? "Linking…" : "Link refund"}
                 </button>
               </div>
             </>
@@ -1123,6 +1333,43 @@ export default function TransactionsSection() {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to split transaction:", e);
       toast("Failed to split transaction: " + msg, "error");
+    }
+  }
+
+  async function handleLinkRefund(txId: string, partnerId: string, createNetDifference: boolean) {
+    try {
+      const supabase = createClient();
+      const { updated, netTransaction } = await linkRefundTransactions(supabase, txId, partnerId, {
+        createNetDifference,
+      });
+      const updatedById = new Map(updated.map(u => [u.id, u]));
+      setTransactions(prev => {
+        const next = prev.map(tx => updatedById.has(tx.id) ? { ...tx, ...updatedById.get(tx.id)! } : tx);
+        return netTransaction ? [netTransaction, ...next] : next;
+      });
+      setSelectedTx(null);
+      toast(netTransaction ? "Refund linked & net expense kept" : "Refund linked & moved to Ignored");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Failed to link refund:", e);
+      toast("Failed to link refund: " + msg, "error");
+    }
+  }
+
+  async function handleUnlinkRefund(txId: string) {
+    try {
+      const supabase = createClient();
+      const { updated } = await unlinkRefundTransactions(supabase, txId);
+      const updatedById = new Map(updated.map(u => [u.id, u]));
+      setTransactions(prev =>
+        prev.map(tx => updatedById.has(tx.id) ? { ...tx, ...updatedById.get(tx.id)! } : tx)
+      );
+      setSelectedTx(prev => prev && updatedById.has(prev.id) ? { ...prev, ...updatedById.get(prev.id)! } : prev);
+      toast("Refund unlinked & restored");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Failed to unlink refund:", e);
+      toast("Failed to unlink refund: " + msg, "error");
     }
   }
 
@@ -1790,10 +2037,13 @@ export default function TransactionsSection() {
       {selectedTx && (
         <TransactionDetailPanel
           tx={selectedTx}
+          candidates={activeTransactions}
           onClose={() => setSelectedTx(null)}
           onSave={handlePatch}
           onIgnore={handleIgnore}
           onSplit={handleSplit}
+          onLinkRefund={handleLinkRefund}
+          onUnlinkRefund={handleUnlinkRefund}
           onDelete={id => { setDeleteId(id); setSelectedTx(null); }}
         />
       )}

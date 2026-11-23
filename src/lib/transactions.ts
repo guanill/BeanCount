@@ -103,3 +103,127 @@ export function canDeleteSplitOriginal(tx: SplitDeletableTransaction): boolean {
       !tx.teller_transaction_id,
   );
 }
+
+// ─── Refund Linking ──────────────────────────────────────────────────────────
+
+export interface RefundLink {
+  role: "original" | "refund";
+  partnerId: string;
+  partnerDate: string;
+  partnerName: string;
+}
+
+const REFUND_TAG_RE = /\[refund:(original|refund):([^:\]]+):([^:\]]+):([^\]]+)\]/;
+
+function sanitizeRefundLabel(name: string): string {
+  return name.replace(/[\]:]/g, " ").replace(/\s+/g, " ").trim() || "Transaction";
+}
+
+/** Parses a `[refund:...]` link tag from a transaction's notes field. */
+export function parseRefundLink(notes?: string | null): RefundLink | null {
+  if (!notes) return null;
+  const match = notes.match(REFUND_TAG_RE);
+  if (!match) return null;
+  return {
+    role: match[1] as "original" | "refund",
+    partnerId: match[2],
+    partnerDate: match[3],
+    partnerName: match[4].trim(),
+  };
+}
+
+/** Strips any internal `[refund:...]` tag from notes for clean display/editing. */
+export function stripRefundTag(notes?: string | null): string {
+  if (!notes) return "";
+  return notes.replace(REFUND_TAG_RE, "").replace(/\s{2,}/g, " ").trim();
+}
+
+/** Attaches (or replaces) a `[refund:...]` tag while preserving any user notes. */
+export function attachRefundTag(
+  existingNotes: string | null | undefined,
+  link: RefundLink,
+): string {
+  const clean = stripRefundTag(existingNotes);
+  const tag = `[refund:${link.role}:${link.partnerId}:${link.partnerDate}:${sanitizeRefundLabel(link.partnerName)}]`;
+  return clean ? `${clean} ${tag}` : tag;
+}
+
+/** Removes any `[refund:...]` tag from notes, returning null if nothing remains. */
+export function removeRefundTag(notes?: string | null): string | null {
+  const clean = stripRefundTag(notes);
+  return clean ? clean : null;
+}
+
+export interface RefundCandidate {
+  id: string;
+  name: string;
+  merchant_name?: string | null;
+  amount: number;
+  date: string;
+  transaction_type: string;
+  is_ignored?: boolean | null;
+  notes?: string | null;
+}
+
+function tokenizeName(name: string): Set<string> {
+  return new Set(
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length >= 3),
+  );
+}
+
+function daysBetween(dateA: string, dateB: string): number {
+  const msA = Date.parse(`${dateA.slice(0, 10)}T00:00:00Z`);
+  const msB = Date.parse(`${dateB.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(msA) || Number.isNaN(msB)) return 999;
+  return Math.abs(msA - msB) / 86_400_000;
+}
+
+/** Ranks candidate transactions most likely to be the refund/original partner of `target`. */
+export function rankRefundCandidates<T extends RefundCandidate>(
+  target: RefundCandidate,
+  candidates: T[],
+): T[] {
+  const targetAmt = Math.abs(target.amount);
+  const targetTokens = tokenizeName(target.merchant_name || target.name);
+
+  return candidates
+    .filter((c) => c.id !== target.id && !c.is_ignored && !isSplitOriginal(c))
+    .map((c) => {
+      let score = 0;
+      const amt = Math.abs(c.amount);
+
+      if (Math.abs(amt - targetAmt) < 0.01) {
+        score += 100;
+      } else if (
+        (target.transaction_type === "expense" && amt < targetAmt) ||
+        (target.transaction_type !== "expense" && amt > targetAmt)
+      ) {
+        score += 30;
+      }
+
+      if (c.transaction_type !== target.transaction_type) {
+        score += 50;
+      }
+
+      const candTokens = tokenizeName(c.merchant_name || c.name);
+      let shared = 0;
+      for (const tok of targetTokens) {
+        if (candTokens.has(tok)) shared += 1;
+      }
+      if (shared > 0) score += 40 + Math.min(shared, 3) * 5;
+
+      const gap = daysBetween(target.date, c.date);
+      if (gap <= 14) score += 35;
+      else if (gap <= 45) score += 20;
+      else if (gap <= 90) score += 10;
+
+      return { c, score };
+    })
+    .sort((a, b) => b.score - a.score || b.c.date.localeCompare(a.c.date))
+    .map((entry) => entry.c);
+}

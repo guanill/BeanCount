@@ -13,7 +13,12 @@ import type {
 } from "@/lib/types";
 import { applyMerchantCategoryRule, CATEGORIES, getCategoryMeta, guessCategory, normalizeMerchantKey, type TransactionType } from "@/lib/categories";
 import { collectPages } from "@/lib/pagination";
-import { canDeleteSplitOriginal } from "@/lib/transactions";
+import {
+  attachRefundTag,
+  canDeleteSplitOriginal,
+  parseRefundLink,
+  removeRefundTag,
+} from "@/lib/transactions";
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 
@@ -1037,6 +1042,167 @@ export async function splitTransaction(
       .eq("id", id);
     if (updateError) throw updateError;
   }
+}
+
+export async function findRefundCandidates(
+  supabase: SupabaseClient,
+  target: { id: string; date: string },
+): Promise<Transaction[]> {
+  const baseMs = Date.parse(`${target.date.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(baseMs)) return [];
+  const start = new Date(baseMs - 90 * 86_400_000).toISOString().slice(0, 10);
+  const end = new Date(baseMs + 90 * 86_400_000).toISOString().slice(0, 10);
+
+  const { data, error } = await supabase
+    .from("transactions")
+    .select("*")
+    .eq("is_ignored", false)
+    .neq("id", target.id)
+    .gte("date", start)
+    .lte("date", end)
+    .order("date", { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return (data ?? []) as Transaction[];
+}
+
+export async function linkRefundTransactions(
+  supabase: SupabaseClient,
+  txAId: string,
+  txBId: string,
+  options?: { createNetDifference?: boolean },
+): Promise<{
+  updated: Transaction[];
+  netTransaction: Transaction | null;
+}> {
+  const { data: rows, error: fetchError } = await supabase
+    .from("transactions")
+    .select("*")
+    .in("id", [txAId, txBId]);
+  if (fetchError) throw fetchError;
+
+  const txA = (rows ?? []).find((r: Transaction) => r.id === txAId) as Transaction | undefined;
+  const txB = (rows ?? []).find((r: Transaction) => r.id === txBId) as Transaction | undefined;
+  if (!txA || !txB) throw new Error("Could not find both transactions to link");
+
+  // Determine which is the purchase (original) and which is the refund
+  let original: Transaction;
+  let refund: Transaction;
+  if (txA.transaction_type === "expense" && txB.transaction_type !== "expense") {
+    original = txA;
+    refund = txB;
+  } else if (txB.transaction_type === "expense" && txA.transaction_type !== "expense") {
+    original = txB;
+    refund = txA;
+  } else if (Math.abs(txA.amount) !== Math.abs(txB.amount)) {
+    original = Math.abs(txA.amount) > Math.abs(txB.amount) ? txA : txB;
+    refund = original.id === txA.id ? txB : txA;
+  } else {
+    original = txA.date <= txB.date ? txA : txB;
+    refund = original.id === txA.id ? txB : txA;
+  }
+
+  const origLabel = original.merchant_name || original.name;
+  const refundLabel = refund.merchant_name || refund.name;
+
+  const originalNotes = attachRefundTag(original.notes, {
+    role: "original",
+    partnerId: refund.id,
+    partnerDate: refund.date,
+    partnerName: refundLabel,
+  });
+  const refundNotes = attachRefundTag(refund.notes, {
+    role: "refund",
+    partnerId: original.id,
+    partnerDate: original.date,
+    partnerName: origLabel,
+  });
+
+  // Optionally create a net expense for partial refunds before ignoring both
+  let netTransaction: Transaction | null = null;
+  const diff = Math.round((Math.abs(original.amount) - Math.abs(refund.amount)) * 100) / 100;
+  if (options?.createNetDifference && diff >= 0.01) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not authenticated");
+    const netName = `${origLabel} (after refund)`;
+    const { data: inserted, error: insertError } = await supabase
+      .from("transactions")
+      .insert({
+        user_id: user.id,
+        account_id: original.account_id ?? null,
+        credit_card_id: original.credit_card_id ?? null,
+        source_name: original.source_name ?? null,
+        date: original.date,
+        name: netName,
+        merchant_name: netName,
+        amount: diff,
+        category: original.category,
+        transaction_type: original.transaction_type,
+        is_manual: true,
+        notes: `Net amount after partial refund (${refund.date})`,
+      })
+      .select()
+      .single();
+    if (insertError) throw insertError;
+    netTransaction = inserted as Transaction;
+  }
+
+  const [{ data: updatedOrig, error: err1 }, { data: updatedRefund, error: err2 }] = await Promise.all([
+    supabase
+      .from("transactions")
+      .update({ is_ignored: true, notes: originalNotes })
+      .eq("id", original.id)
+      .select()
+      .single(),
+    supabase
+      .from("transactions")
+      .update({ is_ignored: true, notes: refundNotes })
+      .eq("id", refund.id)
+      .select()
+      .single(),
+  ]);
+  if (err1) throw err1;
+  if (err2) throw err2;
+
+  return {
+    updated: [updatedOrig as Transaction, updatedRefund as Transaction],
+    netTransaction,
+  };
+}
+
+export async function unlinkRefundTransactions(
+  supabase: SupabaseClient,
+  txId: string,
+): Promise<{ updated: Transaction[] }> {
+  const { data: tx, error: fetchError } = await supabase
+    .from("transactions")
+    .select("*")
+    .eq("id", txId)
+    .single();
+  if (fetchError) throw fetchError;
+
+  const link = parseRefundLink(tx.notes);
+  const ids = link ? [tx.id, link.partnerId] : [tx.id];
+
+  const { data: rows, error: pairError } = await supabase
+    .from("transactions")
+    .select("*")
+    .in("id", ids);
+  if (pairError) throw pairError;
+
+  const updated: Transaction[] = [];
+  for (const row of (rows ?? []) as Transaction[]) {
+    const cleaned = removeRefundTag(row.notes);
+    const { data: saved, error: updateError } = await supabase
+      .from("transactions")
+      .update({ is_ignored: false, notes: cleaned })
+      .eq("id", row.id)
+      .select()
+      .single();
+    if (updateError) throw updateError;
+    updated.push(saved as Transaction);
+  }
+  return { updated };
 }
 
 // ─── Planner Config ──────────────────────────────────────────────────────────
