@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   chargeActiveInMonth,
   chargesForMonth,
+  isLoanPaidThisMonth,
   isPaydayPaid,
   projectLoanBalanceAt,
   salaryPaidThisMonth,
@@ -68,4 +69,20 @@ test("date-only values remain on their calendar day", () => {
   assert.equal(date.getMonth(), 9);
   assert.equal(date.getDate(), 14);
   assert.match(formatDate("2026-10-14"), /Oct 14, 2026/);
+});
+
+test("loans auto-mark paid on/after payment_day and respect manual unpaid overrides", () => {
+  const loan = { id: "loan-1", payment_day: 15 };
+  // Before payment_day -> unpaid unless manually marked paid
+  assert.equal(isLoanPaidThisMonth(loan, [], undefined, "2026-11", 10), false);
+  assert.equal(isLoanPaidThisMonth(loan, ["loan-1"], undefined, "2026-11", 10), true);
+  // On or after payment_day -> auto-paid
+  assert.equal(isLoanPaidThisMonth(loan, [], undefined, "2026-11", 15), true);
+  assert.equal(isLoanPaidThisMonth(loan, [], undefined, "2026-11", 22), true);
+  // Explicit unpaid override for this month overrides auto-paid
+  assert.equal(isLoanPaidThisMonth(loan, [], { "loan-1": "2026-11" }, "2026-11", 22), false);
+  // Unpaid override from a previous month does not carry over
+  assert.equal(isLoanPaidThisMonth(loan, [], { "loan-1": "2026-10" }, "2026-11", 22), true);
+  // Loan without payment_day is never auto-paid
+  assert.equal(isLoanPaidThisMonth({ id: "loan-2", payment_day: null }, [], undefined, "2026-11", 22), false);
 });

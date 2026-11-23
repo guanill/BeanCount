@@ -97,6 +97,23 @@ export interface LoanLike {
   deferral_months: number | null;
   deferral_type?: string | null;
   created_at: string | null;
+  payment_day?: number | null;
+}
+
+export function isLoanPaidThisMonth(
+  loan: { id: string; payment_day?: number | null },
+  paidLoanIds: Set<string> | string[],
+  unpaidLoanOverrides: Record<string, string> | undefined,
+  monthKey: string,
+  currentDay: number,
+): boolean {
+  const manuallyPaid = Array.isArray(paidLoanIds)
+    ? paidLoanIds.includes(loan.id)
+    : paidLoanIds.has(loan.id);
+  if (manuallyPaid) return true;
+  if (unpaidLoanOverrides?.[loan.id] === monthKey) return false;
+  if (loan.payment_day != null && currentDay >= loan.payment_day) return true;
+  return false;
 }
 
 export function loanPaymentForMonth(

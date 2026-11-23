@@ -13,7 +13,7 @@ import {
 } from "@/lib/tax";
 import {
   chargeActiveInMonth, chargeEndMonth, chargePaidThisMonth, chargesForMonth,
-  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPayoffMonth, isPaydayPaid, togglePaydayStatus,
+  getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPaidThisMonth, isLoanPayoffMonth, isPaydayPaid, togglePaydayStatus,
   loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt,
 } from "@/lib/planner";
 
@@ -152,6 +152,8 @@ interface PlannerConfig {
   taxYearTracking?: Record<string, TaxYearTracking>;
   /** Per-loan "pay off in month YYYY-MM" override — payments stop being projected at/after that month. */
   loanPayoffOverrides?: Record<string, string>;
+  /** Per-loan "explicitly unpaid in YYYY-MM" override when auto-marked paid past payment_day. */
+  loanUnpaidMonthOverrides?: Record<string, string>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1774,12 +1776,32 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     })().catch(() => {});
   }, []);
 
-  function toggleLoanPaid(id: string) {
+  const isLoanPaid = useCallback(
+    (loan: { id: string; payment_day?: number | null }) =>
+      isLoanPaidThisMonth(loan, paidLoanIds, config.loanUnpaidMonthOverrides, THIS_MONTH_KEY, CUR_DAY),
+    [paidLoanIds, config.loanUnpaidMonthOverrides],
+  );
+
+  function toggleLoanPaid(loan: { id: string; payment_day?: number | null }) {
+    const currentlyPaid = isLoanPaid(loan);
     setPaidLoanIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      if (currentlyPaid) {
+        next.delete(loan.id);
+      } else {
+        next.add(loan.id);
+      }
       savePlanner({ paid_loan_ids: [...next], paid_loan_month: THIS_MONTH_KEY });
       return next;
+    });
+    setConfig(c => {
+      const nextUnpaid = { ...(c.loanUnpaidMonthOverrides ?? {}) };
+      if (currentlyPaid) {
+        nextUnpaid[loan.id] = THIS_MONTH_KEY;
+      } else {
+        delete nextUnpaid[loan.id];
+      }
+      return { ...c, loanUnpaidMonthOverrides: nextUnpaid };
     });
   }
 
@@ -1968,11 +1990,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         if (isLoanPayoffMonth(ov, y, m)) return s + projectLoanBalanceAt(l, y, m);
         if (isLoanPaidOffBy(ov, y, m)) return s;
         if (isAfterPayoff(naturalPayoffEnd[l.id], y, m)) return s;
-        if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) return s;
+        if (y === CUR_YEAR && m === CUR_MONTH && isLoanPaid(l)) return s;
         return s + loanPaymentForMonth(l, y, m);
       }, 0);
     },
-    [loans, paidLoanIds, payoffOverrides, naturalPayoffEnd],
+    [loans, isLoanPaid, payoffOverrides, naturalPayoffEnd],
   );
 
   const getLoanBreakdownForMonth = useCallback(
@@ -1987,13 +2009,13 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         }
         if (isLoanPaidOffBy(ov, y, m)) continue;
         if (isAfterPayoff(naturalPayoffEnd[l.id], y, m)) continue;
-        if (y === CUR_YEAR && m === CUR_MONTH && paidLoanIds.has(l.id)) continue;
+        if (y === CUR_YEAR && m === CUR_MONTH && isLoanPaid(l)) continue;
         const amt = loanPaymentForMonth(l, y, m);
         if (amt > 0) out.push({ id: l.id, name: l.name, amount: amt, day: l.payment_day });
       }
       return out;
     },
-    [loans, paidLoanIds, payoffOverrides, naturalPayoffEnd],
+    [loans, isLoanPaid, payoffOverrides, naturalPayoffEnd],
   );
 
   const getSpendBreakdownForMonth = useCallback(
@@ -3589,13 +3611,15 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
               return loanPaymentForMonth(l, CUR_YEAR, CUR_MONTH) > 0;
             });
             const deferredCount = loans.length - activeLoans.length;
+            const paidCount = activeLoans.filter(l => isLoanPaid(l)).length;
             return (
               <div className="space-y-1.5">
                 {activeLoans.length === 0 && (
                   <p className="text-xs text-foreground/40 text-center py-2">No active loan payments this month.</p>
                 )}
                 {activeLoans.map(loan => {
-                  const paid = paidLoanIds.has(loan.id);
+                  const paid = isLoanPaid(loan);
+                  const autoPaid = paid && !paidLoanIds.has(loan.id) && loan.payment_day != null && CUR_DAY >= loan.payment_day;
                   const override = payoffOverrides[loan.id];
                   const naturalEnd = naturalPayoffEnd[loan.id];
                   return (
@@ -3610,6 +3634,11 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                           <span className={`text-sm font-medium truncate block ${paid ? "text-foreground/40 line-through" : "text-foreground/80"}`}>{loan.name}</span>
                           <span className="text-[10px] text-foreground/30 capitalize">
                             {loan.type}
+                            {loan.payment_day != null && (
+                              <span className={`ml-1.5 normal-case ${paid ? "text-green/60" : "text-accent-light/80"}`}>
+                                · due {ordinal(loan.payment_day)}{autoPaid ? " (auto-paid)" : ""}
+                              </span>
+                            )}
                             {naturalEnd && (
                               <span className="ml-1.5 text-foreground/40">· ends {MONTHS_SHORT[naturalEnd.month - 1]} {naturalEnd.year}</span>
                             )}
@@ -3619,7 +3648,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                           −{formatCurrency(loan.monthly_payment)}<span className="text-foreground/30 font-normal">/mo</span>
                         </span>
                         <button
-                          onClick={() => toggleLoanPaid(loan.id)}
+                          onClick={() => toggleLoanPaid(loan)}
                           className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
                             paid
                               ? "bg-green/10 hover:bg-green/20 text-green"
@@ -3691,7 +3720,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
                 })}
                 <div className="flex items-center justify-between px-4 py-2 border-t border-border/20 mt-2">
                   <span className="text-xs text-foreground/40">
-                    {paidLoanIds.size} of {activeLoans.length} paid this month
+                    {paidCount} of {activeLoans.length} paid this month
                     {deferredCount > 0 && <span className="ml-2 text-yellow-400/60">· {deferredCount} deferred</span>}
                   </span>
                   <span className="text-xs font-semibold text-accent">{formatCurrency(totalLoanPayments)}<span className="text-foreground/30 font-normal"> /mo total</span></span>
