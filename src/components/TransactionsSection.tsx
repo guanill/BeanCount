@@ -28,7 +28,7 @@ import {
   Filter,
   Upload,
 } from "lucide-react";
-import { Account, CreditCard, Transaction, TransactionSummary } from "@/lib/types";
+import { Account, CreditCard, Transaction } from "@/lib/types";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -617,7 +617,7 @@ export default function TransactionsSection() {
   const [viewMode, setViewMode] = useState<"month" | "year">("month");
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [summary,      setSummary]      = useState<TransactionSummary | null>(null);
+  const [hasLoaded,    setHasLoaded]    = useState(false);
   const [chartView, setChartView] = useState<"flow" | "donut">("flow");
   const [monthCoverage, setMonthCoverage] = useState<Record<number, number>>({});
   const [coverageLoading, setCoverageLoading] = useState(true);
@@ -677,10 +677,10 @@ export default function TransactionsSection() {
   // Detail panel
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
 
-  /* â"€â"€ Data fetching â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
-  const fetchTransactions = useCallback(async () => {
+  /* ── Data fetching ──────────────────────────────────────────────────────── */
+  const fetchTransactions = useCallback(async (options?: { silent?: boolean; skipCoverage?: boolean }) => {
     const requestId = ++fetchRequestId.current;
-    setLoading(true);
+    if (!options?.silent) setLoading(true);
     setTransactionsError(false);
     try {
       const supabase = createClient();
@@ -689,31 +689,51 @@ export default function TransactionsSection() {
       const data = await fetchTransactionsFromSupabase(supabase, filters);
       if (requestId !== fetchRequestId.current) return;
       setTransactions(data.transactions ?? []);
-      setSummary(data.summary ?? null);
-      setCoverageLoading(true);
-      setCoverageError(false);
-      try {
-        const coverage = await getTransactionMonthCoverage(supabase, year);
-        if (requestId === fetchRequestId.current) setMonthCoverage(coverage);
-      } catch (err) {
-        console.error("Failed to fetch transaction month coverage:", err);
-        if (requestId === fetchRequestId.current) setCoverageError(true);
-      } finally {
-        if (requestId === fetchRequestId.current) setCoverageLoading(false);
+      setHasLoaded(true);
+      if (!options?.skipCoverage) {
+        setCoverageLoading(true);
+        setCoverageError(false);
+        try {
+          const coverage = await getTransactionMonthCoverage(supabase, year);
+          if (requestId === fetchRequestId.current) setMonthCoverage(coverage);
+        } catch (err) {
+          console.error("Failed to fetch transaction month coverage:", err);
+          if (requestId === fetchRequestId.current) setCoverageError(true);
+        } finally {
+          if (requestId === fetchRequestId.current) setCoverageLoading(false);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch transactions:", err);
       if (requestId === fetchRequestId.current) {
-        setTransactions([]);
-        setSummary(null);
-        setTransactionsError(true);
+        if (!options?.silent) {
+          setTransactions([]);
+          setHasLoaded(false);
+          setTransactionsError(true);
+        }
         setCoverageError(true);
         setCoverageLoading(false);
       }
     } finally {
-      if (requestId === fetchRequestId.current) setLoading(false);
+      if (requestId === fetchRequestId.current && !options?.silent) setLoading(false);
     }
   }, [year, month, viewMode]);
+
+  const summary = useMemo(() => {
+    if (!hasLoaded || transactionsError) return null;
+    const active = transactions.filter(t => !t.is_ignored);
+    const totalIncome = active
+      .filter(t => t.transaction_type === "income")
+      .reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
+    const totalExpenses = active
+      .filter(t => t.transaction_type === "expense")
+      .reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
+    return {
+      totalIncome,
+      totalExpenses,
+      net: totalIncome - totalExpenses,
+    };
+  }, [transactions, hasLoaded, transactionsError]);
 
   useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
 
@@ -1005,8 +1025,9 @@ export default function TransactionsSection() {
     try {
       const supabase = createClient();
       await deleteTransaction(supabase, id);
+      setTransactions(prev => prev.filter(tx => tx.id !== id));
+      setSelectedTx(prev => prev?.id === id ? null : prev);
       toast("Transaction deleted");
-      fetchTransactions();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to delete transaction:", e);
@@ -1015,14 +1036,25 @@ export default function TransactionsSection() {
   }
 
   async function handleReclassify(id: string, newCategory: string) {
+    const newMeta = getCategoryMeta(newCategory);
+    const newType = newMeta.type;
+    const prevTx = transactions.find(tx => tx.id === id);
+    // Optimistically update in place so the page never reloads or loses scroll position
+    setTransactions(prev =>
+      prev.map(tx => tx.id === id ? { ...tx, category: newCategory, transaction_type: newType } : tx)
+    );
+    setSelectedTx(prev =>
+      prev?.id === id ? { ...prev, category: newCategory, transaction_type: newType } : prev
+    );
     try {
-      const newMeta = getCategoryMeta(newCategory);
-      const newType = newMeta.type;
       const supabase = createClient();
       await updateTransaction(supabase, id, { category: newCategory, transaction_type: newType });
       toast("Transaction reclassified");
-      fetchTransactions();
     } catch (e) {
+      if (prevTx) {
+        setTransactions(prev => prev.map(tx => tx.id === id ? prevTx : tx));
+        setSelectedTx(prev => prev?.id === id ? prevTx : prev);
+      }
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to reclassify transaction:", e);
       toast("Failed to reclassify transaction: " + msg, "error");
@@ -1033,9 +1065,11 @@ export default function TransactionsSection() {
     try {
       const supabase = createClient();
       await updateTransaction(supabase, id, updates as any);
-      toast("Transaction updated");
-      await fetchTransactions();
+      setTransactions(prev =>
+        prev.map(tx => tx.id === id ? { ...tx, ...updates } as Transaction : tx)
+      );
       setSelectedTx(prev => prev?.id === id ? { ...prev, ...updates } as Transaction : prev);
+      toast("Transaction updated");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update transaction:", e);
@@ -1044,13 +1078,20 @@ export default function TransactionsSection() {
   }
 
   async function handleIgnore(id: string, ignore: boolean) {
+    const prevTx = transactions.find(tx => tx.id === id);
+    setTransactions(prev =>
+      prev.map(tx => tx.id === id ? { ...tx, is_ignored: ignore } : tx)
+    );
+    setSelectedTx(prev => prev?.id === id ? { ...prev, is_ignored: ignore } : prev);
     try {
       const supabase = createClient();
       await updateTransaction(supabase, id, { is_ignored: ignore });
       toast("Transaction updated");
-      await fetchTransactions();
-      setSelectedTx(prev => prev?.id === id ? { ...prev, is_ignored: ignore } : prev);
     } catch (e) {
+      if (prevTx) {
+        setTransactions(prev => prev.map(tx => tx.id === id ? prevTx : tx));
+        setSelectedTx(prev => prev?.id === id ? prevTx : prev);
+      }
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to update transaction:", e);
       toast("Failed to update transaction: " + msg, "error");
@@ -1068,7 +1109,7 @@ export default function TransactionsSection() {
       );
       setSelectedTx(null);
       toast("Transaction split");
-      fetchTransactions();
+      await fetchTransactions({ silent: true, skipCoverage: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to split transaction:", e);
