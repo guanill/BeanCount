@@ -39,7 +39,7 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { detectCsvImportSource } from "@/lib/csv-source-detection";
 import {
   defaultSplitNames,
-  filterVisibleTransactions,
+  partitionVisibleTransactions,
   sumActiveAmount,
   sumActiveExpenses,
 } from "@/lib/transactions";
@@ -662,6 +662,7 @@ export default function TransactionsSection() {
 
   // Accordion: which categories are open
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());
+  const [showIgnored, setShowIgnored] = useState(false);
   // Donut hover
   const [hoveredCat, setHoveredCat] = useState<string | null>(null);
   // Client-side filters
@@ -824,15 +825,23 @@ export default function TransactionsSection() {
   }, [importRows]);
 
   /* â"€â"€ Group transactions by category (client-side) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
-  // Hide original imported rows that were replaced by a split
-  const visibleTransactions = useMemo(() => filterVisibleTransactions(transactions), [transactions]);
+  // Separate active transactions from manually ignored rows (and hide [split] originals)
+  const { active: activeTransactions, ignored: ignoredTransactions } = useMemo(
+    () => partitionVisibleTransactions(transactions),
+    [transactions],
+  );
 
-  // Recurring detection (memoized on visible transaction list)
-  const recurringIds = useMemo(() => detectRecurringIds(visibleTransactions), [visibleTransactions]);
+  const sortedIgnoredTransactions = useMemo(
+    () => [...ignoredTransactions].sort((a, b) => b.date.localeCompare(a.date)),
+    [ignoredTransactions],
+  );
+
+  // Recurring detection (memoized on active transaction list)
+  const recurringIds = useMemo(() => detectRecurringIds(activeTransactions), [activeTransactions]);
 
   // Client-side filtered list: search + type + category + amount + date + recurring
   const filtered = useMemo(() => {
-    let list = visibleTransactions;
+    let list = activeTransactions;
     if (typeFilter !== "all") list = list.filter(t => t.transaction_type === typeFilter);
     if (catFilter) list = list.filter(t => t.category === catFilter);
     if (recurringOnly) list = list.filter(t => recurringIds.has(t.id));
@@ -853,7 +862,7 @@ export default function TransactionsSection() {
     if (dateFrom) list = list.filter(t => t.date >= dateFrom);
     if (dateTo) list = list.filter(t => t.date <= dateTo);
     return [...list].sort((a, b) => b.date.localeCompare(a.date));
-  }, [visibleTransactions, typeFilter, catFilter, query, minAmount, maxAmount, dateFrom, dateTo, recurringOnly, recurringIds]);
+  }, [activeTransactions, typeFilter, catFilter, query, minAmount, maxAmount, dateFrom, dateTo, recurringOnly, recurringIds]);
 
   // Grouped by category (from filtered - used in accordion; totals exclude ignored transactions)
   const grouped = useMemo(() => {
@@ -1539,10 +1548,10 @@ export default function TransactionsSection() {
               {(["all", "expense", "income", "transfer"] as const).map(t => {
                 const labels: Record<string, string> = { all: "All", expense: "💸 Expenses", income: "💰 Income", transfer: "🔄 Transfers" };
                 const counts: Record<string, number> = {
-                  all: visibleTransactions.length,
-                  expense:  visibleTransactions.filter(x => x.transaction_type === "expense").length,
-                  income:   visibleTransactions.filter(x => x.transaction_type === "income").length,
-                  transfer: visibleTransactions.filter(x => x.transaction_type === "transfer").length,
+                  all: activeTransactions.length,
+                  expense:  activeTransactions.filter(x => x.transaction_type === "expense").length,
+                  income:   activeTransactions.filter(x => x.transaction_type === "income").length,
+                  transfer: activeTransactions.filter(x => x.transaction_type === "transfer").length,
                 };
                 return (
                   <button key={t} onClick={() => setTypeFilter(t)}
@@ -1720,10 +1729,59 @@ export default function TransactionsSection() {
               </div>
             )}
 
+            {sortedIgnoredTransactions.length > 0 && (
+              <div className="pt-1">
+                {!showIgnored ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowIgnored(true)}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border border-dashed border-border/40 text-xs text-foreground/40 hover:text-foreground/70 hover:border-border/70 transition-colors"
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                    Show ignored ({sortedIgnoredTransactions.length})
+                  </button>
+                ) : (
+                  <div className="rounded-xl border border-border/30 bg-card/30 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowIgnored(false)}
+                      className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 text-left hover:bg-background/30 transition-colors"
+                    >
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex items-center justify-center shrink-0 bg-foreground/5 text-foreground/40">
+                        <EyeOff className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0 flex items-center justify-between">
+                        <div>
+                          <span className="text-xs sm:text-sm font-semibold text-foreground/60">Ignored</span>
+                          <span className="ml-2 text-[10px] sm:text-xs text-foreground/30">Excluded from totals</span>
+                        </div>
+                        <span className="text-[10px] sm:text-xs text-foreground/35">
+                          {sortedIgnoredTransactions.length} txn{sortedIgnoredTransactions.length !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                      <ChevronDown className="w-4 h-4 text-foreground/30 shrink-0 rotate-180 transition-transform duration-200" />
+                    </button>
+                    <div className="bg-background/40 pb-1">
+                      {sortedIgnoredTransactions.map(tx => (
+                        <TxRow
+                          key={tx.id}
+                          tx={tx}
+                          onDelete={handleDelete}
+                          onReclassify={handleReclassify}
+                          onClick={() => setSelectedTx(tx)}
+                          isRecurring={false}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <p className="text-center text-xs text-foreground/20 pt-1">
-              {filtered.length === visibleTransactions.length
-                ? `${visibleTransactions.length} transaction${visibleTransactions.length !== 1 ? "s" : ""} · ${grouped.length} ${grouped.length !== 1 ? "categories" : "category"}`
-                : `${filtered.length} of ${visibleTransactions.length} shown`
+              {filtered.length === activeTransactions.length
+                ? `${activeTransactions.length} transaction${activeTransactions.length !== 1 ? "s" : ""} · ${grouped.length} ${grouped.length !== 1 ? "categories" : "category"}`
+                : `${filtered.length} of ${activeTransactions.length} shown`
               }
             </p>
           </div>

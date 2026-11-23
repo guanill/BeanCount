@@ -5,6 +5,7 @@ import {
   defaultSplitNames,
   filterVisibleTransactions,
   isSplitOriginal,
+  partitionVisibleTransactions,
   sumActiveAmount,
   sumActiveExpenses,
 } from "../src/lib/transactions.ts";
@@ -50,6 +51,21 @@ test("isSplitOriginal and filterVisibleTransactions hide [split] ignored parents
   assert.deepEqual(
     visible.map((t) => t.id),
     ["3", "4"],
+  );
+
+  const partitioned = partitionVisibleTransactions([
+    splitParent,
+    splitParentWithNote,
+    normalIgnored,
+    active,
+  ]);
+  assert.deepEqual(
+    partitioned.active.map((t) => t.id),
+    ["4"],
+  );
+  assert.deepEqual(
+    partitioned.ignored.map((t) => t.id),
+    ["3"],
   );
 });
 

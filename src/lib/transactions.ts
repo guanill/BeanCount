@@ -35,6 +35,27 @@ export function filterVisibleTransactions<T extends SplitCheckableTransaction>(
   return transactions.filter((tx) => !isSplitOriginal(tx));
 }
 
+/**
+ * Splits visible transactions into active rows (shown in normal categories) and
+ * manually ignored rows (hidden in a collapsed "Ignored" section).
+ * `[split]`-ignored originals are excluded from both lists.
+ */
+export function partitionVisibleTransactions<T extends SplitCheckableTransaction>(
+  transactions: T[],
+): { active: T[]; ignored: T[] } {
+  const active: T[] = [];
+  const ignored: T[] = [];
+  for (const tx of transactions) {
+    if (isSplitOriginal(tx)) continue;
+    if (tx.is_ignored) {
+      ignored.push(tx);
+    } else {
+      active.push(tx);
+    }
+  }
+  return { active, ignored };
+}
+
 /** Sums absolute amounts while excluding ignored transactions. */
 export function sumActiveAmount<T extends AmountCheckableTransaction>(
   transactions: T[],
