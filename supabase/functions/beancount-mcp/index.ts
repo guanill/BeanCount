@@ -7,9 +7,21 @@
 
 import { getSupabaseAdmin, getSupabaseClient } from "../_shared/supabase.ts";
 import {
+  appendSplitTag,
+  attachRefundTag,
+  canDeleteSplitOriginal,
+  classifyRefundPair,
   constantTimeEqual,
+  defaultSplitNames,
+  defaultTransactionTypeForCategory,
+  isSplitOriginal,
+  normalizeMerchantKey,
+  parseRefundLink,
+  rankRefundCandidates,
+  removeRefundTag,
   resolveNamedEntity,
   summarizeTransactions,
+  toSignedAmount,
   VALID_CATEGORIES,
   VALID_TRANSACTION_TYPES,
 } from "./helpers.ts";
@@ -28,7 +40,7 @@ const JSON_HEADERS = {
 
 const SERVER_INFO = {
   name: "beancount-mcp",
-  version: "2.0.0",
+  version: "2.1.0",
 };
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
@@ -83,7 +95,8 @@ const TOOLS = [
   },
   {
     name: "search_transactions",
-    description: "Search transactions by date range, keyword, category, or transaction type.",
+    description:
+      "Search transactions by date range, keyword, category, transaction type, account/card, or ignored status. Hides [split] originals by default and surfaces parsed refund_link metadata.",
     inputSchema: {
       type: "object",
       properties: {
@@ -92,6 +105,16 @@ const TOOLS = [
         category: { type: "string" },
         query: { type: "string", description: "Case-insensitive keyword in name or merchant_name." },
         transaction_type: { type: "string", enum: ["income", "expense", "transfer"] },
+        account_id: { type: "string", description: "Optional bank/cash/stock/crypto account ID filter." },
+        credit_card_id: { type: "string", description: "Optional credit card ID filter." },
+        is_ignored: {
+          type: "boolean",
+          description: "Filter by ignored status (true = ignored only, false = active only, omit for both).",
+        },
+        include_split_originals: {
+          type: "boolean",
+          description: "Include hidden [split]-ignored parent rows (default false).",
+        },
         limit: { type: "integer", minimum: 1, maximum: 200, description: "Default 50." },
       },
       additionalProperties: false,
@@ -473,7 +496,8 @@ const TOOLS = [
   },
   {
     name: "update_transaction",
-    description: "Update fields on an existing transaction by transaction_id (name, merchant_name, amount, date, category, transaction_type, is_ignored, notes).",
+    description:
+      "Update fields on an existing transaction by transaction_id (name, merchant_name, amount, date, category, transaction_type, is_ignored, notes). Automatically syncs merchant_name on rename and remembers merchant category rules when category changes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -486,6 +510,10 @@ const TOOLS = [
         transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
         is_ignored: { type: "boolean" },
         notes: { type: "string" },
+        remember_merchant_category: {
+          type: "boolean",
+          description: "Save a merchant_category_rules override when category changes (default true).",
+        },
       },
       required: ["transaction_id"],
       additionalProperties: false,
@@ -505,17 +533,104 @@ const TOOLS = [
     },
     annotations: DESTRUCTIVE,
   },
+  {
+    name: "split_transaction",
+    description:
+      "Split an existing transaction into two manual transactions (part_a and part_b). Deletes purely manual originals, or marks imported/synced originals ignored with [split] so bank/CSV re-imports will not duplicate them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transaction_id: { type: "string", description: "ID of the transaction to split." },
+        part_a: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Defaults to '<original> (your part)'." },
+            amount: { type: "number", description: "Positive amount for part A." },
+            category: { type: "string", description: "Defaults to the original transaction's category." },
+            transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+          },
+          required: ["amount"],
+          additionalProperties: false,
+        },
+        part_b: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Defaults to '<original> (other part)'." },
+            amount: { type: "number", description: "Positive amount for part B." },
+            category: { type: "string", description: "Defaults to the original transaction's category." },
+            transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+          },
+          required: ["amount"],
+          additionalProperties: false,
+        },
+      },
+      required: ["transaction_id", "part_a", "part_b"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_CREATE,
+  },
+  {
+    name: "find_refund_candidates",
+    description:
+      "Find and rank likely refund/original partner transactions within ±90 days (configurable) for a given transaction_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transaction_id: { type: "string" },
+        window_days: { type: "integer", minimum: 1, maximum: 365, description: "Search window in days (default 90)." },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "Max candidates to return (default 20)." },
+      },
+      required: ["transaction_id"],
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "link_refund_transactions",
+    description:
+      "Link an original purchase and its refund transaction so both are ignored and tagged with bidirectional [refund:...] links. Set create_net_difference=true for partial refunds to create a net '<merchant> (after refund)' transaction for the remaining balance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transaction_a_id: { type: "string", description: "First transaction ID (original or refund)." },
+        transaction_b_id: { type: "string", description: "Partner transaction ID (refund or original)." },
+        create_net_difference: {
+          type: "boolean",
+          description: "If true and |original| - |refund| >= 0.01, create a net expense transaction for the difference (default false).",
+        },
+      },
+      required: ["transaction_a_id", "transaction_b_id"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "unlink_refund_transactions",
+    description:
+      "Unlink a refund-linked transaction and its partner, removing their [refund:...] tags and restoring both to active (is_ignored=false).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transaction_id: { type: "string" },
+      },
+      required: ["transaction_id"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
 
   // ── Planner Config Update ──────────────────────────────────────────────────
   {
     name: "update_planner_config",
-    description: "Update planner settings (tax_filing_status, paid_loan_ids, paid_loan_month, or merge fields into config JSON).",
+    description:
+      "Update planner settings (tax_filing_status, paid_loan_ids, paid_loan_month, dismissed_suggestions, or merge fields into config JSON).",
     inputSchema: {
       type: "object",
       properties: {
         tax_filing_status: { type: "string", enum: ["single", "mfj", "mfs", "hoh"] },
         paid_loan_ids: { type: "array", items: { type: "string" } },
         paid_loan_month: { type: "string" },
+        dismissed_suggestions: { type: "array", items: { type: "string" } },
         config_patch: { type: "object", description: "Shallow-merged into planner_configs.config JSON." },
       },
       additionalProperties: false,
@@ -703,17 +818,27 @@ async function handleToolCall(
 
     case "search_transactions": {
       const limit = Math.min(200, Math.max(1, Number(args.limit ?? 50)));
+      const includeSplitOriginals = args.include_split_originals === true;
+      const fetchLimit = includeSplitOriginals ? limit : Math.min(250, limit + 50);
+
       let q = admin
         .from("transactions")
         .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes, account_id, credit_card_id")
         .eq("user_id", userId)
         .order("date", { ascending: false })
-        .limit(limit);
+        .limit(fetchLimit);
 
       if (typeof args.start_date === "string") q = q.gte("date", args.start_date);
       if (typeof args.end_date === "string") q = q.lte("date", args.end_date);
       if (typeof args.category === "string") q = q.eq("category", args.category);
       if (typeof args.transaction_type === "string") q = q.eq("transaction_type", args.transaction_type);
+      if (typeof args.account_id === "string" && args.account_id.trim()) {
+        q = q.eq("account_id", args.account_id.trim());
+      }
+      if (typeof args.credit_card_id === "string" && args.credit_card_id.trim()) {
+        q = q.eq("credit_card_id", args.credit_card_id.trim());
+      }
+      if (typeof args.is_ignored === "boolean") q = q.eq("is_ignored", args.is_ignored);
       if (typeof args.query === "string" && args.query.trim()) {
         const escaped = args.query.trim().replace(/[%_,]/g, "");
         if (escaped) q = q.or(`name.ilike.%${escaped}%,merchant_name.ilike.%${escaped}%`);
@@ -721,7 +846,16 @@ async function handleToolCall(
 
       const { data, error } = await q;
       if (error) return errResult(`Database error: ${error.message}`);
-      return okResult({ count: data?.length ?? 0, transactions: data ?? [] });
+
+      const rows = (data ?? [])
+        .filter((tx) => includeSplitOriginals || !isSplitOriginal(tx))
+        .slice(0, limit)
+        .map((tx) => {
+          const refundLink = parseRefundLink(tx.notes);
+          return refundLink ? { ...tx, refund_link: refundLink } : tx;
+        });
+
+      return okResult({ count: rows.length, transactions: rows });
     }
 
     case "get_spending_summary": {
@@ -732,6 +866,7 @@ async function handleToolCall(
         .from("transactions")
         .select("amount, category, transaction_type, is_ignored")
         .eq("user_id", userId)
+        .eq("is_ignored", false)
         .gte("date", start)
         .lte("date", end);
       if (error) return errResult(`Database error: ${error.message}`);
@@ -1357,7 +1492,7 @@ async function handleToolCall(
       return okResult({ deleted: true, account: resolved.match.name, holding: data });
     }
 
-    // ── Transactions CRUD ────────────────────────────────────────────────────
+    // ── Transactions CRUD & Workflows ────────────────────────────────────────
     case "add_transaction": {
       const txnName = typeof args.name === "string" ? args.name.trim() : "";
       const amount = Number(args.amount);
@@ -1398,7 +1533,7 @@ async function handleToolCall(
           credit_card_id: creditCardId,
           name: txnName,
           merchant_name: txnName,
-          amount,
+          amount: toSignedAmount(amount, transactionType),
           date,
           category,
           transaction_type: transactionType,
@@ -1419,6 +1554,8 @@ async function handleToolCall(
       if (typeof args.name === "string" && args.name.trim()) updates.name = args.name.trim();
       if (args.merchant_name !== undefined) {
         updates.merchant_name = typeof args.merchant_name === "string" ? args.merchant_name : null;
+      } else if (updates.name !== undefined) {
+        updates.merchant_name = updates.name;
       }
       if (args.amount !== undefined) {
         const val = Number(args.amount);
@@ -1452,7 +1589,33 @@ async function handleToolCall(
         .maybeSingle();
       if (error) return errResult(`Failed to update transaction: ${error.message}`);
       if (!updated) return errResult(`No transaction found with id "${txnId}".`);
-      return okResult({ updated: true, transaction: updated });
+
+      let merchantRuleSaved = false;
+      if (typeof updates.category === "string" && args.remember_merchant_category !== false) {
+        const merchantKey = normalizeMerchantKey(updated.merchant_name || updated.name);
+        if (merchantKey) {
+          const ruleType =
+            typeof updates.transaction_type === "string"
+              ? updates.transaction_type
+              : defaultTransactionTypeForCategory(updates.category);
+          const { error: ruleError } = await admin
+            .from("merchant_category_rules")
+            .upsert(
+              {
+                user_id: userId,
+                merchant_key: merchantKey,
+                category: updates.category,
+                transaction_type: ruleType,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "user_id,merchant_key" }
+            );
+          if (ruleError) return errResult(`Updated transaction, but failed to save merchant rule: ${ruleError.message}`);
+          merchantRuleSaved = true;
+        }
+      }
+
+      return okResult({ updated: true, transaction: updated, merchant_rule_saved: merchantRuleSaved });
     }
 
     case "delete_transaction": {
@@ -1471,11 +1634,277 @@ async function handleToolCall(
       return okResult({ deleted: true, transaction: data });
     }
 
+    case "split_transaction": {
+      const txnId = typeof args.transaction_id === "string" ? args.transaction_id.trim() : "";
+      if (!txnId) return errResult("transaction_id is required.");
+
+      const partA = args.part_a && typeof args.part_a === "object" ? (args.part_a as Record<string, unknown>) : null;
+      const partB = args.part_b && typeof args.part_b === "object" ? (args.part_b as Record<string, unknown>) : null;
+      if (!partA || !partB) return errResult("part_a and part_b objects are required.");
+
+      const amountA = Number(partA.amount);
+      const amountB = Number(partB.amount);
+      if (!Number.isFinite(amountA) || amountA <= 0) return errResult("part_a.amount must be a positive number.");
+      if (!Number.isFinite(amountB) || amountB <= 0) return errResult("part_b.amount must be a positive number.");
+
+      const { data: original, error: fetchErr } = await admin
+        .from("transactions")
+        .select(
+          "id, date, name, merchant_name, amount, category, transaction_type, is_manual, is_ignored, notes, account_id, credit_card_id, source_name, import_fingerprint, plaid_transaction_id, teller_transaction_id"
+        )
+        .eq("id", txnId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (fetchErr) return errResult(`Database error: ${fetchErr.message}`);
+      if (!original) return errResult(`No transaction found with id "${txnId}".`);
+
+      const categoryA = partA.category !== undefined ? String(partA.category) : (original.category || "other");
+      const categoryB = partB.category !== undefined ? String(partB.category) : (original.category || "other");
+      if (!VALID_CATEGORIES.has(categoryA)) return errResult(`Invalid part_a.category "${categoryA}".`);
+      if (!VALID_CATEGORIES.has(categoryB)) return errResult(`Invalid part_b.category "${categoryB}".`);
+
+      const typeA = partA.transaction_type !== undefined ? String(partA.transaction_type) : (original.transaction_type || "expense");
+      const typeB = partB.transaction_type !== undefined ? String(partB.transaction_type) : (original.transaction_type || "expense");
+      if (!VALID_TRANSACTION_TYPES.has(typeA)) return errResult(`Invalid part_a.transaction_type "${typeA}".`);
+      if (!VALID_TRANSACTION_TYPES.has(typeB)) return errResult(`Invalid part_b.transaction_type "${typeB}".`);
+
+      const defaults = defaultSplitNames(original.merchant_name || original.name || "Transaction");
+      const nameA = typeof partA.name === "string" && partA.name.trim() ? partA.name.trim() : defaults.yourPart;
+      const nameB = typeof partB.name === "string" && partB.name.trim() ? partB.name.trim() : defaults.otherPart;
+
+      const base = {
+        user_id: userId,
+        account_id: original.account_id ?? null,
+        credit_card_id: original.credit_card_id ?? null,
+        source_name: original.source_name ?? null,
+        date: original.date,
+        is_manual: true,
+      };
+
+      // Insert replacement transactions first so a failed insert never hides/deletes the original.
+      const { data: createdRows, error: insertErr } = await admin
+        .from("transactions")
+        .insert([
+          {
+            ...base,
+            name: nameA,
+            merchant_name: nameA,
+            amount: toSignedAmount(amountA, typeA),
+            category: categoryA,
+            transaction_type: typeA,
+          },
+          {
+            ...base,
+            name: nameB,
+            merchant_name: nameB,
+            amount: toSignedAmount(amountB, typeB),
+            category: categoryB,
+            transaction_type: typeB,
+          },
+        ])
+        .select("id, date, name, merchant_name, amount, category, transaction_type, account_id, credit_card_id");
+      if (insertErr) return errResult(`Failed to create split transactions: ${insertErr.message}`);
+
+      if (canDeleteSplitOriginal(original)) {
+        const { error: delErr } = await admin
+          .from("transactions")
+          .delete()
+          .eq("id", txnId)
+          .eq("user_id", userId);
+        if (delErr) return errResult(`Created split rows, but failed to delete original: ${delErr.message}`);
+        return okResult({
+          split: true,
+          original_id: txnId,
+          original_action: "deleted",
+          created_transactions: createdRows ?? [],
+        });
+      }
+
+      const { error: updateErr } = await admin
+        .from("transactions")
+        .update({ is_ignored: true, notes: appendSplitTag(original.notes) })
+        .eq("id", txnId)
+        .eq("user_id", userId);
+      if (updateErr) return errResult(`Created split rows, but failed to ignore original: ${updateErr.message}`);
+
+      return okResult({
+        split: true,
+        original_id: txnId,
+        original_action: "ignored_with_split_tag",
+        created_transactions: createdRows ?? [],
+      });
+    }
+
+    case "find_refund_candidates": {
+      const txnId = typeof args.transaction_id === "string" ? args.transaction_id.trim() : "";
+      if (!txnId) return errResult("transaction_id is required.");
+
+      const windowDays = Math.min(365, Math.max(1, Number(args.window_days ?? 90)));
+      const limit = Math.min(50, Math.max(1, Number(args.limit ?? 20)));
+
+      const { data: target, error: targetErr } = await admin
+        .from("transactions")
+        .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes")
+        .eq("id", txnId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (targetErr) return errResult(`Database error: ${targetErr.message}`);
+      if (!target) return errResult(`No transaction found with id "${txnId}".`);
+
+      const baseMs = Date.parse(`${String(target.date).slice(0, 10)}T00:00:00Z`);
+      if (Number.isNaN(baseMs)) return errResult(`Transaction "${txnId}" has an invalid date.`);
+      const start = new Date(baseMs - windowDays * 86_400_000).toISOString().slice(0, 10);
+      const end = new Date(baseMs + windowDays * 86_400_000).toISOString().slice(0, 10);
+
+      const { data: pool, error: poolErr } = await admin
+        .from("transactions")
+        .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes, account_id, credit_card_id")
+        .eq("user_id", userId)
+        .eq("is_ignored", false)
+        .neq("id", target.id)
+        .gte("date", start)
+        .lte("date", end)
+        .order("date", { ascending: false })
+        .limit(200);
+      if (poolErr) return errResult(`Database error: ${poolErr.message}`);
+
+      const ranked = rankRefundCandidates(target, pool ?? []).slice(0, limit);
+      return okResult({ target, window_days: windowDays, count: ranked.length, candidates: ranked });
+    }
+
+    case "link_refund_transactions": {
+      const txAId = typeof args.transaction_a_id === "string" ? args.transaction_a_id.trim() : "";
+      const txBId = typeof args.transaction_b_id === "string" ? args.transaction_b_id.trim() : "";
+      if (!txAId || !txBId) return errResult("Both transaction_a_id and transaction_b_id are required.");
+      if (txAId === txBId) return errResult("Cannot link a transaction to itself.");
+
+      const { data: rows, error: fetchErr } = await admin
+        .from("transactions")
+        .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes, account_id, credit_card_id, source_name")
+        .in("id", [txAId, txBId])
+        .eq("user_id", userId);
+      if (fetchErr) return errResult(`Database error: ${fetchErr.message}`);
+
+      const txA = (rows ?? []).find((r) => r.id === txAId);
+      const txB = (rows ?? []).find((r) => r.id === txBId);
+      if (!txA || !txB) return errResult("Could not find both transactions to link.");
+
+      const { original, refund } = classifyRefundPair(txA, txB);
+      const origLabel = original.merchant_name || original.name;
+      const refundLabel = refund.merchant_name || refund.name;
+
+      const originalNotes = attachRefundTag(original.notes, {
+        role: "original",
+        partnerId: refund.id,
+        partnerDate: refund.date,
+        partnerName: refundLabel,
+      });
+      const refundNotes = attachRefundTag(refund.notes, {
+        role: "refund",
+        partnerId: original.id,
+        partnerDate: original.date,
+        partnerName: origLabel,
+      });
+
+      // Optionally create a net transaction for partial refunds before ignoring both.
+      let netTransaction = null;
+      const diff = Math.round((Math.abs(Number(original.amount)) - Math.abs(Number(refund.amount))) * 100) / 100;
+      if (args.create_net_difference === true && diff >= 0.01) {
+        const netName = `${origLabel} (after refund)`;
+        const { data: inserted, error: insertErr } = await admin
+          .from("transactions")
+          .insert({
+            user_id: userId,
+            account_id: original.account_id ?? null,
+            credit_card_id: original.credit_card_id ?? null,
+            source_name: original.source_name ?? null,
+            date: original.date,
+            name: netName,
+            merchant_name: netName,
+            amount: toSignedAmount(diff, original.transaction_type),
+            category: original.category,
+            transaction_type: original.transaction_type,
+            is_manual: true,
+            notes: `Net amount after partial refund (${refund.date})`,
+          })
+          .select("id, date, name, merchant_name, amount, category, transaction_type, notes, account_id, credit_card_id")
+          .single();
+        if (insertErr) return errResult(`Failed to create net partial-refund transaction: ${insertErr.message}`);
+        netTransaction = inserted;
+      }
+
+      const [{ data: updatedOrig, error: err1 }, { data: updatedRefund, error: err2 }] = await Promise.all([
+        admin
+          .from("transactions")
+          .update({ is_ignored: true, notes: originalNotes })
+          .eq("id", original.id)
+          .eq("user_id", userId)
+          .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes")
+          .single(),
+        admin
+          .from("transactions")
+          .update({ is_ignored: true, notes: refundNotes })
+          .eq("id", refund.id)
+          .eq("user_id", userId)
+          .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes")
+          .single(),
+      ]);
+      if (err1) return errResult(`Failed to update original transaction: ${err1.message}`);
+      if (err2) return errResult(`Failed to update refund transaction: ${err2.message}`);
+
+      return okResult({
+        linked: true,
+        original: updatedOrig,
+        refund: updatedRefund,
+        net_transaction: netTransaction,
+      });
+    }
+
+    case "unlink_refund_transactions": {
+      const txnId = typeof args.transaction_id === "string" ? args.transaction_id.trim() : "";
+      if (!txnId) return errResult("transaction_id is required.");
+
+      const { data: tx, error: fetchErr } = await admin
+        .from("transactions")
+        .select("id, notes")
+        .eq("id", txnId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (fetchErr) return errResult(`Database error: ${fetchErr.message}`);
+      if (!tx) return errResult(`No transaction found with id "${txnId}".`);
+
+      const link = parseRefundLink(tx.notes);
+      const ids = link ? [tx.id, link.partnerId] : [tx.id];
+
+      const { data: rows, error: pairErr } = await admin
+        .from("transactions")
+        .select("id, notes")
+        .in("id", ids)
+        .eq("user_id", userId);
+      if (pairErr) return errResult(`Database error: ${pairErr.message}`);
+
+      const updated = [];
+      for (const row of rows ?? []) {
+        const cleaned = removeRefundTag(row.notes);
+        const { data: saved, error: updateErr } = await admin
+          .from("transactions")
+          .update({ is_ignored: false, notes: cleaned })
+          .eq("id", row.id)
+          .eq("user_id", userId)
+          .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes")
+          .single();
+        if (updateErr) return errResult(`Failed to unlink transaction ${row.id}: ${updateErr.message}`);
+        updated.push(saved);
+      }
+
+      return okResult({ unlinked: true, updated });
+    }
+
     // ── Planner Config ───────────────────────────────────────────────────────
     case "update_planner_config": {
       const { data: existing } = await admin
         .from("planner_configs")
-        .select("config, paid_loan_ids, paid_loan_month, tax_filing_status")
+        .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status")
         .eq("user_id", userId)
         .maybeSingle();
 
@@ -1489,6 +1918,9 @@ async function handleToolCall(
         config: nextConfig,
         paid_loan_ids: Array.isArray(args.paid_loan_ids) ? args.paid_loan_ids : (existing?.paid_loan_ids ?? []),
         paid_loan_month: typeof args.paid_loan_month === "string" ? args.paid_loan_month : (existing?.paid_loan_month ?? ""),
+        dismissed_suggestions: Array.isArray(args.dismissed_suggestions)
+          ? args.dismissed_suggestions
+          : (existing?.dismissed_suggestions ?? []),
         tax_filing_status:
           typeof args.tax_filing_status === "string" ? args.tax_filing_status : (existing?.tax_filing_status ?? "single"),
       };
@@ -1496,7 +1928,7 @@ async function handleToolCall(
       const { data, error } = await admin
         .from("planner_configs")
         .upsert(payload, { onConflict: "user_id" })
-        .select("config, paid_loan_ids, paid_loan_month, tax_filing_status, updated_at")
+        .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status, updated_at")
         .single();
       if (error) return errResult(`Failed to update planner config: ${error.message}`);
       return okResult({ updated: true, plannerConfig: data });

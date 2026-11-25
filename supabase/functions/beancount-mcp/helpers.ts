@@ -136,3 +136,212 @@ export function summarizeTransactions(txns: SimpleTransaction[]) {
     categories,
   };
 }
+
+/** Returns the default transaction_type for a BeanCount category slug. */
+export function defaultTransactionTypeForCategory(category: string): "income" | "expense" | "transfer" {
+  if (category === "income") return "income";
+  if (category === "transfer_in" || category === "transfer_out") return "transfer";
+  return "expense";
+}
+
+/** Normalizes a merchant name for matching/saving in merchant_category_rules. */
+export function normalizeMerchantKey(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const key = value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  return key.length > 0 && key.length <= 500 ? key : null;
+}
+
+/** Matches BeanCount's Plaid-style signed amount convention (income negative, outflow positive). */
+export function toSignedAmount(amount: number, transactionType: string): number {
+  return transactionType === "income" ? -Math.abs(amount) : Math.abs(amount);
+}
+
+// ── Split Transactions ───────────────────────────────────────────────────────
+
+export interface SplitCheckableTransaction {
+  is_ignored?: boolean | null;
+  notes?: string | null;
+}
+
+export interface SplitDeletableTransaction {
+  is_manual?: boolean | null;
+  import_fingerprint?: string | null;
+  plaid_transaction_id?: string | null;
+  teller_transaction_id?: string | null;
+}
+
+/** Returns true for original imported/synced rows replaced by a split. */
+export function isSplitOriginal(tx: SplitCheckableTransaction): boolean {
+  return Boolean(tx.is_ignored && (tx.notes ?? "").includes("[split]"));
+}
+
+/** Purely manual rows can be deleted on split; imported/synced rows stay ignored with [split]. */
+export function canDeleteSplitOriginal(tx: SplitDeletableTransaction): boolean {
+  return Boolean(
+    tx.is_manual &&
+      !tx.import_fingerprint &&
+      !tx.plaid_transaction_id &&
+      !tx.teller_transaction_id
+  );
+}
+
+/** Builds default labels for a two-way transaction split. */
+export function defaultSplitNames(originalName: string): { yourPart: string; otherPart: string } {
+  const base = originalName.trim() || "Transaction";
+  return {
+    yourPart: `${base} (your part)`,
+    otherPart: `${base} (other part)`,
+  };
+}
+
+/** Appends `[split]` to notes once without duplicating an existing tag. */
+export function appendSplitTag(existingNotes: string | null | undefined): string {
+  const trimmed = (existingNotes ?? "").trim();
+  if (trimmed.includes("[split]")) return trimmed;
+  return trimmed ? `${trimmed} [split]` : "[split]";
+}
+
+// ── Refund Linking ───────────────────────────────────────────────────────────
+
+export interface RefundLink {
+  role: "original" | "refund";
+  partnerId: string;
+  partnerDate: string;
+  partnerName: string;
+}
+
+const REFUND_TAG_RE = /\[refund:(original|refund):([^:\]]+):([^:\]]+):([^\]]+)\]/;
+
+function sanitizeRefundLabel(name: string): string {
+  return name.replace(/[\]:]/g, " ").replace(/\s+/g, " ").trim() || "Transaction";
+}
+
+/** Parses a `[refund:...]` link tag from a transaction's notes field. */
+export function parseRefundLink(notes?: string | null): RefundLink | null {
+  if (!notes) return null;
+  const match = notes.match(REFUND_TAG_RE);
+  if (!match) return null;
+  return {
+    role: match[1] as "original" | "refund",
+    partnerId: match[2],
+    partnerDate: match[3],
+    partnerName: match[4].trim(),
+  };
+}
+
+/** Strips any internal `[refund:...]` tag from notes. */
+export function stripRefundTag(notes?: string | null): string {
+  if (!notes) return "";
+  return notes.replace(REFUND_TAG_RE, "").replace(/\s{2,}/g, " ").trim();
+}
+
+/** Attaches (or replaces) a `[refund:...]` tag while preserving any user notes. */
+export function attachRefundTag(
+  existingNotes: string | null | undefined,
+  link: RefundLink
+): string {
+  const clean = stripRefundTag(existingNotes);
+  const tag = `[refund:${link.role}:${link.partnerId}:${link.partnerDate}:${sanitizeRefundLabel(link.partnerName)}]`;
+  return clean ? `${clean} ${tag}` : tag;
+}
+
+/** Removes any `[refund:...]` tag from notes, returning null if nothing remains. */
+export function removeRefundTag(notes?: string | null): string | null {
+  const clean = stripRefundTag(notes);
+  return clean ? clean : null;
+}
+
+export interface RefundCandidate {
+  id: string;
+  name: string;
+  merchant_name?: string | null;
+  amount: number;
+  date: string;
+  transaction_type: string;
+  is_ignored?: boolean | null;
+  notes?: string | null;
+}
+
+function tokenizeName(name: string): Set<string> {
+  return new Set(
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length >= 3)
+  );
+}
+
+function daysBetween(dateA: string, dateB: string): number {
+  const msA = Date.parse(`${dateA.slice(0, 10)}T00:00:00Z`);
+  const msB = Date.parse(`${dateB.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(msA) || Number.isNaN(msB)) return 999;
+  return Math.abs(msA - msB) / 86_400_000;
+}
+
+/** Ranks candidate transactions most likely to be the refund/original partner of `target`. */
+export function rankRefundCandidates<T extends RefundCandidate>(
+  target: RefundCandidate,
+  candidates: T[]
+): T[] {
+  const targetAmt = Math.abs(target.amount);
+  const targetTokens = tokenizeName(target.merchant_name || target.name);
+
+  return candidates
+    .filter((c) => c.id !== target.id && !c.is_ignored && !isSplitOriginal(c))
+    .map((c) => {
+      let score = 0;
+      const amt = Math.abs(c.amount);
+
+      if (Math.abs(amt - targetAmt) < 0.01) {
+        score += 100;
+      } else if (
+        (target.transaction_type === "expense" && amt < targetAmt) ||
+        (target.transaction_type !== "expense" && amt > targetAmt)
+      ) {
+        score += 30;
+      }
+
+      if (c.transaction_type !== target.transaction_type) {
+        score += 50;
+      }
+
+      const candTokens = tokenizeName(c.merchant_name || c.name);
+      let shared = 0;
+      for (const tok of targetTokens) {
+        if (candTokens.has(tok)) shared += 1;
+      }
+      if (shared > 0) score += 40 + Math.min(shared, 3) * 5;
+
+      const gap = daysBetween(target.date, c.date);
+      if (gap <= 14) score += 35;
+      else if (gap <= 45) score += 20;
+      else if (gap <= 90) score += 10;
+
+      return { c, score };
+    })
+    .sort((a, b) => b.score - a.score || b.c.date.localeCompare(a.c.date))
+    .map((entry) => entry.c);
+}
+
+/** Determines which transaction in a linked pair is the original purchase and which is the refund. */
+export function classifyRefundPair<
+  T extends { id: string; amount: number; date: string; transaction_type: string }
+>(txA: T, txB: T): { original: T; refund: T } {
+  if (txA.transaction_type === "expense" && txB.transaction_type !== "expense") {
+    return { original: txA, refund: txB };
+  }
+  if (txB.transaction_type === "expense" && txA.transaction_type !== "expense") {
+    return { original: txB, refund: txA };
+  }
+  if (Math.abs(txA.amount) !== Math.abs(txB.amount)) {
+    return Math.abs(txA.amount) > Math.abs(txB.amount)
+      ? { original: txA, refund: txB }
+      : { original: txB, refund: txA };
+  }
+  return txA.date <= txB.date
+    ? { original: txA, refund: txB }
+    : { original: txB, refund: txA };
+}
+

@@ -122,8 +122,10 @@ Run the unit tests with `npm test` (Node 22+).
 
 BeanCount includes a remote MCP (Model Context Protocol) server as a Supabase Edge Function at
 `supabase/functions/beancount-mcp/index.ts`. It supports full CRUD across accounts, credit cards,
-debts owed (pending/partial/paid), liabilities, loans, stock/crypto holdings, transactions, and
-planner config — strictly scoped to your `user_id` while never exposing `integration_tokens`.
+debts owed (pending/partial/paid), liabilities, loans, stock/crypto holdings, transactions
+(including splitting transactions, finding/linking/unlinking full or partial refunds, and
+remembering merchant category rules), and planner config — strictly scoped to your `user_id`
+while never exposing `integration_tokens`.
 
 ### Deploy & Connect to ChatGPT
 
