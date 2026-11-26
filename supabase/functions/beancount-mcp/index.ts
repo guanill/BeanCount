@@ -8,20 +8,25 @@
 import { getSupabaseAdmin, getSupabaseClient } from "../_shared/supabase.ts";
 import {
   appendSplitTag,
+  applyLoanPaidStatus,
   attachRefundTag,
+  buildImportFingerprint,
   canDeleteSplitOriginal,
   classifyRefundPair,
   constantTimeEqual,
   defaultSplitNames,
   defaultTransactionTypeForCategory,
+  deletePlannerCollectionItem,
   isSplitOriginal,
   normalizeMerchantKey,
   parseRefundLink,
+  PLANNER_COLLECTIONS,
   rankRefundCandidates,
   removeRefundTag,
   resolveNamedEntity,
   summarizeTransactions,
   toSignedAmount,
+  upsertPlannerCollectionItem,
   VALID_CATEGORIES,
   VALID_TRANSACTION_TYPES,
 } from "./helpers.ts";
@@ -40,7 +45,7 @@ const JSON_HEADERS = {
 
 const SERVER_INFO = {
   name: "beancount-mcp",
-  version: "2.1.0",
+  version: "2.2.0",
 };
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
@@ -139,6 +144,75 @@ const TOOLS = [
     description: "Get the user's Planner & Tax configuration (tax_filing_status, paid loans, recurring bills, salary schedules).",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: READ_ONLY,
+  },
+  {
+    name: "save_net_worth_snapshot",
+    description:
+      "Save or update a daily net_worth_snapshots entry for a given date (defaults to today). Omit numeric fields to auto-compute them from current accounts, credit cards, debts owed, and liabilities.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        snapshot_date: { type: "string", description: "YYYY-MM-DD (defaults to today UTC)." },
+        net_worth: { type: "number", description: "Optional override; auto-computed if omitted." },
+        assets_total: { type: "number", description: "Optional override; auto-computed if omitted." },
+        stock_total: { type: "number", description: "Optional override; auto-computed if omitted." },
+        crypto_total: { type: "number", description: "Optional override; auto-computed if omitted." },
+      },
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "delete_net_worth_snapshot",
+    description: "Delete a net worth snapshot by snapshot_id or snapshot_date (YYYY-MM-DD).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        snapshot_id: { type: "string" },
+        snapshot_date: { type: "string", description: "YYYY-MM-DD." },
+      },
+      additionalProperties: false,
+    },
+    annotations: DESTRUCTIVE,
+  },
+  {
+    name: "list_merchant_category_rules",
+    description: "List all saved merchant_category_rules that auto-categorize future transactions for specific merchants.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: READ_ONLY,
+  },
+  {
+    name: "upsert_merchant_category_rule",
+    description:
+      "Create or update a merchant category rule so future imports/transactions from that merchant get the chosen category and transaction_type. Optionally retroactively apply to existing transactions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        merchant: { type: "string", description: "Merchant name or normalized merchant_key." },
+        category: { type: "string", description: "Valid BeanCount category slug." },
+        transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+        apply_to_existing: {
+          type: "boolean",
+          description: "If true, also update existing non-ignored transactions matching this merchant (default false).",
+        },
+      },
+      required: ["merchant", "category"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "delete_merchant_category_rule",
+    description: "Delete a saved merchant category rule by merchant name or normalized merchant_key.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        merchant: { type: "string", description: "Merchant name or normalized merchant_key." },
+      },
+      required: ["merchant"],
+      additionalProperties: false,
+    },
+    annotations: DESTRUCTIVE,
   },
 
   // ── Accounts CRUD ──────────────────────────────────────────────────────────
@@ -404,7 +478,7 @@ const TOOLS = [
   },
   {
     name: "update_loan",
-    description: "Update any field on a loan (name, type, balance, original_amount, interest_rate, monthly_payment, payment_day, deferral_months, deferral_type, notes).",
+    description: "Update any field on a loan (name, type, balance, original_amount, interest_rate, monthly_payment, payment_day, deferral_months, deferral_type, notes). Use clear_fields to set nullable fields back to null.",
     inputSchema: {
       type: "object",
       properties: {
@@ -420,7 +494,28 @@ const TOOLS = [
         deferral_months: { type: "integer", minimum: 0 },
         deferral_type: { type: "string", enum: ["subsidized", "unsubsidized"] },
         notes: { type: "string" },
+        clear_fields: {
+          type: "array",
+          items: { type: "string", enum: ["original_amount", "payment_day", "notes"] },
+          description: "Optional list of nullable fields to clear to null.",
+        },
       },
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "toggle_loan_paid",
+    description: "Mark a loan as paid or unpaid for a given month (YYYY-MM, defaults to current month) in planner_configs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        loan_id: { type: "string" },
+        loan_name: { type: "string" },
+        paid: { type: "boolean", description: "True to mark paid, false to mark unpaid." },
+        month: { type: "string", description: "YYYY-MM (defaults to current UTC month)." },
+      },
+      required: ["paid"],
       additionalProperties: false,
     },
     annotations: WRITE_IDEMPOTENT,
@@ -458,6 +553,25 @@ const TOOLS = [
     annotations: WRITE_IDEMPOTENT,
   },
   {
+    name: "update_holding",
+    description: "Update an existing stock/crypto holding by holding_id (rename ticker, update shares/cost_basis, move account, or clear cost_basis).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        holding_id: { type: "string" },
+        account_id: { type: "string", description: "Optional new stock/crypto account ID." },
+        account_name: { type: "string", description: "Optional new stock/crypto account name." },
+        ticker: { type: "string", description: "New uppercase ticker symbol." },
+        shares: { type: "number", description: "Positive number of shares/units." },
+        cost_basis: { type: "number", description: "Total cost basis paid." },
+        clear_cost_basis: { type: "boolean", description: "Set true to clear cost_basis to null." },
+      },
+      required: ["holding_id"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
     name: "delete_holding",
     description: "Delete a stock/crypto holding by holding_id, or by ticker + account_name/account_id.",
     inputSchema: {
@@ -476,17 +590,23 @@ const TOOLS = [
   // ── Transactions CRUD ──────────────────────────────────────────────────────
   {
     name: "add_transaction",
-    description: "Add a manual transaction (expense, income, or transfer) optionally linked to an account or credit card.",
+    description:
+      "Add a manual transaction (expense, income, or transfer) optionally linked to an account or credit card. Automatically applies saved merchant_category_rules if category is omitted or 'other'.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string" },
+        merchant_name: { type: "string" },
         amount: { type: "number" },
         date: { type: "string", description: "YYYY-MM-DD (defaults to today)." },
-        category: { type: "string", description: "Category slug (defaults to 'other')." },
+        category: { type: "string", description: "Category slug (defaults to saved merchant rule or 'other')." },
+        subcategory: { type: "string" },
         transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+        account_id: { type: "string" },
         account_name: { type: "string" },
+        credit_card_id: { type: "string" },
         card_name: { type: "string" },
+        is_ignored: { type: "boolean" },
         notes: { type: "string" },
       },
       required: ["name", "amount"],
@@ -497,7 +617,7 @@ const TOOLS = [
   {
     name: "update_transaction",
     description:
-      "Update fields on an existing transaction by transaction_id (name, merchant_name, amount, date, category, transaction_type, is_ignored, notes). Automatically syncs merchant_name on rename and remembers merchant category rules when category changes.",
+      "Update fields on an existing transaction by transaction_id (name, merchant_name, amount, date, category, subcategory, transaction_type, account_id/account_name, credit_card_id/card_name, is_ignored, notes). Automatically syncs merchant_name on rename and remembers merchant category rules when category changes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -507,9 +627,15 @@ const TOOLS = [
         amount: { type: "number" },
         date: { type: "string", description: "YYYY-MM-DD." },
         category: { type: "string" },
+        subcategory: { type: "string" },
         transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+        account_id: { type: "string" },
+        account_name: { type: "string" },
+        credit_card_id: { type: "string" },
+        card_name: { type: "string" },
+        clear_source: { type: "boolean", description: "Set true to unlink account_id and credit_card_id." },
         is_ignored: { type: "boolean" },
-        notes: { type: "string" },
+        notes: { type: "string", description: "Pass empty string to clear notes." },
         remember_merchant_category: {
           type: "boolean",
           description: "Save a merchant_category_rules override when category changes (default true).",
@@ -519,6 +645,74 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "bulk_update_transactions",
+    description:
+      "Update category, transaction_type, is_ignored, notes, or linked account/card across multiple transaction_ids in one call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        transaction_ids: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 200,
+        },
+        category: { type: "string" },
+        transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+        is_ignored: { type: "boolean" },
+        notes: { type: "string" },
+        account_id: { type: "string" },
+        account_name: { type: "string" },
+        credit_card_id: { type: "string" },
+        card_name: { type: "string" },
+        remember_merchant_category: {
+          type: "boolean",
+          description: "Save merchant_category_rules for updated merchants when category is set (default false).",
+        },
+      },
+      required: ["transaction_ids"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "import_transactions",
+    description:
+      "Bulk import transactions (like CSV import) with deduplication via import_fingerprint and automatic merchant_category_rules lookup.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_id: { type: "string", description: "Optional default account ID for all rows." },
+        account_name: { type: "string", description: "Optional default account name for all rows." },
+        credit_card_id: { type: "string", description: "Optional default credit card ID for all rows." },
+        card_name: { type: "string", description: "Optional default credit card name for all rows." },
+        transactions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 500,
+          items: {
+            type: "object",
+            properties: {
+              date: { type: "string", description: "YYYY-MM-DD." },
+              name: { type: "string" },
+              merchant_name: { type: "string" },
+              amount: { type: "number", description: "Positive amount; signed automatically by transaction_type." },
+              category: { type: "string" },
+              transaction_type: { type: "string", enum: ["expense", "income", "transfer"] },
+              notes: { type: "string" },
+              import_fingerprint: { type: "string", description: "Optional custom dedupe key; auto-generated if omitted." },
+            },
+            required: ["date", "name", "amount"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["transactions"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_CREATE,
   },
   {
     name: "delete_transaction",
@@ -532,6 +726,41 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: DESTRUCTIVE,
+  },
+  {
+    name: "delete_transactions_for_source",
+    description:
+      "Delete all transactions linked to a specific account, credit card, or all Teller-synced transactions (source_type='teller').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_type: { type: "string", enum: ["account", "card", "teller"] },
+        account_id: { type: "string" },
+        account_name: { type: "string" },
+        card_id: { type: "string" },
+        card_name: { type: "string" },
+      },
+      required: ["source_type"],
+      additionalProperties: false,
+    },
+    annotations: DESTRUCTIVE,
+  },
+  {
+    name: "get_transaction_coverage",
+    description:
+      "Get monthly imported-transaction counts for a calendar year, optionally filtered to a single account or credit card.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        year: { type: "integer", minimum: 2000, maximum: 2100, description: "Defaults to current UTC year." },
+        account_id: { type: "string" },
+        account_name: { type: "string" },
+        card_id: { type: "string" },
+        card_name: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
   },
   {
     name: "split_transaction",
@@ -623,7 +852,7 @@ const TOOLS = [
   {
     name: "update_planner_config",
     description:
-      "Update planner settings (tax_filing_status, paid_loan_ids, paid_loan_month, dismissed_suggestions, or merge fields into config JSON).",
+      "Update planner settings (tax_filing_status, paid_loan_ids, paid_loan_month, dismissed_suggestions, or shallow-merge fields into config JSON).",
     inputSchema: {
       type: "object",
       properties: {
@@ -632,6 +861,55 @@ const TOOLS = [
         paid_loan_month: { type: "string" },
         dismissed_suggestions: { type: "array", items: { type: "string" } },
         config_patch: { type: "object", description: "Shallow-merged into planner_configs.config JSON." },
+      },
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "manage_planner_item",
+    description:
+      "Add, update, or delete an individual item inside a planner_configs.config collection (salaryPeriods, recurringCharges, recurringBonuses, vestingGrants, events, or scenarioEvents) without overwriting the rest of the planner config.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: {
+          type: "string",
+          enum: [
+            "salaryPeriods",
+            "recurringCharges",
+            "recurringBonuses",
+            "vestingGrants",
+            "events",
+            "scenarioEvents",
+          ],
+        },
+        action: { type: "string", enum: ["upsert", "delete"] },
+        item_id: { type: "string", description: "Item ID to delete (or update if not provided inside item.id)." },
+        item: {
+          type: "object",
+          description: "Item fields to create or merge into the existing item when action='upsert'.",
+        },
+      },
+      required: ["collection", "action"],
+      additionalProperties: false,
+    },
+    annotations: WRITE_IDEMPOTENT,
+  },
+  {
+    name: "update_tax_tracking",
+    description:
+      "Update Tax Center settings: tax_filing_status and/or fields for a specific tax year in planner_configs.config.taxYearTracking[year].",
+    inputSchema: {
+      type: "object",
+      properties: {
+        year: { type: "string", description: "4-digit tax year (e.g. '2026'). Required when passing tracking_patch." },
+        tax_filing_status: { type: "string", enum: ["single", "mfj", "mfs", "hoh"] },
+        tracking_patch: {
+          type: "object",
+          description:
+            "Fields to merge into taxYearTracking[year] (actualGrossIncome, actualWithholding, expectedRemainingGross, expectedRemainingWithholding, estimatedPayments, taxCredits, expectedRefundDate, estimatedRefundAmount, estimatedTaxBalance, refundReceived, refundReceivedDate, otherIncome).",
+        },
       },
       additionalProperties: false,
     },
@@ -880,7 +1158,180 @@ async function handleToolCall(
         .eq("user_id", userId)
         .maybeSingle();
       if (error) return errResult(`Database error: ${error.message}`);
-      return okResult(data ?? { config: {}, paid_loan_ids: [], paid_loan_month: "", tax_filing_status: "single" });
+      return okResult(data ?? { config: {}, paid_loan_ids: [], paid_loan_month: "", dismissed_suggestions: [], tax_filing_status: "single" });
+    }
+
+    case "save_net_worth_snapshot": {
+      const snapshotDate =
+        typeof args.snapshot_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.snapshot_date)
+          ? args.snapshot_date
+          : new Date().toISOString().slice(0, 10);
+
+      const needsAutoCompute =
+        args.net_worth === undefined ||
+        args.assets_total === undefined ||
+        args.stock_total === undefined ||
+        args.crypto_total === undefined;
+
+      let autoNetWorth = 0;
+      let autoAssetsTotal = 0;
+      let autoStockTotal = 0;
+      let autoCryptoTotal = 0;
+
+      if (needsAutoCompute) {
+        const [accountsRes, cardsRes, debtsRes, liabsRes] = await Promise.all([
+          admin.from("accounts").select("type, balance").eq("user_id", userId),
+          admin.from("credit_cards").select("balance_owed, points_balance, points_value_cents").eq("user_id", userId),
+          admin.from("debts_owed").select("amount").eq("user_id", userId).neq("status", "paid"),
+          admin.from("liabilities").select("amount").eq("user_id", userId),
+        ]);
+        for (const r of [accountsRes, cardsRes, debtsRes, liabsRes]) {
+          if (r.error) return errResult(`Database error: ${r.error.message}`);
+        }
+        let bankTotal = 0, cashTotal = 0;
+        for (const a of accountsRes.data ?? []) {
+          const bal = Number(a.balance);
+          if (a.type === "bank") bankTotal += bal;
+          else if (a.type === "cash") cashTotal += bal;
+          else if (a.type === "stock") autoStockTotal += bal;
+          else if (a.type === "crypto") autoCryptoTotal += bal;
+        }
+        autoAssetsTotal = bankTotal + cashTotal + autoStockTotal + autoCryptoTotal;
+        const creditCardDebt = (cardsRes.data ?? []).reduce((s, c) => s + Math.max(0, Number(c.balance_owed)), 0);
+        const pointsValue = (cardsRes.data ?? []).reduce(
+          (s, c) => s + (Number(c.points_balance) * Number(c.points_value_cents)) / 100,
+          0
+        );
+        const debtsOwedTotal = (debtsRes.data ?? []).reduce((s, d) => s + Number(d.amount), 0);
+        const liabilitiesTotal = (liabsRes.data ?? []).reduce((s, l) => s + Number(l.amount), 0);
+        autoNetWorth = autoAssetsTotal + debtsOwedTotal + pointsValue - creditCardDebt - liabilitiesTotal;
+      }
+
+      const netWorth = args.net_worth !== undefined ? Number(args.net_worth) : Number(autoNetWorth.toFixed(2));
+      const assetsTotal = args.assets_total !== undefined ? Number(args.assets_total) : Number(autoAssetsTotal.toFixed(2));
+      const stockTotal = args.stock_total !== undefined ? Number(args.stock_total) : Number(autoStockTotal.toFixed(2));
+      const cryptoTotal = args.crypto_total !== undefined ? Number(args.crypto_total) : Number(autoCryptoTotal.toFixed(2));
+
+      if (![netWorth, assetsTotal, stockTotal, cryptoTotal].every(Number.isFinite)) {
+        return errResult("Snapshot totals must be valid numbers.");
+      }
+
+      const { data, error } = await admin
+        .from("net_worth_snapshots")
+        .upsert(
+          {
+            user_id: userId,
+            snapshot_date: snapshotDate,
+            net_worth: netWorth,
+            assets_total: assetsTotal,
+            stock_total: stockTotal,
+            crypto_total: cryptoTotal,
+          },
+          { onConflict: "user_id,snapshot_date" }
+        )
+        .select("id, snapshot_date, net_worth, assets_total, stock_total, crypto_total, created_at")
+        .single();
+      if (error) return errResult(`Failed to save net worth snapshot: ${error.message}`);
+      return okResult({ saved: true, snapshot: data });
+    }
+
+    case "delete_net_worth_snapshot": {
+      const snapId = typeof args.snapshot_id === "string" ? args.snapshot_id.trim() : "";
+      const snapDate = typeof args.snapshot_date === "string" ? args.snapshot_date.trim() : "";
+      if (!snapId && !snapDate) return errResult("Provide snapshot_id or snapshot_date (YYYY-MM-DD).");
+      if (snapDate && !/^\d{4}-\d{2}-\d{2}$/.test(snapDate)) {
+        return errResult("snapshot_date must be YYYY-MM-DD.");
+      }
+
+      let q = admin
+        .from("net_worth_snapshots")
+        .delete()
+        .eq("user_id", userId);
+      q = snapId ? q.eq("id", snapId) : q.eq("snapshot_date", snapDate);
+      const { data, error } = await q.select("id, snapshot_date, net_worth").maybeSingle();
+      if (error) return errResult(`Failed to delete snapshot: ${error.message}`);
+      if (!data) return errResult("No matching net worth snapshot found.");
+      return okResult({ deleted: true, snapshot: data });
+    }
+
+    // ── Merchant Category Rules ──────────────────────────────────────────────
+    case "list_merchant_category_rules": {
+      const { data, error } = await admin
+        .from("merchant_category_rules")
+        .select("merchant_key, category, transaction_type, updated_at")
+        .eq("user_id", userId)
+        .order("merchant_key");
+      if (error) return errResult(`Database error: ${error.message}`);
+      return okResult({ count: data?.length ?? 0, rules: data ?? [] });
+    }
+
+    case "upsert_merchant_category_rule": {
+      const merchantKey = normalizeMerchantKey(typeof args.merchant === "string" ? args.merchant : "");
+      if (!merchantKey) return errResult("merchant must contain at least one letter or digit.");
+      const category = typeof args.category === "string" ? args.category : "";
+      if (!VALID_CATEGORIES.has(category)) return errResult(`Invalid category "${category}".`);
+      const transactionType =
+        typeof args.transaction_type === "string"
+          ? args.transaction_type
+          : defaultTransactionTypeForCategory(category);
+      if (!VALID_TRANSACTION_TYPES.has(transactionType)) {
+        return errResult("transaction_type must be expense, income, or transfer.");
+      }
+
+      const { data: rule, error } = await admin
+        .from("merchant_category_rules")
+        .upsert(
+          {
+            user_id: userId,
+            merchant_key: merchantKey,
+            category,
+            transaction_type: transactionType,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id,merchant_key" }
+        )
+        .select("merchant_key, category, transaction_type, updated_at")
+        .single();
+      if (error) return errResult(`Failed to save merchant rule: ${error.message}`);
+
+      let retroactivelyUpdated = 0;
+      if (args.apply_to_existing === true) {
+        const { data: txns, error: txErr } = await admin
+          .from("transactions")
+          .select("id, name, merchant_name")
+          .eq("user_id", userId)
+          .eq("is_ignored", false);
+        if (txErr) return errResult(`Saved rule, but failed to fetch transactions: ${txErr.message}`);
+        const matchingIds = (txns ?? [])
+          .filter((t) => normalizeMerchantKey(t.merchant_name || t.name) === merchantKey)
+          .map((t) => t.id);
+        if (matchingIds.length > 0) {
+          const { error: bulkErr } = await admin
+            .from("transactions")
+            .update({ category, transaction_type: transactionType })
+            .in("id", matchingIds)
+            .eq("user_id", userId);
+          if (bulkErr) return errResult(`Saved rule, but failed to update existing transactions: ${bulkErr.message}`);
+          retroactivelyUpdated = matchingIds.length;
+        }
+      }
+
+      return okResult({ saved: true, rule, retroactively_updated: retroactivelyUpdated });
+    }
+
+    case "delete_merchant_category_rule": {
+      const merchantKey = normalizeMerchantKey(typeof args.merchant === "string" ? args.merchant : "");
+      if (!merchantKey) return errResult("merchant is required.");
+      const { data, error } = await admin
+        .from("merchant_category_rules")
+        .delete()
+        .eq("user_id", userId)
+        .eq("merchant_key", merchantKey)
+        .select("merchant_key, category, transaction_type")
+        .maybeSingle();
+      if (error) return errResult(`Failed to delete merchant rule: ${error.message}`);
+      if (!data) return errResult(`No merchant rule found for "${merchantKey}".`);
+      return okResult({ deleted: true, rule: data });
     }
 
     // ── Accounts CRUD ────────────────────────────────────────────────────────
@@ -1341,6 +1792,13 @@ async function handleToolCall(
         updates.deferral_type = args.deferral_type;
       }
       if (args.notes !== undefined) updates.notes = typeof args.notes === "string" ? args.notes : null;
+      if (Array.isArray(args.clear_fields)) {
+        for (const field of args.clear_fields) {
+          if (field === "original_amount" || field === "payment_day" || field === "notes") {
+            updates[field] = null;
+          }
+        }
+      }
       if (Object.keys(updates).length === 0) return errResult("Provide at least one field to update.");
 
       const { data: loans, error: fetchErr } = await admin
@@ -1377,6 +1835,79 @@ async function handleToolCall(
           interest_rate: Number(target.interest_rate),
           payment_day: target.payment_day,
         },
+      });
+    }
+
+    case "toggle_loan_paid": {
+      if (typeof args.paid !== "boolean") return errResult("paid (boolean) is required.");
+      const now = new Date();
+      const defaultMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+      const month =
+        typeof args.month === "string" && /^\d{4}-\d{2}$/.test(args.month)
+          ? args.month
+          : defaultMonth;
+
+      const { data: loans, error: loanErr } = await admin
+        .from("loans")
+        .select("id, name")
+        .eq("user_id", userId);
+      if (loanErr) return errResult(`Database error: ${loanErr.message}`);
+
+      const resolved = resolveNamedEntity(
+        loans ?? [],
+        typeof args.loan_id === "string" ? args.loan_id : undefined,
+        typeof args.loan_name === "string" ? args.loan_name : undefined,
+        "loan"
+      );
+      if (!resolved.ok) return errResult(resolved.error);
+
+      const { data: existing } = await admin
+        .from("planner_configs")
+        .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
+      const existingUnpaid =
+        existingConfig.loanUnpaidMonthOverrides && typeof existingConfig.loanUnpaidMonthOverrides === "object"
+          ? (existingConfig.loanUnpaidMonthOverrides as Record<string, string>)
+          : {};
+
+      const nextState = applyLoanPaidStatus({
+        loanId: resolved.match.id,
+        paid: args.paid,
+        month,
+        currentPaidLoanIds: Array.isArray(existing?.paid_loan_ids) ? (existing.paid_loan_ids as string[]) : [],
+        currentPaidLoanMonth: typeof existing?.paid_loan_month === "string" ? existing.paid_loan_month : "",
+        currentUnpaidOverrides: existingUnpaid,
+      });
+
+      const nextConfig = {
+        ...existingConfig,
+        loanUnpaidMonthOverrides: nextState.loanUnpaidMonthOverrides,
+      };
+
+      const { error: saveErr } = await admin
+        .from("planner_configs")
+        .upsert(
+          {
+            user_id: userId,
+            config: nextConfig,
+            paid_loan_ids: nextState.paid_loan_ids,
+            paid_loan_month: nextState.paid_loan_month,
+            dismissed_suggestions: existing?.dismissed_suggestions ?? [],
+            tax_filing_status: existing?.tax_filing_status ?? "single",
+          },
+          { onConflict: "user_id" }
+        );
+      if (saveErr) return errResult(`Failed to update loan paid status: ${saveErr.message}`);
+
+      return okResult({
+        updated: true,
+        loan: resolved.match,
+        month,
+        paid: args.paid,
+        paid_loan_ids: nextState.paid_loan_ids,
       });
     }
 
@@ -1449,6 +1980,64 @@ async function handleToolCall(
       return okResult({ saved: true, account: resolved.match.name, holding: data });
     }
 
+    case "update_holding": {
+      const holdingId = typeof args.holding_id === "string" ? args.holding_id.trim() : "";
+      if (!holdingId) return errResult("holding_id is required.");
+
+      const updates: Record<string, unknown> = {};
+      if (typeof args.ticker === "string") {
+        const ticker = args.ticker.trim().toUpperCase();
+        if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) {
+          return errResult("ticker must be 1-12 uppercase letters, digits, dots, or hyphens.");
+        }
+        updates.ticker = ticker;
+      }
+      if (args.shares !== undefined) {
+        const shares = Number(args.shares);
+        if (!Number.isFinite(shares) || shares <= 0) return errResult("shares must be > 0.");
+        updates.shares = shares;
+      }
+      if (args.clear_cost_basis === true) {
+        updates.cost_basis = null;
+      } else if (args.cost_basis !== undefined) {
+        const cb = Number(args.cost_basis);
+        if (!Number.isFinite(cb) || cb < 0) return errResult("cost_basis must be a non-negative number.");
+        updates.cost_basis = cb;
+      }
+      if (
+        (typeof args.account_id === "string" && args.account_id.trim()) ||
+        (typeof args.account_name === "string" && args.account_name.trim())
+      ) {
+        const { data: accounts, error: accErr } = await admin
+          .from("accounts")
+          .select("id, name, type")
+          .eq("user_id", userId)
+          .in("type", ["stock", "crypto"]);
+        if (accErr) return errResult(`Database error: ${accErr.message}`);
+        const resolved = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
+        if (!resolved.ok) return errResult(resolved.error);
+        updates.account_id = resolved.match.id;
+      }
+
+      if (Object.keys(updates).length === 0) return errResult("Provide at least one field to update.");
+
+      const { data, error } = await admin
+        .from("stock_holdings")
+        .update(updates)
+        .eq("id", holdingId)
+        .eq("user_id", userId)
+        .select("id, account_id, ticker, shares, cost_basis, updated_at")
+        .maybeSingle();
+      if (error) return errResult(`Failed to update holding: ${error.message}`);
+      if (!data) return errResult(`No holding found with id "${holdingId}".`);
+      return okResult({ updated: true, holding: data });
+    }
+
     case "delete_holding": {
       if (typeof args.holding_id === "string" && args.holding_id.trim()) {
         const { data, error } = await admin
@@ -1495,16 +2084,41 @@ async function handleToolCall(
     // ── Transactions CRUD & Workflows ────────────────────────────────────────
     case "add_transaction": {
       const txnName = typeof args.name === "string" ? args.name.trim() : "";
+      const merchantName =
+        typeof args.merchant_name === "string" && args.merchant_name.trim()
+          ? args.merchant_name.trim()
+          : txnName;
       const amount = Number(args.amount);
       if (!txnName) return errResult("name is required.");
       if (!Number.isFinite(amount) || amount <= 0) return errResult("amount must be a positive number.");
 
-      const category =
+      let category =
         typeof args.category === "string" && VALID_CATEGORIES.has(args.category) ? args.category : "other";
-      const transactionType =
+      let transactionType =
         typeof args.transaction_type === "string" && VALID_TRANSACTION_TYPES.has(args.transaction_type)
           ? args.transaction_type
-          : "expense";
+          : "";
+
+      // Apply saved merchant_category_rules if category was omitted or "other" (matches UI).
+      if (!args.category || category === "other") {
+        const merchantKey = normalizeMerchantKey(merchantName || txnName);
+        if (merchantKey) {
+          const { data: rule } = await admin
+            .from("merchant_category_rules")
+            .select("category, transaction_type")
+            .eq("user_id", userId)
+            .eq("merchant_key", merchantKey)
+            .maybeSingle();
+          if (rule) {
+            category = rule.category;
+            if (!transactionType) transactionType = rule.transaction_type;
+          }
+        }
+      }
+      if (!transactionType) {
+        transactionType = defaultTransactionTypeForCategory(category);
+      }
+
       const date =
         typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date)
           ? args.date
@@ -1513,14 +2127,30 @@ async function handleToolCall(
       let accountId: string | null = null;
       let creditCardId: string | null = null;
 
-      if (typeof args.account_name === "string" && args.account_name.trim()) {
+      if (
+        (typeof args.account_id === "string" && args.account_id.trim()) ||
+        (typeof args.account_name === "string" && args.account_name.trim())
+      ) {
         const { data: accounts } = await admin.from("accounts").select("id, name").eq("user_id", userId);
-        const res = resolveNamedEntity(accounts ?? [], undefined, args.account_name, "account");
+        const res = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
         if (!res.ok) return errResult(res.error);
         accountId = res.match.id;
-      } else if (typeof args.card_name === "string" && args.card_name.trim()) {
+      } else if (
+        (typeof args.credit_card_id === "string" && args.credit_card_id.trim()) ||
+        (typeof args.card_name === "string" && args.card_name.trim())
+      ) {
         const { data: cards } = await admin.from("credit_cards").select("id, name").eq("user_id", userId);
-        const res = resolveNamedEntity(cards ?? [], undefined, args.card_name, "card");
+        const res = resolveNamedEntity(
+          cards ?? [],
+          typeof args.credit_card_id === "string" ? args.credit_card_id : undefined,
+          typeof args.card_name === "string" ? args.card_name : undefined,
+          "card"
+        );
         if (!res.ok) return errResult(res.error);
         creditCardId = res.match.id;
       }
@@ -1532,15 +2162,17 @@ async function handleToolCall(
           account_id: accountId,
           credit_card_id: creditCardId,
           name: txnName,
-          merchant_name: txnName,
+          merchant_name: merchantName,
           amount: toSignedAmount(amount, transactionType),
           date,
           category,
+          subcategory: typeof args.subcategory === "string" && args.subcategory.trim() ? args.subcategory.trim() : null,
           transaction_type: transactionType,
           is_manual: true,
-          notes: typeof args.notes === "string" ? args.notes : null,
+          is_ignored: args.is_ignored === true,
+          notes: typeof args.notes === "string" && args.notes.length > 0 ? args.notes : null,
         })
-        .select("id, date, name, amount, category, transaction_type, account_id, credit_card_id")
+        .select("id, date, name, merchant_name, amount, category, subcategory, transaction_type, is_ignored, notes, account_id, credit_card_id")
         .single();
       if (insertErr) return errResult(`Failed to add transaction: ${insertErr.message}`);
       return okResult({ created: true, transaction: inserted });
@@ -1553,7 +2185,8 @@ async function handleToolCall(
       const updates: Record<string, unknown> = {};
       if (typeof args.name === "string" && args.name.trim()) updates.name = args.name.trim();
       if (args.merchant_name !== undefined) {
-        updates.merchant_name = typeof args.merchant_name === "string" ? args.merchant_name : null;
+        updates.merchant_name =
+          typeof args.merchant_name === "string" && args.merchant_name.trim() ? args.merchant_name.trim() : null;
       } else if (updates.name !== undefined) {
         updates.merchant_name = updates.name;
       }
@@ -1570,14 +2203,52 @@ async function handleToolCall(
         if (!VALID_CATEGORIES.has(args.category)) return errResult(`Invalid category "${args.category}".`);
         updates.category = args.category;
       }
+      if (args.subcategory !== undefined) {
+        updates.subcategory =
+          typeof args.subcategory === "string" && args.subcategory.trim() ? args.subcategory.trim() : null;
+      }
       if (typeof args.transaction_type === "string") {
         if (!VALID_TRANSACTION_TYPES.has(args.transaction_type)) {
           return errResult("transaction_type must be expense, income, or transfer.");
         }
         updates.transaction_type = args.transaction_type;
       }
+      if (args.clear_source === true) {
+        updates.account_id = null;
+        updates.credit_card_id = null;
+      } else if (
+        (typeof args.account_id === "string" && args.account_id.trim()) ||
+        (typeof args.account_name === "string" && args.account_name.trim())
+      ) {
+        const { data: accounts } = await admin.from("accounts").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
+        if (!res.ok) return errResult(res.error);
+        updates.account_id = res.match.id;
+        updates.credit_card_id = null;
+      } else if (
+        (typeof args.credit_card_id === "string" && args.credit_card_id.trim()) ||
+        (typeof args.card_name === "string" && args.card_name.trim())
+      ) {
+        const { data: cards } = await admin.from("credit_cards").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          cards ?? [],
+          typeof args.credit_card_id === "string" ? args.credit_card_id : undefined,
+          typeof args.card_name === "string" ? args.card_name : undefined,
+          "card"
+        );
+        if (!res.ok) return errResult(res.error);
+        updates.credit_card_id = res.match.id;
+        updates.account_id = null;
+      }
       if (typeof args.is_ignored === "boolean") updates.is_ignored = args.is_ignored;
-      if (args.notes !== undefined) updates.notes = typeof args.notes === "string" ? args.notes : null;
+      if (args.notes !== undefined) {
+        updates.notes = typeof args.notes === "string" && args.notes.length > 0 ? args.notes : null;
+      }
       if (Object.keys(updates).length === 0) return errResult("Provide at least one field to update.");
 
       const { data: updated, error } = await admin
@@ -1585,7 +2256,7 @@ async function handleToolCall(
         .update(updates)
         .eq("id", txnId)
         .eq("user_id", userId)
-        .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes")
+        .select("id, date, name, merchant_name, amount, category, subcategory, transaction_type, is_ignored, notes, account_id, credit_card_id")
         .maybeSingle();
       if (error) return errResult(`Failed to update transaction: ${error.message}`);
       if (!updated) return errResult(`No transaction found with id "${txnId}".`);
@@ -1618,6 +2289,232 @@ async function handleToolCall(
       return okResult({ updated: true, transaction: updated, merchant_rule_saved: merchantRuleSaved });
     }
 
+    case "bulk_update_transactions": {
+      const ids = Array.isArray(args.transaction_ids)
+        ? [...new Set(args.transaction_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim()))]
+        : [];
+      if (ids.length === 0) return errResult("Provide at least one transaction_id.");
+      if (ids.length > 200) return errResult("Maximum 200 transaction_ids per bulk update.");
+
+      const updates: Record<string, unknown> = {};
+      if (typeof args.category === "string") {
+        if (!VALID_CATEGORIES.has(args.category)) return errResult(`Invalid category "${args.category}".`);
+        updates.category = args.category;
+      }
+      if (typeof args.transaction_type === "string") {
+        if (!VALID_TRANSACTION_TYPES.has(args.transaction_type)) {
+          return errResult("transaction_type must be expense, income, or transfer.");
+        }
+        updates.transaction_type = args.transaction_type;
+      }
+      if (typeof args.is_ignored === "boolean") updates.is_ignored = args.is_ignored;
+      if (args.notes !== undefined) {
+        updates.notes = typeof args.notes === "string" && args.notes.length > 0 ? args.notes : null;
+      }
+      if (
+        (typeof args.account_id === "string" && args.account_id.trim()) ||
+        (typeof args.account_name === "string" && args.account_name.trim())
+      ) {
+        const { data: accounts } = await admin.from("accounts").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
+        if (!res.ok) return errResult(res.error);
+        updates.account_id = res.match.id;
+        updates.credit_card_id = null;
+      } else if (
+        (typeof args.credit_card_id === "string" && args.credit_card_id.trim()) ||
+        (typeof args.card_name === "string" && args.card_name.trim())
+      ) {
+        const { data: cards } = await admin.from("credit_cards").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          cards ?? [],
+          typeof args.credit_card_id === "string" ? args.credit_card_id : undefined,
+          typeof args.card_name === "string" ? args.card_name : undefined,
+          "card"
+        );
+        if (!res.ok) return errResult(res.error);
+        updates.credit_card_id = res.match.id;
+        updates.account_id = null;
+      }
+      if (Object.keys(updates).length === 0) return errResult("Provide at least one field to update.");
+
+      const { data: updatedRows, error } = await admin
+        .from("transactions")
+        .update(updates)
+        .in("id", ids)
+        .eq("user_id", userId)
+        .select("id, date, name, merchant_name, amount, category, transaction_type, is_ignored, notes");
+      if (error) return errResult(`Failed to bulk update transactions: ${error.message}`);
+
+      let rulesSaved = 0;
+      if (typeof updates.category === "string" && args.remember_merchant_category === true) {
+        const keys = [...new Set((updatedRows ?? []).map((r) => normalizeMerchantKey(r.merchant_name || r.name)).filter((k): k is string => Boolean(k)))];
+        if (keys.length > 0) {
+          const ruleType =
+            typeof updates.transaction_type === "string"
+              ? updates.transaction_type
+              : defaultTransactionTypeForCategory(updates.category);
+          const nowIso = new Date().toISOString();
+          const { error: ruleErr } = await admin
+            .from("merchant_category_rules")
+            .upsert(
+              keys.map((merchant_key) => ({
+                user_id: userId,
+                merchant_key,
+                category: updates.category,
+                transaction_type: ruleType,
+                updated_at: nowIso,
+              })),
+              { onConflict: "user_id,merchant_key" }
+            );
+          if (ruleErr) return errResult(`Updated transactions, but failed to save merchant rules: ${ruleErr.message}`);
+          rulesSaved = keys.length;
+        }
+      }
+
+      return okResult({
+        updated_count: updatedRows?.length ?? 0,
+        merchant_rules_saved: rulesSaved,
+        transactions: updatedRows ?? [],
+      });
+    }
+
+    case "import_transactions": {
+      const rawRows = Array.isArray(args.transactions) ? (args.transactions as Array<Record<string, unknown>>) : [];
+      if (rawRows.length === 0) return errResult("transactions array must contain at least one row.");
+      if (rawRows.length > 500) return errResult("Maximum 500 transactions per import call.");
+
+      let defaultAccountId: string | null = null;
+      let defaultCardId: string | null = null;
+      let sourceName: string | null = null;
+
+      if (
+        (typeof args.account_id === "string" && args.account_id.trim()) ||
+        (typeof args.account_name === "string" && args.account_name.trim())
+      ) {
+        const { data: accounts } = await admin.from("accounts").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
+        if (!res.ok) return errResult(res.error);
+        defaultAccountId = res.match.id;
+        sourceName = res.match.name;
+      } else if (
+        (typeof args.credit_card_id === "string" && args.credit_card_id.trim()) ||
+        (typeof args.card_name === "string" && args.card_name.trim())
+      ) {
+        const { data: cards } = await admin.from("credit_cards").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          cards ?? [],
+          typeof args.credit_card_id === "string" ? args.credit_card_id : undefined,
+          typeof args.card_name === "string" ? args.card_name : undefined,
+          "card"
+        );
+        if (!res.ok) return errResult(res.error);
+        defaultCardId = res.match.id;
+        sourceName = res.match.name;
+      }
+
+      const merchantKeys = [
+        ...new Set(
+          rawRows
+            .map((r) => normalizeMerchantKey(typeof r.merchant_name === "string" ? r.merchant_name : (typeof r.name === "string" ? r.name : "")))
+            .filter((k): k is string => Boolean(k))
+        ),
+      ];
+      const ruleMap = new Map<string, { category: string; transaction_type: string }>();
+      if (merchantKeys.length > 0) {
+        const { data: rules } = await admin
+          .from("merchant_category_rules")
+          .select("merchant_key, category, transaction_type")
+          .eq("user_id", userId)
+          .in("merchant_key", merchantKeys);
+        for (const rule of rules ?? []) {
+          ruleMap.set(rule.merchant_key, { category: rule.category, transaction_type: rule.transaction_type });
+        }
+      }
+
+      const occurrenceCounts = new Map<string, number>();
+      const payload = [];
+      for (let i = 0; i < rawRows.length; i++) {
+        const row = rawRows[i];
+        const date = typeof row.date === "string" ? row.date.trim() : "";
+        const name = typeof row.name === "string" ? row.name.trim() : "";
+        const amount = Number(row.amount);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return errResult(`Row ${i}: date must be YYYY-MM-DD.`);
+        if (!name) return errResult(`Row ${i}: name is required.`);
+        if (!Number.isFinite(amount) || amount === 0) return errResult(`Row ${i}: amount must be a non-zero number.`);
+
+        const merchantName =
+          typeof row.merchant_name === "string" && row.merchant_name.trim() ? row.merchant_name.trim() : name;
+        const mKey = normalizeMerchantKey(merchantName);
+        const savedRule = mKey ? ruleMap.get(mKey) : undefined;
+
+        let category =
+          typeof row.category === "string" && VALID_CATEGORIES.has(row.category)
+            ? row.category
+            : (savedRule?.category ?? "other");
+        if (row.category === "other" && savedRule) category = savedRule.category;
+
+        const txType =
+          typeof row.transaction_type === "string" && VALID_TRANSACTION_TYPES.has(row.transaction_type)
+            ? row.transaction_type
+            : (savedRule?.transaction_type ?? defaultTransactionTypeForCategory(category));
+
+        const signedAmount = toSignedAmount(amount, txType);
+        const baseKey = `${defaultAccountId ?? defaultCardId ?? "manual"}|${date}|${signedAmount.toFixed(2)}|${mKey ?? name}`;
+        const occ = (occurrenceCounts.get(baseKey) ?? 0) + 1;
+        occurrenceCounts.set(baseKey, occ);
+
+        const fingerprint =
+          typeof row.import_fingerprint === "string" && row.import_fingerprint.trim()
+            ? row.import_fingerprint.trim()
+            : buildImportFingerprint({
+                sourceKey: defaultAccountId ?? defaultCardId ?? "manual",
+                date,
+                amount: signedAmount,
+                name: merchantName,
+                occurrence: occ,
+              });
+
+        payload.push({
+          user_id: userId,
+          account_id: defaultAccountId,
+          credit_card_id: defaultCardId,
+          source_name: sourceName,
+          date,
+          name,
+          merchant_name: merchantName,
+          amount: signedAmount,
+          category,
+          transaction_type: txType,
+          is_manual: true,
+          import_fingerprint: fingerprint,
+          notes: typeof row.notes === "string" && row.notes.length > 0 ? row.notes : null,
+        });
+      }
+
+      const { data: inserted, error } = await admin
+        .from("transactions")
+        .upsert(payload, { onConflict: "user_id,import_fingerprint", ignoreDuplicates: true })
+        .select("id, date, name, merchant_name, amount, category, transaction_type, account_id, credit_card_id");
+      if (error) return errResult(`Failed to import transactions: ${error.message}`);
+
+      return okResult({
+        submitted: payload.length,
+        imported: inserted?.length ?? 0,
+        duplicates_skipped: payload.length - (inserted?.length ?? 0),
+        transactions: inserted ?? [],
+      });
+    }
+
     case "delete_transaction": {
       const txnId = typeof args.transaction_id === "string" ? args.transaction_id.trim() : "";
       if (!txnId) return errResult("transaction_id is required.");
@@ -1632,6 +2529,134 @@ async function handleToolCall(
       if (error) return errResult(`Failed to delete transaction: ${error.message}`);
       if (!data) return errResult(`No transaction found with id "${txnId}".`);
       return okResult({ deleted: true, transaction: data });
+    }
+
+    case "delete_transactions_for_source": {
+      const sourceType = typeof args.source_type === "string" ? args.source_type : "";
+      if (sourceType === "teller") {
+        const { error, count } = await admin
+          .from("transactions")
+          .delete({ count: "exact" })
+          .eq("user_id", userId)
+          .not("teller_transaction_id", "is", null);
+        if (error) return errResult(`Failed to delete Teller transactions: ${error.message}`);
+        return okResult({ deleted: true, source_type: "teller", deleted_count: count ?? 0 });
+      }
+      if (sourceType === "account") {
+        const { data: accounts } = await admin.from("accounts").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
+        if (!res.ok) return errResult(res.error);
+        const { error, count } = await admin
+          .from("transactions")
+          .delete({ count: "exact" })
+          .eq("user_id", userId)
+          .eq("account_id", res.match.id);
+        if (error) return errResult(`Failed to delete account transactions: ${error.message}`);
+        return okResult({ deleted: true, source_type: "account", account: res.match, deleted_count: count ?? 0 });
+      }
+      if (sourceType === "card") {
+        const { data: cards } = await admin.from("credit_cards").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          cards ?? [],
+          typeof args.card_id === "string" ? args.card_id : undefined,
+          typeof args.card_name === "string" ? args.card_name : undefined,
+          "card"
+        );
+        if (!res.ok) return errResult(res.error);
+        const { error, count } = await admin
+          .from("transactions")
+          .delete({ count: "exact" })
+          .eq("user_id", userId)
+          .eq("credit_card_id", res.match.id);
+        if (error) return errResult(`Failed to delete card transactions: ${error.message}`);
+        return okResult({ deleted: true, source_type: "card", creditCard: res.match, deleted_count: count ?? 0 });
+      }
+      return errResult("source_type must be 'account', 'card', or 'teller'.");
+    }
+
+    case "get_transaction_coverage": {
+      const year = args.year !== undefined ? Number(args.year) : new Date().getUTCFullYear();
+      if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+        return errResult("year must be an integer between 2000 and 2100.");
+      }
+
+      let sourceColumn: "account_id" | "credit_card_id" | null = null;
+      let sourceId: string | null = null;
+      let sourceLabel: string | null = null;
+
+      if (
+        (typeof args.account_id === "string" && args.account_id.trim()) ||
+        (typeof args.account_name === "string" && args.account_name.trim())
+      ) {
+        const { data: accounts } = await admin.from("accounts").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          accounts ?? [],
+          typeof args.account_id === "string" ? args.account_id : undefined,
+          typeof args.account_name === "string" ? args.account_name : undefined,
+          "account"
+        );
+        if (!res.ok) return errResult(res.error);
+        sourceColumn = "account_id";
+        sourceId = res.match.id;
+        sourceLabel = res.match.name;
+      } else if (
+        (typeof args.card_id === "string" && args.card_id.trim()) ||
+        (typeof args.card_name === "string" && args.card_name.trim())
+      ) {
+        const { data: cards } = await admin.from("credit_cards").select("id, name").eq("user_id", userId);
+        const res = resolveNamedEntity(
+          cards ?? [],
+          typeof args.card_id === "string" ? args.card_id : undefined,
+          typeof args.card_name === "string" ? args.card_name : undefined,
+          "card"
+        );
+        if (!res.ok) return errResult(res.error);
+        sourceColumn = "credit_card_id";
+        sourceId = res.match.id;
+        sourceLabel = res.match.name;
+      }
+
+      const monthCounts: Record<number, number> = {};
+      const pageSize = 1000;
+      let offset = 0;
+      let totalImportedInYear = 0;
+
+      while (true) {
+        let q = admin
+          .from("transactions")
+          .select("id, date")
+          .eq("user_id", userId)
+          .not("import_fingerprint", "is", null)
+          .gte("date", `${year}-01-01`)
+          .lt("date", `${year + 1}-01-01`)
+          .order("date", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (sourceColumn && sourceId) q = q.eq(sourceColumn, sourceId);
+        const { data, error } = await q;
+        if (error) return errResult(`Database error: ${error.message}`);
+        for (const row of data ?? []) {
+          const m = Number(String(row.date).slice(5, 7));
+          if (m >= 1 && m <= 12) {
+            monthCounts[m] = (monthCounts[m] ?? 0) + 1;
+            totalImportedInYear += 1;
+          }
+        }
+        if ((data?.length ?? 0) < pageSize) break;
+        offset += pageSize;
+      }
+
+      return okResult({
+        year,
+        source: sourceLabel ? { type: sourceColumn === "account_id" ? "account" : "card", id: sourceId, name: sourceLabel } : "all",
+        total_imported_in_year: totalImportedInYear,
+        month_counts: monthCounts,
+      });
     }
 
     case "split_transaction": {
@@ -1932,6 +2957,138 @@ async function handleToolCall(
         .single();
       if (error) return errResult(`Failed to update planner config: ${error.message}`);
       return okResult({ updated: true, plannerConfig: data });
+    }
+
+    case "manage_planner_item": {
+      const collection = typeof args.collection === "string" ? args.collection : "";
+      const action = typeof args.action === "string" ? args.action : "";
+      if (!PLANNER_COLLECTIONS.has(collection)) {
+        return errResult(`Invalid collection "${collection}".`);
+      }
+      if (action !== "upsert" && action !== "delete") {
+        return errResult("action must be 'upsert' or 'delete'.");
+      }
+
+      const { data: existing, error: fetchErr } = await admin
+        .from("planner_configs")
+        .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (fetchErr) return errResult(`Database error: ${fetchErr.message}`);
+
+      const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
+      const currentList = existingConfig[collection];
+
+      if (action === "delete") {
+        const itemId = typeof args.item_id === "string" ? args.item_id.trim() : "";
+        if (!itemId) return errResult("item_id is required when action='delete'.");
+        const { items, deleted } = deletePlannerCollectionItem(currentList, itemId);
+        if (!deleted) return errResult(`No item with id "${itemId}" found in ${collection}.`);
+
+        const nextConfig = { ...existingConfig, [collection]: items };
+        const { error: saveErr } = await admin
+          .from("planner_configs")
+          .upsert(
+            {
+              user_id: userId,
+              config: nextConfig,
+              paid_loan_ids: existing?.paid_loan_ids ?? [],
+              paid_loan_month: existing?.paid_loan_month ?? "",
+              dismissed_suggestions: existing?.dismissed_suggestions ?? [],
+              tax_filing_status: existing?.tax_filing_status ?? "single",
+            },
+            { onConflict: "user_id" }
+          );
+        if (saveErr) return errResult(`Failed to save planner config: ${saveErr.message}`);
+        return okResult({ deleted: true, collection, item: deleted, count: items.length });
+      }
+
+      const itemObj = args.item && typeof args.item === "object" ? { ...(args.item as Record<string, unknown>) } : null;
+      if (!itemObj) return errResult("item object is required when action='upsert'.");
+      if (!itemObj.id && typeof args.item_id === "string" && args.item_id.trim()) {
+        itemObj.id = args.item_id.trim();
+      }
+
+      const { items, saved, action: op } = upsertPlannerCollectionItem(currentList, itemObj);
+      const nextConfig = { ...existingConfig, [collection]: items };
+      const { error: saveErr } = await admin
+        .from("planner_configs")
+        .upsert(
+          {
+            user_id: userId,
+            config: nextConfig,
+            paid_loan_ids: existing?.paid_loan_ids ?? [],
+            paid_loan_month: existing?.paid_loan_month ?? "",
+            dismissed_suggestions: existing?.dismissed_suggestions ?? [],
+            tax_filing_status: existing?.tax_filing_status ?? "single",
+          },
+          { onConflict: "user_id" }
+        );
+      if (saveErr) return errResult(`Failed to save planner config: ${saveErr.message}`);
+      return okResult({ action: op, collection, item: saved, count: items.length });
+    }
+
+    case "update_tax_tracking": {
+      const hasStatus = typeof args.tax_filing_status === "string";
+      const hasPatch = Boolean(args.tracking_patch && typeof args.tracking_patch === "object");
+      if (!hasStatus && !hasPatch) {
+        return errResult("Provide tax_filing_status and/or tracking_patch.");
+      }
+      const year = typeof args.year === "string" ? args.year.trim() : "";
+      if (hasPatch && !/^\d{4}$/.test(year)) {
+        return errResult("year (4-digit string, e.g. '2026') is required when passing tracking_patch.");
+      }
+
+      const { data: existing, error: fetchErr } = await admin
+        .from("planner_configs")
+        .select("config, paid_loan_ids, paid_loan_month, dismissed_suggestions, tax_filing_status")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (fetchErr) return errResult(`Database error: ${fetchErr.message}`);
+
+      const existingConfig = (existing?.config ?? {}) as Record<string, unknown>;
+      const nextConfig: Record<string, unknown> = { ...existingConfig };
+
+      if (hasPatch) {
+        const existingTracking =
+          existingConfig.taxYearTracking && typeof existingConfig.taxYearTracking === "object"
+            ? { ...(existingConfig.taxYearTracking as Record<string, Record<string, unknown>>) }
+            : {};
+        existingTracking[year] = {
+          ...(existingTracking[year] ?? {}),
+          ...(args.tracking_patch as Record<string, unknown>),
+        };
+        nextConfig.taxYearTracking = existingTracking;
+      }
+
+      const nextFilingStatus = hasStatus
+        ? String(args.tax_filing_status)
+        : (existing?.tax_filing_status ?? "single");
+
+      const { data, error: saveErr } = await admin
+        .from("planner_configs")
+        .upsert(
+          {
+            user_id: userId,
+            config: nextConfig,
+            paid_loan_ids: existing?.paid_loan_ids ?? [],
+            paid_loan_month: existing?.paid_loan_month ?? "",
+            dismissed_suggestions: existing?.dismissed_suggestions ?? [],
+            tax_filing_status: nextFilingStatus,
+          },
+          { onConflict: "user_id" }
+        )
+        .select("tax_filing_status, config, updated_at")
+        .single();
+      if (saveErr) return errResult(`Failed to update tax tracking: ${saveErr.message}`);
+
+      const trackingByYear = (data.config as Record<string, unknown>)?.taxYearTracking as Record<string, unknown> | undefined;
+      return okResult({
+        updated: true,
+        tax_filing_status: data.tax_filing_status,
+        year: year || undefined,
+        year_tracking: year ? trackingByYear?.[year] : undefined,
+      });
     }
 
     default:

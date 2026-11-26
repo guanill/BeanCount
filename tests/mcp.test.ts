@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendSplitTag,
+  applyLoanPaidStatus,
   attachRefundTag,
+  buildImportFingerprint,
   canDeleteSplitOriginal,
   classifyRefundPair,
   constantTimeEqual,
   defaultSplitNames,
   defaultTransactionTypeForCategory,
+  deletePlannerCollectionItem,
   isSplitOriginal,
   normalizeMerchantKey,
   parseRefundLink,
@@ -16,6 +19,7 @@ import {
   resolveNamedEntity,
   summarizeTransactions,
   toSignedAmount,
+  upsertPlannerCollectionItem,
 } from "../supabase/functions/beancount-mcp/helpers.ts";
 
 test("resolveNamedEntity resolves exact id, exact name, and unique partial match", () => {
@@ -173,4 +177,70 @@ test("classifyRefundPair and rankRefundCandidates identify and rank refund pairs
 
   const ranked = rankRefundCandidates(purchase, [unrelated, ignored, refund]);
   assert.deepEqual(ranked.map((r) => r.id), ["r1", "u1"]);
+});
+
+test("upsertPlannerCollectionItem and deletePlannerCollectionItem manage planner arrays cleanly", () => {
+  const created = upsertPlannerCollectionItem(
+    [],
+    { label: "Rent", amount: 2200, category: "housing" },
+    () => "rc-1"
+  );
+  assert.equal(created.action, "created");
+  assert.deepEqual(created.saved, { id: "rc-1", label: "Rent", amount: 2200, category: "housing" });
+
+  const updated = upsertPlannerCollectionItem(created.items, { id: "rc-1", amount: 2350 });
+  assert.equal(updated.action, "updated");
+  assert.deepEqual(updated.saved, { id: "rc-1", label: "Rent", amount: 2350, category: "housing" });
+
+  const deleted = deletePlannerCollectionItem(updated.items, "rc-1");
+  assert.equal(deleted.deleted?.id, "rc-1");
+  assert.deepEqual(deleted.items, []);
+
+  const missing = deletePlannerCollectionItem(updated.items, "does-not-exist");
+  assert.equal(missing.deleted, null);
+  assert.equal(missing.items.length, 1);
+});
+
+test("applyLoanPaidStatus handles marking paid, marking unpaid, and month rollover", () => {
+  const paid = applyLoanPaidStatus({
+    loanId: "loan-1",
+    paid: true,
+    month: "2026-11",
+    currentPaidLoanIds: ["loan-old"],
+    currentPaidLoanMonth: "2026-10",
+    currentUnpaidOverrides: { "loan-1": "2026-11" },
+  });
+  assert.deepEqual(paid.paid_loan_ids, ["loan-1"]);
+  assert.equal(paid.paid_loan_month, "2026-11");
+  assert.deepEqual(paid.loanUnpaidMonthOverrides, {});
+
+  const unpaid = applyLoanPaidStatus({
+    loanId: "loan-1",
+    paid: false,
+    month: "2026-11",
+    currentPaidLoanIds: ["loan-1", "loan-2"],
+    currentPaidLoanMonth: "2026-11",
+    currentUnpaidOverrides: {},
+  });
+  assert.deepEqual(unpaid.paid_loan_ids, ["loan-2"]);
+  assert.deepEqual(unpaid.loanUnpaidMonthOverrides, { "loan-1": "2026-11" });
+});
+
+test("buildImportFingerprint generates deterministic dedupe keys", () => {
+  const fp1 = buildImportFingerprint({
+    sourceKey: "acc-1",
+    date: "2026-11-25",
+    amount: 42.5,
+    name: "Trader Joe's #102",
+    occurrence: 1,
+  });
+  const fp2 = buildImportFingerprint({
+    sourceKey: "acc-1",
+    date: "2026-11-25",
+    amount: 42.5,
+    name: "Trader Joe's #102",
+    occurrence: 2,
+  });
+  assert.equal(fp1, "mcp:acc-1:2026-11-25:42.50:trader joe s 102:1");
+  assert.notEqual(fp1, fp2);
 });

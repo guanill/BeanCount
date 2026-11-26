@@ -345,3 +345,111 @@ export function classifyRefundPair<
     : { original: txB, refund: txA };
 }
 
+// ── Planner Collections & Loan Payment Status ────────────────────────────────
+
+export const PLANNER_COLLECTIONS = new Set([
+  "salaryPeriods",
+  "recurringCharges",
+  "recurringBonuses",
+  "vestingGrants",
+  "events",
+  "scenarioEvents",
+]);
+
+export interface PlannerItemLike {
+  id: string;
+  [key: string]: unknown;
+}
+
+/** Upserts an item by `id` into a planner config array (or appends with a generated id). */
+export function upsertPlannerCollectionItem(
+  items: unknown,
+  item: Record<string, unknown>,
+  generateId: () => string = () => Math.random().toString(36).slice(2, 10)
+): { items: PlannerItemLike[]; saved: PlannerItemLike; action: "created" | "updated" } {
+  const list: PlannerItemLike[] = Array.isArray(items)
+    ? items.filter((x): x is PlannerItemLike => Boolean(x && typeof x === "object" && typeof (x as PlannerItemLike).id === "string"))
+    : [];
+
+  const providedId = typeof item.id === "string" && item.id.trim() ? item.id.trim() : "";
+  const existingIdx = providedId ? list.findIndex((x) => x.id === providedId) : -1;
+
+  if (existingIdx >= 0) {
+    const merged: PlannerItemLike = { ...list[existingIdx], ...item, id: providedId };
+    const next = [...list];
+    next[existingIdx] = merged;
+    return { items: next, saved: merged, action: "updated" };
+  }
+
+  const nextId = providedId || generateId();
+  const created: PlannerItemLike = { ...item, id: nextId };
+  return { items: [...list, created], saved: created, action: "created" };
+}
+
+/** Deletes an item by `id` from a planner config array. */
+export function deletePlannerCollectionItem(
+  items: unknown,
+  itemId: string
+): { items: PlannerItemLike[]; deleted: PlannerItemLike | null } {
+  const list: PlannerItemLike[] = Array.isArray(items)
+    ? items.filter((x): x is PlannerItemLike => Boolean(x && typeof x === "object" && typeof (x as PlannerItemLike).id === "string"))
+    : [];
+  const target = list.find((x) => x.id === itemId) ?? null;
+  if (!target) return { items: list, deleted: null };
+  return { items: list.filter((x) => x.id !== itemId), deleted: target };
+}
+
+/** Updates paid_loan_ids and config.loanUnpaidMonthOverrides for a specific loan and YYYY-MM month. */
+export function applyLoanPaidStatus(params: {
+  loanId: string;
+  paid: boolean;
+  month: string;
+  currentPaidLoanIds: string[];
+  currentPaidLoanMonth: string;
+  currentUnpaidOverrides: Record<string, string>;
+}): {
+  paid_loan_ids: string[];
+  paid_loan_month: string;
+  loanUnpaidMonthOverrides: Record<string, string>;
+} {
+  const { loanId, paid, month, currentPaidLoanIds, currentPaidLoanMonth, currentUnpaidOverrides } = params;
+  // Reset paid_loan_ids when switching to a new month (matches PlannerSection behavior).
+  const basePaid = currentPaidLoanMonth === month ? [...currentPaidLoanIds] : [];
+  const nextOverrides: Record<string, string> = { ...currentUnpaidOverrides };
+
+  if (paid) {
+    const nextPaid = basePaid.includes(loanId) ? basePaid : [...basePaid, loanId];
+    if (nextOverrides[loanId] === month) delete nextOverrides[loanId];
+    return {
+      paid_loan_ids: nextPaid,
+      paid_loan_month: month,
+      loanUnpaidMonthOverrides: nextOverrides,
+    };
+  }
+
+  const nextPaid = basePaid.filter((id) => id !== loanId);
+  nextOverrides[loanId] = month;
+  return {
+    paid_loan_ids: nextPaid,
+    paid_loan_month: month,
+    loanUnpaidMonthOverrides: nextOverrides,
+  };
+}
+
+/** Deterministic fingerprint for deduplicated bulk transaction imports. */
+export function buildImportFingerprint(row: {
+  sourceKey?: string | null;
+  date: string;
+  amount: number;
+  name: string;
+  occurrence?: number;
+}): string {
+  const src = (row.sourceKey ?? "manual").toLowerCase().trim() || "manual";
+  const date = row.date.slice(0, 10);
+  const amt = Number(row.amount).toFixed(2);
+  const normalizedName = normalizeMerchantKey(row.name) ?? "transaction";
+  const occ = row.occurrence ?? 1;
+  return `mcp:${src}:${date}:${amt}:${normalizedName}:${occ}`;
+}
+
+
