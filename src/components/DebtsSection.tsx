@@ -116,27 +116,27 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
   }
 
   return (
-    <div className="rounded-2xl bg-linear-to-br from-purple-500/15 to-indigo-500/10 border border-border/50 p-4 sm:p-6 animate-slide-up">
-      <div className="flex items-center justify-between gap-2 mb-4">
+    <article className="surface-card p-5 sm:p-6">
+      <header className="flex items-start justify-between gap-3 mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="p-2 sm:p-2.5 rounded-xl bg-purple-500/20 shrink-0">
-            <Users className="w-4 h-4 sm:w-5 sm:h-5 text-accent-light" />
+          <div className="w-9 h-9 rounded-lg bg-green/12 border border-green/25 flex items-center justify-center shrink-0">
+            <Users className="w-4 h-4 text-green" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm sm:text-lg font-bold text-foreground">People Owe You</h2>
-            <p className="text-[10px] sm:text-sm text-foreground/50">{debts.length} pending</p>
+            <h2 className="text-base font-semibold text-foreground tracking-tight">People Owe You</h2>
+            <p className="text-xs text-foreground/45">{debts.length} pending</p>
           </div>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-lg sm:text-2xl font-bold text-green">{formatCurrency(total)}</p>
+          <p className="text-xl font-bold text-green tabular-nums tracking-tight">{formatCurrency(total)}</p>
           <button
-              onClick={() => { setAdding(true); setAddForm({ person_name: "", amount: "", reason: "", due_date: "" }); }}
-            className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1 mt-1 ml-auto"
+            onClick={() => { setAdding(true); setAddForm({ person_name: "", amount: "", reason: "", due_date: "" }); }}
+            className="text-xs font-medium text-accent-light hover:text-foreground transition-colors flex items-center gap-1 mt-1 ml-auto"
           >
             <Plus className="w-3 h-3" /> Add
           </button>
         </div>
-      </div>
+      </header>
 
         {adding && (
           <form onSubmit={handleCreate} className="mb-4 p-4 bg-card rounded-xl border border-border/50 space-y-3">
@@ -292,6 +292,6 @@ export default function DebtsSection({ debts, total, onRefresh }: Props) {
           onConfirm={() => { const id = deleteId; setDeleteId(null); if (id) void handleDelete(id); }}
         />
       </div>
-    </div>
+    </article>
   );
 }

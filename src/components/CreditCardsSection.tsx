@@ -199,20 +199,20 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
   }
 
   return (
-    <div className="space-y-6 animate-slide-up">
+    <article className="surface-card p-5 sm:p-6">
       {/* Credit Card Debt */}
-      <div className="rounded-2xl bg-linear-to-br from-red-500/15 to-orange-500/10 border border-border/50 p-4 sm:p-6">
-        <div className="flex items-center justify-between gap-2 mb-4">
+      <div>
+        <header className="flex items-start justify-between gap-3 mb-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="p-2 sm:p-2.5 rounded-xl bg-red-500/20 shrink-0">
-              <CreditCardIcon className="w-4 h-4 sm:w-5 sm:h-5 text-red" />
+            <div className="w-9 h-9 rounded-lg bg-red/12 border border-red/25 flex items-center justify-center shrink-0">
+              <CreditCardIcon className="w-4 h-4 text-red" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm sm:text-lg font-bold text-foreground">Credit Card Debt</h2>
-              <p className="text-[10px] sm:text-sm text-foreground/50">
+              <h2 className="text-base font-semibold text-foreground tracking-tight">Credit Cards</h2>
+              <p className="text-xs text-foreground/45">
                 {cards.length} card{cards.length !== 1 ? "s" : ""}
                 {hasLinked && (
-                  <span className="ml-1 sm:ml-1.5 inline-flex items-center gap-1 text-accent/80">
+                  <span className="ml-1.5 inline-flex items-center gap-1 text-accent-light">
                     · <CheckCircle2 className="w-3 h-3" /> {linkedCards.length} linked
                   </span>
                 )}
@@ -220,19 +220,19 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
             </div>
           </div>
           <div className="text-right shrink-0">
-            <p className={`text-lg sm:text-2xl font-bold ${totalDebt <= 0 ? "text-green" : "text-red"}`}>
-              {totalDebt <= 0 ? formatCurrency(Math.abs(totalDebt)) : `-${formatCurrency(totalDebt)}`}
+            <p className={`text-xl font-bold tabular-nums tracking-tight ${totalDebt <= 0 ? "text-green" : "text-red"}`}>
+              {totalDebt <= 0 ? formatCurrency(Math.abs(totalDebt)) : `−${formatCurrency(totalDebt)}`}
             </p>
-            <div className="flex items-center gap-2 justify-end mt-1">
+            <div className="flex items-center gap-2.5 justify-end mt-1">
               {hasLinked && (
                 <button
                   type="button"
                   onClick={handleSync}
                   disabled={syncing}
-                  className={`flex items-center gap-1 text-[10px] sm:text-xs transition-colors disabled:opacity-40 ${
+                  className={`flex items-center gap-1 text-xs transition-colors disabled:opacity-40 ${
                     syncMsg?.includes("failed")
-                      ? "text-yellow-400 hover:text-yellow-300"
-                      : "text-foreground/50 hover:text-accent"
+                      ? "text-yellow hover:text-yellow/80"
+                      : "text-foreground/50 hover:text-accent-light"
                   }`}
                 >
                   <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} />
@@ -241,13 +241,13 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
               )}
               <button
                 onClick={() => { setAdding(!adding); setAddForm({ name: "", balance_owed: "", credit_limit: "", points_balance: "", points_value_cents: "1", due_date: "", min_payment: "" }); }}
-                className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1"
+                className="text-xs font-medium text-accent-light hover:text-foreground transition-colors flex items-center gap-1"
               >
                 <Plus className="w-3 h-3" /> Add
               </button>
             </div>
           </div>
-        </div>
+        </header>
 
         {adding && (
           <form onSubmit={handleCreate} className="mb-4 p-4 bg-card rounded-xl border border-border/50 space-y-3">
@@ -518,18 +518,20 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
         </div>
       </div>
 
-      {/* Points Value Summary */}
-      <div className="rounded-2xl bg-linear-to-br from-yellow-500/15 to-amber-500/10 border border-border/50 p-6">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="p-2.5 rounded-xl bg-yellow-500/20">
-            <span className="text-xl">★</span>
+      {/* Integrated Rewards Points Summary */}
+      <footer className="mt-5 pt-5 border-t border-border">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-md bg-yellow/12 border border-yellow/25 flex items-center justify-center text-xs text-yellow">
+              ★
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-foreground leading-tight">Rewards Points</h3>
+              <p className="text-[11px] text-foreground/45">Estimated redemption value</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">Rewards Points Value</h2>
-            <p className="text-sm text-foreground/50">Combined value across all cards</p>
-          </div>
+          <p className="text-lg font-bold text-yellow tabular-nums">{formatCurrency(totalPointsValue)}</p>
         </div>
-        <p className="text-3xl font-bold text-yellow">{formatCurrency(totalPointsValue)}</p>
         <div className="mt-3 space-y-2">
           {cards.map(card => {
             const val = (card.points_balance * card.points_value_cents) / 100;
@@ -617,7 +619,7 @@ export default function CreditCardsSection({ cards, totalDebt, totalPointsValue,
             }}
           />
         </div>
-      </div>
-    </div>
+      </footer>
+    </article>
   );
 }

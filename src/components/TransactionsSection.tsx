@@ -15,7 +15,6 @@ import {
   Minus,
   Tag,
   X,
-  SlidersHorizontal,
   EyeOff,
   Eye,
   Scissors,
@@ -1402,54 +1401,57 @@ export default function TransactionsSection() {
     : creditCards.find(card => card.id === importSourceId)?.name;
   const activeSourceCoverage = sourceCoverage?.source === importSource ? sourceCoverage : null;
 
-  /* â"€â"€ Render â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
+  /* ── Render ────────────────────────────────────────────────────────────── */
   return (
-    <div className="rounded-2xl border border-border/50 bg-card p-6 animate-slide-up">
+    <div className="space-y-6 animate-slide-up">
 
-      {/* â"€â"€ Header â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-      <div className="space-y-3 mb-6">
-        <div className="flex items-center justify-between">
+      {/* ── Page Header + Actions + Period Switcher ───────────────────────── */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>
-            <p className="text-xs sm:text-sm text-foreground/40 mt-0.5">Spending and income</p>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Spending</h1>
+            <p className="text-sm text-foreground/45 mt-0.5">Transactions, cashflow, and category breakdown</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={handleSyncTransactions} disabled={syncing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:border-accent/30 text-foreground/60 hover:text-accent transition-colors disabled:opacity-40">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-card hover:bg-card-hover border border-border text-foreground/75 hover:text-foreground transition-colors disabled:opacity-40">
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
               {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
             </button>
             <button onClick={() => { setShowImport(!showImport); setImportError(""); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-accent/30 text-accent-light hover:bg-accent/10 transition-colors">
-              <Upload className="w-3.5 h-3.5" /> Import CSV
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-card hover:bg-card-hover border border-border text-foreground/75 hover:text-foreground transition-colors">
+              <Upload className="w-3.5 h-3.5 text-accent-light" /> Import CSV
             </button>
             <button onClick={() => setShowAdd(!showAdd)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
-              <Plus className="w-3.5 h-3.5" /> Add
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:bg-accent-light transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add transaction
             </button>
           </div>
         </div>
-        <div className="space-y-2">
-          <div className="flex items-center justify-center gap-2">
-            <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
+
+        {/* Compact Period & Month Switcher Card */}
+        <div className="surface-card p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-center justify-between lg:justify-start gap-2.5 shrink-0">
+            <div className="flex items-center rounded-lg bg-background border border-border p-0.5 text-xs">
               {(["month", "year"] as const).map((m) => (
                 <button key={m} onClick={() => setViewMode(m)}
-                  className={`px-3 py-1.5 transition-colors ${viewMode === m ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                  className={`px-3 py-1 rounded-md font-medium transition-colors ${viewMode === m ? "bg-accent text-white" : "text-foreground/55 hover:text-foreground"}`}>
                   {m.charAt(0).toUpperCase() + m.slice(1)}
                 </button>
               ))}
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
+              <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border hover:bg-card-hover text-foreground/60 hover:text-foreground transition-colors" aria-label="Previous period">
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="text-sm font-semibold text-foreground min-w-28 text-center">{periodLabel}</span>
-              <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
+              <span className="text-sm font-semibold text-foreground min-w-32 text-center tabular-nums">{periodLabel}</span>
+              <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border hover:bg-card-hover text-foreground/60 hover:text-foreground transition-colors" aria-label="Next period">
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
-          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 gap-1.5 sm:grid-cols-12">
+
+          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 sm:grid-cols-12 gap-1 flex-1 lg:max-w-2xl">
             {MONTHS.map((monthName, index) => {
               const monthNumber = index + 1;
               const transactionCount = monthCoverage[monthNumber] ?? 0;
@@ -1468,25 +1470,21 @@ export default function TransactionsSection() {
                   aria-label={`${monthName} ${year}: ${status}`}
                   aria-pressed={isSelected}
                   title={`${monthName} ${year}: ${status}`}
-                  className={`relative rounded-md border px-1 py-1.5 text-[10px] font-medium transition-colors ${
-                    hasTransactions
-                      ? "border-green/30 bg-green/10 text-green"
-                      : isCurrentMonth
-                        ? "border-yellow-500/30 bg-yellow-500/5 text-yellow-400"
-                        : "border-border/30 text-foreground/40 hover:border-border/60 hover:text-foreground/70"
-                  } ${isSelected ? "ring-1 ring-accent" : ""}`}
+                  className={`relative rounded-md border px-1 py-1 text-[11px] font-medium transition-colors ${
+                    isSelected
+                      ? "border-accent bg-accent/18 text-accent-light"
+                      : hasTransactions
+                        ? "border-green/25 bg-green/8 text-green hover:bg-green/15"
+                        : isCurrentMonth
+                          ? "border-yellow/30 bg-yellow/8 text-yellow"
+                          : "border-border/60 text-foreground/40 hover:border-border hover:text-foreground/75"
+                  }`}
                 >
                   {monthName.slice(0, 3)}
-                  {isCurrentMonth && <span aria-hidden="true" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-yellow-400" />}
+                  {isCurrentMonth && <span aria-hidden="true" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-yellow" />}
                 </button>
               );
             })}
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-foreground/45">
-            <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2 w-2 rounded-sm bg-green" />CSV transactions imported</span>
-            <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-yellow-400" />Current month in progress</span>
-            {coverageLoading && <span>Loading coverage…</span>}
-            {coverageError && <span role="status" className="text-yellow-400">Month coverage unavailable</span>}
           </div>
         </div>
       </div>
@@ -1693,151 +1691,177 @@ export default function TransactionsSection() {
         </div>
       )}
 
-      {/* â"€â"€ Summary cards â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+      {/* ── Summary KPI Strip ────────────────────────────────────────────── */}
       {summary && (
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
-          <div className="rounded-xl p-2.5 sm:p-4 bg-green-500/10 border border-green-500/20">
-            <div className="flex items-center gap-1.5 mb-1">
-              <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-400" />
-              <span className="text-[10px] sm:text-xs text-foreground/50">Income</span>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <article className="surface-card p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-md bg-green/12 border border-green/25 flex items-center justify-center">
+                <TrendingUp className="w-3.5 h-3.5 text-green" />
+              </div>
+              <span className="text-xs font-medium text-foreground/55 uppercase tracking-wider">Income</span>
             </div>
-            <p className="text-sm sm:text-lg font-bold text-green-400 tabular-nums">{formatCurrency(summary.totalIncome)}</p>
-          </div>
-          <div className="rounded-xl p-2.5 sm:p-4 bg-red-500/10 border border-red-500/20">
-            <div className="flex items-center gap-1.5 mb-1">
-              <TrendingDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-400" />
-              <span className="text-[10px] sm:text-xs text-foreground/50">Expenses</span>
+            <p className="text-xl sm:text-2xl font-bold text-green tabular-nums">{formatCurrency(summary.totalIncome)}</p>
+          </article>
+          <article className="surface-card p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-md bg-red/12 border border-red/25 flex items-center justify-center">
+                <TrendingDown className="w-3.5 h-3.5 text-red" />
+              </div>
+              <span className="text-xs font-medium text-foreground/55 uppercase tracking-wider">Expenses</span>
             </div>
-            <p className="text-sm sm:text-lg font-bold text-red-400 tabular-nums">{formatCurrency(summary.totalExpenses)}</p>
-          </div>
-          <div className={`rounded-xl p-2.5 sm:p-4 border ${summary.net >= 0 ? "bg-accent/10 border-accent/20" : "bg-orange-500/10 border-orange-500/20"}`}>
-            <div className="flex items-center gap-1.5 mb-1">
-              <Minus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-foreground/50" />
-              <span className="text-[10px] sm:text-xs text-foreground/50">Net</span>
+            <p className="text-xl sm:text-2xl font-bold text-red tabular-nums">{formatCurrency(summary.totalExpenses)}</p>
+          </article>
+          <article className="surface-card p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-7 h-7 rounded-md bg-accent/12 border border-accent/25 flex items-center justify-center">
+                <Minus className="w-3.5 h-3.5 text-accent-light" />
+              </div>
+              <span className="text-xs font-medium text-foreground/55 uppercase tracking-wider">Net Cashflow</span>
             </div>
-            <p className={`text-sm sm:text-lg font-bold ${summary.net >= 0 ? "text-accent" : "text-orange-400"}`}>
+            <p className={`text-xl sm:text-2xl font-bold tabular-nums ${summary.net >= 0 ? "text-foreground" : "text-red"}`}>
               {summary.net >= 0 ? "+" : ""}{formatCurrency(summary.net)}
             </p>
-          </div>
+          </article>
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 space-y-2"><span className="text-2xl animate-bounce inline-block">🫘</span><p className="text-foreground/30 text-sm">Loading transactions...</p></div>
+        <div className="surface-card text-center py-16 space-y-2"><span className="text-2xl animate-bounce inline-block">🫘</span><p className="text-foreground/40 text-sm">Loading transactions…</p></div>
       ) : transactionsError ? (
-        <div role="alert" className="rounded-xl border border-red/30 p-6 text-center text-sm text-red">
+        <div role="alert" className="surface-card border-red/30 p-6 text-center text-sm text-red">
           Could not load transactions for this period.{" "}
           <button type="button" onClick={() => void fetchTransactions()} className="underline">Try again</button>
         </div>
       ) : transactions.length === 0 ? (
-        <div className="rounded-2xl border border-border/30 p-16 text-center space-y-2">
+        <div className="surface-card p-16 text-center space-y-2">
           <div className="text-4xl mb-3">🫘</div>
-          <p className="text-foreground/50 font-medium">No beans to count yet</p>
-          <p className="text-foreground/30 text-sm">Sync your bank via Teller or plant your first bean manually</p>
+          <p className="text-foreground/60 font-medium">No transactions in {periodLabel}</p>
+          <p className="text-foreground/40 text-sm">Sync via Teller, import a CSV, or add a transaction manually</p>
         </div>
       ) : (
-        <div className="space-y-5 xl:space-y-0 xl:grid xl:grid-cols-[minmax(380px,460px)_1fr] xl:gap-6 xl:items-start">
+        <div className="space-y-6">
 
-          {/* Chart panel (sticky alongside transactions on wide desktop) */}
-          <div className="xl:sticky xl:top-6 rounded-2xl border border-border/40 bg-card/40 p-4 space-y-4">
-            <div className="flex w-fit items-center gap-1 rounded-xl border border-border/40 bg-background p-1 mx-auto" aria-label="Spending chart view">
-              {(["flow", "donut"] as const).map(chart => (
-                <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
-                  className={`rounded-lg px-4 py-1.5 text-xs font-medium ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
-                  {chart === "flow" ? "Income flow" : "Category donut"}
-                </button>
-              ))}
-            </div>
-            {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-44 h-44 sm:w-52 sm:h-52">
-                <SpendingDonut
-                  segments={donutSegments}
-                  total={donutTotal}
-                  highlightedCat={hoveredCat}
-                  onHover={setHoveredCat}
-                />
+          {/* ── Analytics Card (Full-width Flow OR 2-Column Donut + Category Bars) ── */}
+          <article className="surface-card p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground tracking-tight">Cashflow & Categories</h2>
+                <p className="text-xs text-foreground/45">{periodLabel} · click any category to filter the ledger below</p>
               </div>
-              {/* Donut legend */}
-              <div className="w-full flex flex-wrap justify-center gap-1">
-                {donutSegments.map(seg => {
-                  const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
-                  const isActive = catFilter === seg.category;
-                  return (
-                    <button
-                      key={seg.category}
-                      type="button"
-                      onMouseEnter={() => setHoveredCat(seg.category)}
-                      onMouseLeave={() => setHoveredCat(null)}
-                      onClick={() => handleDonutClick(seg.category)}
-                      className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
-                    >
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
-                      <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
-                      <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
-                    </button>
-                  );
-                })}
-                {catFilter && (
-                  <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
-                    Clear filter ×
+              <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-0.5" aria-label="Spending chart view">
+                {(["flow", "donut"] as const).map(chart => (
+                  <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                    {chart === "flow" ? "Income flow" : "Category donut"}
                   </button>
-                )}
+                ))}
               </div>
             </div>
-            )}
-          </div>
 
-          {/* Category accordion + transaction list */}
-          <div className="min-w-0 space-y-3">
-
-            {/* Type filter tabs */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-foreground/30 shrink-0" />
-              {(["all", "expense", "income", "transfer"] as const).map(t => {
-                const labels: Record<string, string> = { all: "All", expense: "💸 Expenses", income: "💰 Income", transfer: "🔄 Transfers" };
-                const counts: Record<string, number> = {
-                  all: activeTransactions.length,
-                  expense:  activeTransactions.filter(x => x.transaction_type === "expense").length,
-                  income:   activeTransactions.filter(x => x.transaction_type === "income").length,
-                  transfer: activeTransactions.filter(x => x.transaction_type === "transfer").length,
-                };
-                return (
-                  <button key={t} onClick={() => setTypeFilter(t)}
-                    className={"px-3 py-1 rounded-xl text-xs font-medium transition-all border " + (typeFilter === t ? "bg-accent/15 text-accent border-accent/30" : "bg-background border-border/30 text-foreground/40 hover:text-foreground/70 hover:border-border/60")}
-                  >
-                    {labels[t]}
-                    {counts[t] > 0 && <span className="ml-1.5 opacity-50 tabular-nums">{counts[t]}</span>}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Search + Advanced filters */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/30" />
-                  <input
-                    type="text"
-                    placeholder="Search name, merchant, notes, account, category..."
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    className="w-full bg-background border border-border/50 rounded-xl pl-10 pr-9 py-2 text-sm text-foreground placeholder:text-foreground/30 focus:outline-none focus:border-accent/50"
+            {chartView === "flow" ? (
+              <SpendingFlow transactions={transactions} periodLabel={periodLabel} />
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-6 items-center pt-2">
+                <div className="w-48 h-48 sm:w-56 sm:h-56 mx-auto">
+                  <SpendingDonut
+                    segments={donutSegments}
+                    total={donutTotal}
+                    highlightedCat={hoveredCat}
+                    onHover={setHoveredCat}
                   />
-                  {query && (
-                    <button onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground/30 hover:text-foreground/70 transition-colors">
-                      <X className="w-3.5 h-3.5" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {donutSegments.map(seg => {
+                    const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
+                    const isActive = catFilter === seg.category;
+                    return (
+                      <button
+                        key={seg.category}
+                        type="button"
+                        onMouseEnter={() => setHoveredCat(seg.category)}
+                        onMouseLeave={() => setHoveredCat(null)}
+                        onClick={() => handleDonutClick(seg.category)}
+                        className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors border ${
+                          isActive
+                            ? "bg-accent/12 border-accent/35"
+                            : hoveredCat === seg.category
+                              ? "bg-card-hover border-border"
+                              : "bg-background/50 border-border/60 hover:border-border"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                          <span className="truncate text-xs font-medium text-foreground/85">{seg.emoji} {seg.label}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 tabular-nums text-xs">
+                          <span className="font-semibold text-foreground">{formatCurrency(seg.amount)}</span>
+                          <span className="text-foreground/40 w-8 text-right">{pct}%</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {catFilter && (
+                    <button onClick={() => setCatFilter(null)} className="text-xs font-medium text-accent-light hover:underline px-3 py-2 text-left">
+                      Clear category filter ×
                     </button>
                   )}
                 </div>
-                <button
-                  onClick={() => setShowAdvanced(v => !v)}
-                  className={"p-2 rounded-xl border transition-all " + (showAdvanced || minAmount || maxAmount || dateFrom || dateTo || recurringOnly ? "bg-accent/10 border-accent/30 text-accent" : "border-border/40 text-foreground/40 hover:text-foreground/60")}
-                  title="Advanced filters"
-                >
-                  <Filter className="w-4 h-4" />
-                </button>
+              </div>
+            )}
+          </article>
+
+          {/* ── Transaction Ledger Card with Sticky Filter Toolbar ── */}
+          <article className="surface-card p-4 sm:p-5 min-w-0 space-y-4">
+            <div className="sticky top-0 z-20 bg-card/95 backdrop-blur-md pb-3 border-b border-border space-y-2.5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                {/* Search + Advanced filter trigger */}
+                <div className="flex items-center gap-2 flex-1">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/35" />
+                    <input
+                      type="text"
+                      placeholder="Search merchant, description, notes, account, category…"
+                      value={query}
+                      onChange={e => setQuery(e.target.value)}
+                      className="w-full bg-background border border-border rounded-lg pl-9 pr-8 py-1.5 text-sm text-foreground placeholder:text-foreground/35 focus:outline-none focus:border-accent/60"
+                    />
+                    {query && (
+                      <button onClick={() => setQuery("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors" aria-label="Clear search">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setShowAdvanced(v => !v)}
+                    className={"px-2.5 py-1.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 transition-colors " + (showAdvanced || minAmount || maxAmount || dateFrom || dateTo || recurringOnly ? "bg-accent/15 border-accent/35 text-accent-light" : "bg-background border-border text-foreground/55 hover:text-foreground")}
+                    title="Advanced filters"
+                  >
+                    <Filter className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Filters</span>
+                  </button>
+                </div>
+
+                {/* Type filter pills */}
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  {(["all", "expense", "income", "transfer"] as const).map(t => {
+                    const labels: Record<string, string> = { all: "All", expense: "Expenses", income: "Income", transfer: "Transfers" };
+                    const counts: Record<string, number> = {
+                      all: activeTransactions.length,
+                      expense:  activeTransactions.filter(x => x.transaction_type === "expense").length,
+                      income:   activeTransactions.filter(x => x.transaction_type === "income").length,
+                      transfer: activeTransactions.filter(x => x.transaction_type === "transfer").length,
+                    };
+                    return (
+                      <button key={t} onClick={() => setTypeFilter(t)}
+                        className={"px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border " + (typeFilter === t ? "bg-accent/15 text-accent-light border-accent/35" : "bg-background border-border text-foreground/50 hover:text-foreground")}
+                      >
+                        {labels[t]}
+                        {counts[t] > 0 && <span className="ml-1.5 opacity-55 tabular-nums">{counts[t]}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Advanced filter panel */}
@@ -2027,13 +2051,13 @@ export default function TransactionsSection() {
               </div>
             )}
 
-            <p className="text-center text-xs text-foreground/20 pt-1">
+            <p className="text-center text-xs text-foreground/35 pt-1">
               {filtered.length === activeTransactions.length
                 ? `${activeTransactions.length} transaction${activeTransactions.length !== 1 ? "s" : ""} · ${grouped.length} ${grouped.length !== 1 ? "categories" : "category"}`
                 : `${filtered.length} of ${activeTransactions.length} shown`
               }
             </p>
-          </div>
+          </article>
         </div>
       )}
       {selectedTx && (
