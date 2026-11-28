@@ -14,7 +14,7 @@ import {
 import {
   chargeActiveInMonth, chargeEndMonth, chargePaidThisMonth, chargesForMonth,
   getSalaryForMonth, isAfterPayoff, isLoanPaidOffBy, isLoanPaidThisMonth, isLoanPayoffMonth, isPaydayPaid, togglePaydayStatus,
-  loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt,
+  loanNaturalPayoffMonth, loanPaymentForMonth, projectLoanBalanceAt, remainingChargesForMonth,
 } from "@/lib/planner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -358,6 +358,7 @@ function projectBalances(
   scenario: "low" | "mid" | "high" = "mid",
   loanPaymentsTotal: number | ((y: number, m: number) => number) = 0,
   filingStatus: FilingStatus = "single",
+  paidChargeIds?: ReadonlySet<string>,
 ): MonthData[] {
   let balance = config.startingBalance;
   const vestEvs = getVestEvents(config.vestingGrants ?? [], config.stockPrices ?? {});
@@ -406,10 +407,13 @@ function projectBalances(
       .filter(b => b.month === m && b.startYear <= y && (b.endYear === null || b.endYear >= y))
       .reduce((s, b) => s + getBonusAmount(b, salary, scenario), 0));
     const charges = config.recurringCharges ?? [];
-    const chargesTotal = chargesForMonth(charges, y, m);
+    const isCurrentMonth = y === CUR_YEAR && m === CUR_MONTH;
+    const remainingCharges = remainingChargesForMonth(charges, y, m, isCurrentMonth ? paidChargeIds : undefined);
+    const chargesTotal = remainingCharges.reduce((sum, c) => sum + c.amount, 0);
     const loanAmt = typeof loanPaymentsTotal === "function" ? loanPaymentsTotal(y, m) : loanPaymentsTotal;
-    // When charges are configured, an out-of-range month genuinely has $0 recurring spend;
-    // only fall back to the flat monthlyExpenses estimate when no charges exist at all.
+    // When charges are configured, an out-of-range month (or a current month where every bill
+    // is already paid) genuinely has $0 remaining recurring spend; only fall back to the flat
+    // monthlyExpenses estimate when no charges exist at all.
     const expenseTotal = (charges.length > 0 ? chargesTotal : config.monthlyExpenses) + loanAmt;
     const scenarioSum  = (config.scenarioEvents ?? []).filter(s => s.year === y && s.month === m)
       .reduce((sum, s) => sum + s.items.reduce((is, it) => is + it.amount, 0), 0);
@@ -448,8 +452,12 @@ function projectBalances(
     }
     if (projectedRefund > 0) lines.push({ label: "Expected tax refund", amount: projectedRefund });
     if (charges.length > 0) {
-      for (const c of charges) {
-        if (chargeActiveInMonth(c, y, m)) lines.push({ label: c.label, amount: -c.amount, detail: "recurring charge" });
+      for (const c of remainingCharges) {
+        lines.push({
+          label: c.label,
+          amount: -c.amount,
+          detail: c.chargeDay ? `bill · due ${ordinalDay(c.chargeDay)}` : "recurring charge",
+        });
       }
     } else if (config.monthlyExpenses > 0) {
       lines.push({ label: "Estimated monthly expenses", amount: -config.monthlyExpenses });
@@ -539,7 +547,7 @@ function detectRecurring(transactions: Array<{ name: string; merchant_name: stri
 }
 
 // ─── Projection Chart (SVG, 3 years) ─────────────────────────────────────────
-function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single" }: { config: PlannerConfig; loanPaymentsTotal?: number | ((y: number, m: number) => number); filingStatus?: FilingStatus }) {
+function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single", paidChargeIds }: { config: PlannerConfig; loanPaymentsTotal?: number | ((y: number, m: number) => number); filingStatus?: FilingStatus; paidChargeIds?: ReadonlySet<string> }) {
   const NUM = 36;
   const W = 900, H = 340;
   const PAD = { t: 24, r: 20, b: 40, l: 72 };
@@ -551,9 +559,9 @@ function ProjectionChart({ config, loanPaymentsTotal = 0, filingStatus = "single
     b.amountMin !== undefined && b.amountMax !== undefined && b.amountMin !== b.amountMax,
   );
 
-  const dataMid  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "mid",  loanPaymentsTotal, filingStatus), [config, loanPaymentsTotal, filingStatus]);
-  const dataLow  = useMemo(() => hasRange ? projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal, filingStatus) : dataMid, [config, loanPaymentsTotal, filingStatus, hasRange, dataMid]);
-  const dataHigh = useMemo(() => hasRange ? projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal, filingStatus) : dataMid, [config, loanPaymentsTotal, filingStatus, hasRange, dataMid]);
+  const dataMid  = useMemo(() => projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "mid",  loanPaymentsTotal, filingStatus, paidChargeIds), [config, loanPaymentsTotal, filingStatus, paidChargeIds]);
+  const dataLow  = useMemo(() => hasRange ? projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "low",  loanPaymentsTotal, filingStatus, paidChargeIds) : dataMid, [config, loanPaymentsTotal, filingStatus, paidChargeIds, hasRange, dataMid]);
+  const dataHigh = useMemo(() => hasRange ? projectBalances(config, CUR_YEAR, CUR_MONTH, NUM, "high", loanPaymentsTotal, filingStatus, paidChargeIds) : dataMid, [config, loanPaymentsTotal, filingStatus, paidChargeIds, hasRange, dataMid]);
 
   const allBals = [
     ...dataMid.map(d => d.balance),
@@ -662,7 +670,7 @@ function MonthCard({
   recurBonuses: RecurringBonus[];
   loanPaymentsTotal: number;
   loanBreakdown: Array<{ id: string; name: string; amount: number; day: number | null }>;
-  spendBreakdown: Array<{ id: string; label: string; amount: number }>;
+  spendBreakdown: Array<{ id: string; label: string; amount: number; paid?: boolean; day?: number }>;
   scenarioEvents: ScenarioEvent[];
   projectedRefund: number; projectedTaxDue: number;
   balance: number; net: number;
@@ -690,8 +698,10 @@ function MonthCard({
     setAdding(false);
   }
 
-  const positive  = net >= 0;
-  const hasExtras = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0 || projectedRefund > 0;
+  const displayNet = Math.abs(net) < 0.005 ? 0 : net;
+  const isZero     = displayNet === 0;
+  const positive   = displayNet >= 0;
+  const hasExtras  = events.length > 0 || vestEvents.length > 0 || recurBonuses.length > 0 || scenarioEvents.length > 0 || projectedRefund > 0;
 
   return (
     <div onClick={() => onSelectMonth(year, month)} className={`relative rounded-2xl border flex flex-col transition-all cursor-pointer ${
@@ -724,9 +734,9 @@ function MonthCard({
             <Calculator className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
           </button>
           <span className={`text-[10px] sm:text-xs font-bold tabular-nums px-1 sm:px-2 py-0.5 rounded-lg ${
-            positive ? "bg-green/10 text-green" : "bg-red/10 text-red"
+            isZero ? "bg-foreground/10 text-foreground/60" : positive ? "bg-green/10 text-green" : "bg-red/10 text-red"
           }`}>
-            {positive ? "+" : ""}{formatCurrency(net)}
+            {isZero ? formatCurrency(0) : `${positive ? "+" : ""}${formatCurrency(displayNet)}`}
           </span>
         </div>
       </div>
@@ -763,10 +773,12 @@ function MonthCard({
               </div>
             ));
           })}
-          {calcLines.length === 0 && <div className="text-[10px] text-foreground/35">Nothing planned this month.</div>}
+          {calcLines.length === 0 && <div className="text-[10px] text-foreground/35">{isToday ? "Nothing remaining this month." : "Nothing planned this month."}</div>}
           <div className="flex items-center justify-between gap-2 text-[10px] border-t border-border/30 pt-1 mt-1">
             <span className="text-foreground/60">Net change</span>
-            <span className={`tabular-nums font-semibold ${net >= 0 ? "text-green" : "text-red"}`}>{net >= 0 ? "+" : "−"}{formatCurrency(Math.abs(net))}</span>
+            <span className={`tabular-nums font-semibold ${isZero ? "text-foreground/60" : positive ? "text-green" : "text-red"}`}>
+              {isZero ? formatCurrency(0) : `${positive ? "+" : "−"}${formatCurrency(Math.abs(displayNet))}`}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-2 text-[11px] font-bold">
             <span className="text-foreground/80">Ending balance</span>
@@ -832,23 +844,41 @@ function MonthCard({
         </div>
         {/* Spend (with per-charge breakdown popover) */}
         {(() => {
-          const scenarioSpend = scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0);
-          const chargesSum    = spendBreakdown.reduce((s, c) => s + c.amount, 0);
+          const scenarioSpend  = scenarioEvents.reduce((s, e) => s + e.items.reduce((si, it) => si + it.amount, 0), 0);
+          const chargesSum     = spendBreakdown.reduce((s, c) => s + c.amount, 0);
+          const unpaidCharges  = spendBreakdown.filter(c => !c.paid);
           // For the current month, already-paid charges are netted out of monthlyExpenses;
           // surface that as a credit row so the popover total matches the figure shown.
-          const paidAdj       = Math.max(0, chargesSum - monthlyExpenses);
-          const totalSpend    = monthlyExpenses + scenarioSpend + projectedTaxDue;
-          const hasPopover    = spendBreakdown.length > 0 || projectedTaxDue > 0;
+          const paidAdj        = Math.max(0, chargesSum - monthlyExpenses);
+          const totalSpend     = monthlyExpenses + scenarioSpend + projectedTaxDue;
+          const hasPopover     = spendBreakdown.length > 0 || projectedTaxDue > 0;
           return (
             <div className={`relative group/sp px-1.5 sm:px-3 py-1.5 sm:py-2 ${hasPopover ? "cursor-help" : ""}`}>
               <div className="text-[8px] sm:text-[9px] text-foreground/30 uppercase tracking-wider mb-0.5">Spend</div>
-              <div className="text-[9px] sm:text-xs font-semibold text-red/70 tabular-nums break-all leading-tight">−{formatCurrency(totalSpend)}</div>
+              <div className={`text-[9px] sm:text-xs font-semibold tabular-nums break-all leading-tight ${totalSpend > 0 ? "text-red/70" : "text-foreground/45"}`}>
+                {totalSpend > 0 ? `−${formatCurrency(totalSpend)}` : formatCurrency(0)}
+              </div>
+              {isToday && unpaidCharges.length > 0 && (
+                <div className="mt-0.5 space-y-0.5">
+                  {unpaidCharges.slice(0, 3).map(c => (
+                    <div key={c.id} className="text-[8px] sm:text-[9px] text-foreground/45 truncate">
+                      {c.label}{c.day ? `: ${ordinalDay(c.day)}` : ` · ${formatCurrency(c.amount)}`}
+                    </div>
+                  ))}
+                  {unpaidCharges.length > 3 && (
+                    <div className="text-[8px] sm:text-[9px] text-foreground/30">+{unpaidCharges.length - 3} more</div>
+                  )}
+                </div>
+              )}
+              {isToday && unpaidCharges.length === 0 && paidAdj > 0 && (
+                <div className="text-[9px] mt-0.5 text-green">Paid {formatCurrency(paidAdj)}</div>
+              )}
               {hasPopover && (
                 <div className="invisible group-hover/sp:visible opacity-0 group-hover/sp:opacity-100 transition-opacity absolute z-30 left-1/2 -translate-x-1/2 top-full mt-1 bg-card border border-border/60 rounded-lg shadow-2xl p-2.5 min-w-[180px] space-y-1 pointer-events-none">
                   {spendBreakdown.map(c => (
                     <div key={c.id} className="flex items-center justify-between gap-3 text-[10px]">
-                      <span className="text-foreground/60 truncate">{c.label}</span>
-                      <span className="text-red/80 font-semibold tabular-nums shrink-0">−{formatCurrency(c.amount)}</span>
+                      <span className={`truncate ${c.paid ? "text-foreground/35 line-through" : "text-foreground/60"}`}>{c.label}</span>
+                      <span className={`font-semibold tabular-nums shrink-0 ${c.paid ? "text-foreground/35 line-through" : "text-red/80"}`}>−{formatCurrency(c.amount)}</span>
                     </div>
                   ))}
                   {scenarioEvents.map(e => (
@@ -870,8 +900,10 @@ function MonthCard({
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-3 text-[10px] border-t border-border/30 pt-1 mt-1">
-                    <span className="text-foreground/70">Total</span>
-                    <span className="text-red font-bold tabular-nums">−{formatCurrency(totalSpend)}</span>
+                    <span className="text-foreground/70">{isToday ? "Remaining" : "Total"}</span>
+                    <span className={`font-bold tabular-nums ${totalSpend > 0 ? "text-red" : "text-green"}`}>
+                      {totalSpend > 0 ? `−${formatCurrency(totalSpend)}` : formatCurrency(0)}
+                    </span>
                   </div>
                 </div>
               )}
@@ -2020,17 +2052,36 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
     [loans, isLoanPaid, payoffOverrides, naturalPayoffEnd],
   );
 
+  const paidChargeIds = useMemo(() => {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const ids = new Set<string>();
+    for (const rc of config.recurringCharges ?? []) {
+      if (!chargeActiveInMonth(rc, CUR_YEAR, CUR_MONTH)) continue;
+      const rcKey = rc.merchantKey ?? norm(rc.label);
+      const seen = [...thisMonthTxKeys].some(k => k.includes(rcKey) || rcKey.includes(k));
+      if (chargePaidThisMonth(rc, seen)) ids.add(rc.id);
+    }
+    return ids;
+  }, [config.recurringCharges, thisMonthTxKeys]);
+
   const getSpendBreakdownForMonth = useCallback(
-    (y: number, m: number): Array<{ id: string; label: string; amount: number }> => {
-      const out: Array<{ id: string; label: string; amount: number }> = [];
+    (y: number, m: number): Array<{ id: string; label: string; amount: number; paid?: boolean; day?: number }> => {
+      const isCurrentMonth = y === CUR_YEAR && m === CUR_MONTH;
+      const out: Array<{ id: string; label: string; amount: number; paid?: boolean; day?: number }> = [];
       for (const c of config.recurringCharges ?? []) {
         if (chargeActiveInMonth(c, y, m) && c.amount > 0) {
-          out.push({ id: c.id, label: c.label, amount: c.amount });
+          out.push({
+            id: c.id,
+            label: c.label,
+            amount: c.amount,
+            paid: isCurrentMonth ? paidChargeIds.has(c.id) : false,
+            day: c.chargeDay,
+          });
         }
       }
       return out;
     },
-    [config.recurringCharges],
+    [config.recurringCharges, paidChargeIds],
   );
 
   // Charges actually active in the current month (respects each charge's start/duration).
@@ -2040,35 +2091,31 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
   );
 
   const paidChargesTotal = useMemo(() => {
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return (config.recurringCharges ?? []).reduce((s, rc) => {
       if (!chargeActiveInMonth(rc, CUR_YEAR, CUR_MONTH)) return s;
-      const rcKey = rc.merchantKey ?? norm(rc.label);
-      const seen = [...thisMonthTxKeys].some(k => k.includes(rcKey) || rcKey.includes(k));
-      return chargePaidThisMonth(rc, seen) ? s + rc.amount : s;
+      return paidChargeIds.has(rc.id) ? s + rc.amount : s;
     }, 0);
-  }, [config.recurringCharges, thisMonthTxKeys]);
-
-  // Amounts already paid this month — baked into the starting balance so every
-  // downstream month's balance cascades correctly (rather than a display-only hack).
-  const paidAdjust = useMemo(
-    () => paidChargesTotal,
-    [paidChargesTotal],
-  );
+  }, [config.recurringCharges, paidChargeIds]);
 
   // Compute projections for the viewed year — always start from the current month so
   // assetsTotal is correctly treated as this month's opening balance, not Jan 1st.
+  // Already-paid charges for the current month are excluded directly inside projectBalances
+  // so `outflow`, `net`, and `balance` reflect only what is still remaining this month.
   const yearData = useMemo<MonthData[]>(() => {
     const totalMonths = (viewYear - CUR_YEAR) * 12 + (12 - CUR_MONTH + 1);
     if (totalMonths <= 0) return [];
-    // Add paidAdjust to starting balance: charges already paid this month are
-    // already reflected in assetsTotal but projectBalances would subtract them
-    // again unless we compensate here.
-    const adjustedConfig = { ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust };
-    const all = projectBalances(adjustedConfig, CUR_YEAR, CUR_MONTH, totalMonths, "mid", getLoanPaymentsForMonth, taxFilingStatus);
-    return all.filter(d => d.year === viewYear)
-      .map(d => d.year === CUR_YEAR && d.month === CUR_MONTH && paidAdjust > 0 ? { ...d, openingAdjust: paidAdjust } : d);
-  }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, paidAdjust, taxFilingStatus]);
+    const all = projectBalances(
+      effectiveConfig,
+      CUR_YEAR,
+      CUR_MONTH,
+      totalMonths,
+      "mid",
+      getLoanPaymentsForMonth,
+      taxFilingStatus,
+      paidChargeIds,
+    );
+    return all.filter(d => d.year === viewYear);
+  }, [effectiveConfig, viewYear, getLoanPaymentsForMonth, taxFilingStatus, paidChargeIds]);
 
   // ── summary stats for the viewed year, summed straight off the projection months so
   // the chips always reconcile with the month cards (per-month loan amounts, bonuses,
@@ -2445,7 +2492,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
             )}
           </div>
         </div>
-        <ProjectionChart config={{ ...effectiveConfig, startingBalance: effectiveConfig.startingBalance + paidAdjust }} loanPaymentsTotal={getLoanPaymentsForMonth} filingStatus={taxFilingStatus} />
+        <ProjectionChart config={effectiveConfig} loanPaymentsTotal={getLoanPaymentsForMonth} filingStatus={taxFilingStatus} paidChargeIds={paidChargeIds} />
       </div>
 
       {/* ── Config + Year Grid (2-col on lg) ── */}

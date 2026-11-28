@@ -76,6 +76,18 @@ export function chargesForMonth(charges: RecurringChargeLike[], year: number, mo
     sum + (chargeActiveInMonth(charge, year, month) ? charge.amount : 0), 0);
 }
 
+/** Returns recurring charges active in `(year, month)` that have not yet been paid. */
+export function remainingChargesForMonth<T extends RecurringChargeLike & { id: string }>(
+  charges: T[],
+  year: number,
+  month: number,
+  paidChargeIds?: ReadonlySet<string>,
+): T[] {
+  return charges.filter(
+    (charge) => chargeActiveInMonth(charge, year, month) && !paidChargeIds?.has(charge.id),
+  );
+}
+
 export function chargePaidThisMonth(c: RecurringChargeLike, txSeen: boolean, now: Date = new Date()): boolean {
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   if (c.paidOverride && c.paidOverride.month === monthKey) return c.paidOverride.paid;

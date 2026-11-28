@@ -6,6 +6,7 @@ import {
   isLoanPaidThisMonth,
   isPaydayPaid,
   projectLoanBalanceAt,
+  remainingChargesForMonth,
   salaryPaidThisMonth,
   togglePaydayStatus,
 } from "../src/lib/planner.ts";
@@ -85,4 +86,23 @@ test("loans auto-mark paid on/after payment_day and respect manual unpaid overri
   assert.equal(isLoanPaidThisMonth(loan, [], { "loan-1": "2026-10" }, "2026-11", 22), true);
   // Loan without payment_day is never auto-paid
   assert.equal(isLoanPaidThisMonth({ id: "loan-2", payment_day: null }, [], undefined, "2026-11", 22), false);
+});
+
+test("remainingChargesForMonth excludes already-paid charges so current-month net reflects only missing bills", () => {
+  const charges = [
+    { id: "c1", amount: 2500, startYear: 2026, startMonth: 1 },
+    { id: "c2", amount: 96.18, startYear: 2026, startMonth: 1 },
+    { id: "c3", amount: 150, startYear: 2026, startMonth: 12 },
+  ];
+  const oneLeft = remainingChargesForMonth(charges, 2026, 11, new Set(["c1"]));
+  assert.deepEqual(oneLeft.map((c) => c.id), ["c2"]);
+  assert.equal(oneLeft.reduce((s, c) => s + c.amount, 0), 96.18);
+
+  const allPaid = remainingChargesForMonth(charges, 2026, 11, new Set(["c1", "c2"]));
+  assert.deepEqual(allPaid, []);
+  assert.equal(allPaid.reduce((s, c) => s + c.amount, 0), 0);
+
+  // Future months ignore current-month paidChargeIds when undefined is passed
+  const decCharges = remainingChargesForMonth(charges, 2026, 12);
+  assert.deepEqual(decCharges.map((c) => c.id), ["c1", "c2", "c3"]);
 });
