@@ -105,30 +105,28 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
   }
 
   return (
-    <article className="surface-card p-5 sm:p-6">
+    <div className="rounded-2xl bg-linear-to-br from-orange-500/15 to-red-500/10 border border-border/50 p-4 sm:p-6 animate-slide-up">
       {/* Header */}
-      <header className="flex items-start justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-lg bg-red/12 border border-red/25 flex items-center justify-center shrink-0">
-            <Landmark className="w-4 h-4 text-red" />
+          <div className="p-2 sm:p-2.5 rounded-xl bg-orange-500/20 shrink-0">
+            <Landmark className="w-4 h-4 sm:w-5 sm:h-5 text-orange-400" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground tracking-tight">Pending & Owed</h2>
-            <p className="text-xs text-foreground/45">{liabilities.length} item{liabilities.length !== 1 ? "s" : ""}</p>
+            <h2 className="text-sm sm:text-lg font-bold text-foreground">Pending & Owed</h2>
+            <p className="text-[10px] sm:text-sm text-foreground/50">Money you owe</p>
           </div>
         </div>
         <div className="text-right shrink-0">
-          <p className={`text-xl font-bold tabular-nums tracking-tight ${total > 0 ? "text-red" : "text-foreground"}`}>
-            {total > 0 ? `−${formatCurrency(total)}` : formatCurrency(0)}
-          </p>
+          <p className="text-lg sm:text-2xl font-bold text-red-400">-{formatCurrency(total)}</p>
           <button
             onClick={() => { setAdding(true); setAddForm(EMPTY_FORM); }}
-            className="text-xs font-medium text-accent-light hover:text-foreground transition-colors flex items-center gap-1 mt-1 ml-auto"
+            className="text-[10px] sm:text-xs text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1 mt-1 ml-auto"
           >
             <Plus className="w-3 h-3" /> Add
           </button>
         </div>
-      </header>
+      </div>
 
       {/* Add form */}
       {adding && (
@@ -300,6 +298,6 @@ export default function LiabilitiesSection({ liabilities, total, onRefresh }: Pr
           onConfirm={() => { const id = deleteId; setDeleteId(null); if (id) void handleDelete(id); }}
         />
       </div>
-    </article>
+    </div>
   );
 }

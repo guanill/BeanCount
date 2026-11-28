@@ -1104,7 +1104,7 @@ export default function LoansSection() {
           </button>
         </div>
       ) : (
-        <div className="grid min-w-0 grid-cols-1 xl:grid-cols-2 gap-5">
+        <div className="grid min-w-0 grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
           {sorted.map(loan => (
             <LoanCard key={loan.id} loan={loan} onRefresh={fetchLoans} />
           ))}

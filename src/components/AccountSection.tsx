@@ -40,11 +40,11 @@ interface SyncError {
   message: string;
 }
 
-const typeConfig: Record<AccountType, { label: string; iconStyle: string; Icon: React.ElementType }> = {
-  bank: { label: "Bank Accounts", iconStyle: "bg-blue/12 border-blue/25 text-blue", Icon: Landmark },
-  stock: { label: "Stock & Investments", iconStyle: "bg-accent/12 border-accent/25 text-accent-light", Icon: TrendingUp },
-  crypto: { label: "Cryptocurrency", iconStyle: "bg-yellow/12 border-yellow/25 text-yellow", Icon: Bitcoin },
-  cash: { label: "Cash", iconStyle: "bg-green/12 border-green/25 text-green", Icon: Wallet },
+const typeConfig: Record<AccountType, { label: string; gradient: string; iconBg: string; Icon: React.ElementType }> = {
+  bank: { label: "Bank Accounts", gradient: "from-blue-500/20 to-cyan-500/10", iconBg: "bg-blue-500/20", Icon: Landmark },
+  stock: { label: "Stock & Investments", gradient: "from-green-500/20 to-emerald-500/10", iconBg: "bg-green-500/20", Icon: TrendingUp },
+  crypto: { label: "Cryptocurrency", gradient: "from-yellow-500/20 to-orange-500/10", iconBg: "bg-yellow-500/20", Icon: Bitcoin },
+  cash: { label: "Cash", gradient: "from-emerald-500/20 to-teal-500/10", iconBg: "bg-emerald-500/20", Icon: Wallet },
 };
 
 const iconMap: Record<string, React.ElementType> = {
@@ -70,7 +70,7 @@ interface Props {
 }
 
 export default function AccountSection({ type, accounts, total, onRefresh, children, automaticHoldings = false }: Props) {
-  const { label, iconStyle, Icon } = typeConfig[type];
+  const { label, gradient, iconBg, Icon } = typeConfig[type];
   const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValues, setEditingValues] = useState<{ name: string; balance: string }>({ name: "", balance: "" });
@@ -199,19 +199,19 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
   }
 
   return (
-    <article className="surface-card p-5 sm:p-6">
+    <div className={`rounded-2xl bg-linear-to-br ${gradient} border border-border/50 p-4 sm:p-6 animate-slide-up`}>
       {/* Header */}
-      <header className="flex items-start justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${iconStyle}`}>
-            <Icon className="w-4 h-4" />
+          <div className={`p-2 sm:p-2.5 rounded-xl shrink-0 ${iconBg}`}>
+            <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-foreground" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground tracking-tight truncate">{label}</h2>
-            <p className="text-xs text-foreground/45">
+            <h2 className="text-sm sm:text-lg font-bold text-foreground truncate">{label}</h2>
+            <p className="text-[10px] sm:text-sm text-foreground/50">
               {accounts.length} account{accounts.length !== 1 ? "s" : ""}
               {hasLinked && (
-                <span className="ml-1.5 inline-flex items-center gap-1 text-accent-light">
+                <span className="ml-1 sm:ml-1.5 inline-flex items-center gap-1 text-accent/80">
                   · <CheckCircle2 className="w-3 h-3" /> {linkedAccounts.length} linked
                 </span>
               )}
@@ -219,18 +219,18 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
           </div>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-xl font-bold text-foreground tabular-nums tracking-tight">{formatCurrency(total)}</p>
-          <div className="flex items-center gap-2.5 justify-end mt-1">
+          <p className="text-lg sm:text-2xl font-bold text-foreground">{formatCurrency(total)}</p>
+          <div className="flex items-center gap-2 justify-end mt-1">
             {hasLinked && (
               <button
                 type="button"
                 onClick={handleSync}
                 disabled={syncing}
                 title="Sync balances from your bank"
-                className={`flex items-center gap-1 text-xs transition-colors disabled:opacity-40 ${
+                className={`flex items-center gap-1 text-[10px] sm:text-xs transition-colors disabled:opacity-40 ${
                   syncMsg?.includes("failed")
-                    ? "text-yellow hover:text-yellow/80"
-                    : "text-foreground/50 hover:text-accent-light"
+                    ? "text-yellow-400 hover:text-yellow-300"
+                    : "text-foreground/50 hover:text-accent"
                 }`}
               >
                 <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} />
@@ -239,20 +239,20 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
             )}
             {!automaticHoldings && <button
               onClick={() => { setAdding(!adding); setEditingId(null); setAddValues({ name: "", balance: "" }); }}
-              className="text-xs font-medium text-accent-light hover:text-foreground transition-colors flex items-center gap-1"
+              className="text-[10px] sm:text-xs text-accent-light hover:text-accent transition-colors flex items-center gap-1"
             >
               <Plus className="w-3 h-3" /> Add
             </button>}
           </div>
         </div>
-      </header>
+      </div>
 
       {/* Real bank connection (bank accounts only) */}
       {type === "bank" && (
-        <div className="mb-4 flex items-center gap-3 p-3 rounded-xl bg-background/60 border border-border">
+        <div className="mb-4 flex items-center gap-3 p-3 rounded-xl bg-card/50 border border-accent/10">
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground/80">Connect your bank</p>
-            <p className="text-xs text-foreground/45 mt-0.5">Securely link via Teller for one-tap balance updates</p>
+            <p className="text-xs font-medium text-foreground/80">Connect your real bank</p>
+            <p className="text-xs text-foreground/40 mt-0.5">Securely link via Teller — balances update with one tap</p>
           </div>
           <TellerConnectButton onConnected={onRefresh} />
         </div>
@@ -454,6 +454,6 @@ export default function AccountSection({ type, accounts, total, onRefresh, child
         />
       </div>
       {children}
-    </article>
+    </div>
   );
 }
