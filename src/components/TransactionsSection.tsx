@@ -1402,54 +1402,42 @@ export default function TransactionsSection() {
     : creditCards.find(card => card.id === importSourceId)?.name;
   const activeSourceCoverage = sourceCoverage?.source === importSource ? sourceCoverage : null;
 
-  /* â"€â"€ Render â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */
+  /* ── Render ────────────────────────────────────────────────────────────── */
   return (
-    <div className="rounded-2xl border border-border/50 bg-card p-6 animate-slide-up">
+    <>
+    <div className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 xl:gap-8 lg:items-start animate-slide-up">
 
-      {/* â"€â"€ Header â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-      <div className="space-y-3 mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>
-            <p className="text-xs sm:text-sm text-foreground/40 mt-0.5">Spending and income</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={handleSyncTransactions} disabled={syncing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:border-accent/30 text-foreground/60 hover:text-accent transition-colors disabled:opacity-40">
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
-              {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
-            </button>
-            <button onClick={() => { setShowImport(!showImport); setImportError(""); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-accent/30 text-accent-light hover:bg-accent/10 transition-colors">
-              <Upload className="w-3.5 h-3.5" /> Import CSV
-            </button>
-            <button onClick={() => setShowAdd(!showAdd)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
-              <Plus className="w-3.5 h-3.5" /> Add
-            </button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center justify-center gap-2">
-            <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
-              {(["month", "year"] as const).map((m) => (
-                <button key={m} onClick={() => setViewMode(m)}
-                  className={`px-3 py-1.5 transition-colors ${viewMode === m ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
-                  {m.charAt(0).toUpperCase() + m.slice(1)}
+      {/* ── LEFT PANEL: Period, Summary & Charts (sticky on desktop) ──────── */}
+      <div className="lg:col-span-5 xl:col-span-5 lg:sticky lg:top-24 rounded-2xl border border-border/50 bg-card p-5 sm:p-6 space-y-5 min-w-0">
+        {/* Period controls + Month coverage */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <h2 className="text-lg sm:text-xl font-bold text-foreground">Spending Overview</h2>
+              <p className="text-xs text-foreground/40 mt-0.5">{periodLabel}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-lg bg-background border border-border/50 overflow-hidden text-xs">
+                {(["month", "year"] as const).map((m) => (
+                  <button key={m} onClick={() => setViewMode(m)}
+                    className={`px-3 py-1.5 transition-colors ${viewMode === m ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
+                  <ChevronLeft className="w-4 h-4" />
                 </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1">
-              <button onClick={prevPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-sm font-semibold text-foreground min-w-28 text-center">{periodLabel}</span>
-              <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
-                <ChevronRight className="w-4 h-4" />
-              </button>
+                <span className="text-sm font-semibold text-foreground min-w-24 text-center">{periodLabel}</span>
+                <button onClick={nextPeriod} className="p-1.5 rounded-lg border border-border/40 hover:border-accent/40 text-foreground/50 hover:text-accent transition-colors">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
-          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 gap-1.5 sm:grid-cols-12">
+
+          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 gap-1.5 sm:grid-cols-12 lg:grid-cols-6 xl:grid-cols-12">
             {MONTHS.map((monthName, index) => {
               const monthNumber = index + 1;
               const transactionCount = monthCoverage[monthNumber] ?? 0;
@@ -1482,14 +1470,118 @@ export default function TransactionsSection() {
               );
             })}
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-foreground/45">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-foreground/45">
             <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2 w-2 rounded-sm bg-green" />CSV transactions imported</span>
             <span className="inline-flex items-center gap-1"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-yellow-400" />Current month in progress</span>
             {coverageLoading && <span>Loading coverage…</span>}
             {coverageError && <span role="status" className="text-yellow-400">Month coverage unavailable</span>}
           </div>
         </div>
+
+        {/* Summary cards */}
+        {summary && (
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            <div className="rounded-xl p-2.5 sm:p-3.5 bg-green-500/10 border border-green-500/20 min-w-0">
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingUp className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                <span className="text-[10px] sm:text-xs text-foreground/50 truncate">Income</span>
+              </div>
+              <p className="text-sm sm:text-base font-bold text-green-400 tabular-nums truncate">{formatCurrency(summary.totalIncome)}</p>
+            </div>
+            <div className="rounded-xl p-2.5 sm:p-3.5 bg-red-500/10 border border-red-500/20 min-w-0">
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingDown className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                <span className="text-[10px] sm:text-xs text-foreground/50 truncate">Expenses</span>
+              </div>
+              <p className="text-sm sm:text-base font-bold text-red-400 tabular-nums truncate">{formatCurrency(summary.totalExpenses)}</p>
+            </div>
+            <div className={`rounded-xl p-2.5 sm:p-3.5 border min-w-0 ${summary.net >= 0 ? "bg-accent/10 border-accent/20" : "bg-orange-500/10 border-orange-500/20"}`}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <Minus className="w-3.5 h-3.5 text-foreground/50 shrink-0" />
+                <span className="text-[10px] sm:text-xs text-foreground/50 truncate">Net</span>
+              </div>
+              <p className={`text-sm sm:text-base font-bold tabular-nums truncate ${summary.net >= 0 ? "text-accent" : "text-orange-400"}`}>
+                {summary.net >= 0 ? "+" : ""}{formatCurrency(summary.net)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Chart switcher + Flow / Donut */}
+        {!loading && !transactionsError && transactions.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex w-fit items-center gap-1 rounded-xl border border-border/40 bg-background p-1 mx-auto" aria-label="Spending chart view">
+              {(["flow", "donut"] as const).map(chart => (
+                <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
+                  className={`rounded-lg px-4 py-1.5 text-xs font-medium ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                  {chart === "flow" ? "Income flow" : "Category donut"}
+                </button>
+              ))}
+            </div>
+            {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
+              <div className="flex flex-col items-center gap-4 rounded-xl border border-border/40 bg-background/40 p-4 sm:p-5">
+                <div className="w-44 h-44 sm:w-56 sm:h-56">
+                  <SpendingDonut
+                    segments={donutSegments}
+                    total={donutTotal}
+                    highlightedCat={hoveredCat}
+                    onHover={setHoveredCat}
+                  />
+                </div>
+                <div className="w-full flex flex-wrap justify-center gap-1">
+                  {donutSegments.map(seg => {
+                    const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
+                    const isActive = catFilter === seg.category;
+                    return (
+                      <button
+                        key={seg.category}
+                        type="button"
+                        onMouseEnter={() => setHoveredCat(seg.category)}
+                        onMouseLeave={() => setHoveredCat(null)}
+                        onClick={() => handleDonutClick(seg.category)}
+                        className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
+                      >
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                        <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
+                        <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
+                      </button>
+                    );
+                  })}
+                  {catFilter && (
+                    <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
+                      Clear filter ×
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* ── RIGHT PANEL: Transactions List, Filters & Actions ─────────────── */}
+      <div className="lg:col-span-7 xl:col-span-7 rounded-2xl border border-border/50 bg-card p-5 sm:p-6 min-w-0">
+        <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
+          <div>
+            <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>
+            <p className="text-xs sm:text-sm text-foreground/40 mt-0.5">Spending and income · {periodLabel}</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={handleSyncTransactions} disabled={syncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-border/40 hover:border-accent/30 text-foreground/60 hover:text-accent transition-colors disabled:opacity-40">
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
+              {syncMsg ?? (syncing ? "Syncing…" : "Sync")}
+            </button>
+            <button onClick={() => { setShowImport(!showImport); setImportError(""); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-accent/30 text-accent-light hover:bg-accent/10 transition-colors">
+              <Upload className="w-3.5 h-3.5" /> Import CSV
+            </button>
+            <button onClick={() => setShowAdd(!showAdd)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-accent text-white hover:bg-accent-light transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
+        </div>
 
       {/* â"€â"€ Add form â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
       {showImport && (
@@ -1693,35 +1785,6 @@ export default function TransactionsSection() {
         </div>
       )}
 
-      {/* â"€â"€ Summary cards â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-      {summary && (
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
-          <div className="rounded-xl p-2.5 sm:p-4 bg-green-500/10 border border-green-500/20">
-            <div className="flex items-center gap-1.5 mb-1">
-              <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-400" />
-              <span className="text-[10px] sm:text-xs text-foreground/50">Income</span>
-            </div>
-            <p className="text-sm sm:text-lg font-bold text-green-400 tabular-nums">{formatCurrency(summary.totalIncome)}</p>
-          </div>
-          <div className="rounded-xl p-2.5 sm:p-4 bg-red-500/10 border border-red-500/20">
-            <div className="flex items-center gap-1.5 mb-1">
-              <TrendingDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-400" />
-              <span className="text-[10px] sm:text-xs text-foreground/50">Expenses</span>
-            </div>
-            <p className="text-sm sm:text-lg font-bold text-red-400 tabular-nums">{formatCurrency(summary.totalExpenses)}</p>
-          </div>
-          <div className={`rounded-xl p-2.5 sm:p-4 border ${summary.net >= 0 ? "bg-accent/10 border-accent/20" : "bg-orange-500/10 border-orange-500/20"}`}>
-            <div className="flex items-center gap-1.5 mb-1">
-              <Minus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-foreground/50" />
-              <span className="text-[10px] sm:text-xs text-foreground/50">Net</span>
-            </div>
-            <p className={`text-sm sm:text-lg font-bold ${summary.net >= 0 ? "text-accent" : "text-orange-400"}`}>
-              {summary.net >= 0 ? "+" : ""}{formatCurrency(summary.net)}
-            </p>
-          </div>
-        </div>
-      )}
-
       {loading ? (
         <div className="text-center py-16 space-y-2"><span className="text-2xl animate-bounce inline-block">🫘</span><p className="text-foreground/30 text-sm">Loading transactions...</p></div>
       ) : transactionsError ? (
@@ -1736,60 +1799,7 @@ export default function TransactionsSection() {
           <p className="text-foreground/30 text-sm">Sync your bank via Teller or plant your first bean manually</p>
         </div>
       ) : (
-        <div className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-6 lg:items-start">
-
-          {/* Left column: Chart (sticky while scrolling transactions on desktop) */}
-          <div className="min-w-0 space-y-4 lg:sticky lg:top-24">
-            <div className="flex w-fit items-center gap-1 rounded-xl border border-border/40 bg-background p-1 mx-auto" aria-label="Spending chart view">
-              {(["flow", "donut"] as const).map(chart => (
-                <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
-                  className={`rounded-lg px-4 py-1.5 text-xs font-medium ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
-                  {chart === "flow" ? "Income flow" : "Category donut"}
-                </button>
-              ))}
-            </div>
-            {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
-            <div className="flex flex-col items-center gap-4 rounded-xl border border-border/40 bg-background/40 p-4 sm:p-5">
-              <div className="w-44 h-44 sm:w-56 sm:h-56">
-                <SpendingDonut
-                  segments={donutSegments}
-                  total={donutTotal}
-                  highlightedCat={hoveredCat}
-                  onHover={setHoveredCat}
-                />
-              </div>
-              {/* Donut legend */}
-              <div className="w-full flex flex-wrap justify-center gap-1">
-                {donutSegments.map(seg => {
-                  const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
-                  const isActive = catFilter === seg.category;
-                  return (
-                    <button
-                      key={seg.category}
-                      type="button"
-                      onMouseEnter={() => setHoveredCat(seg.category)}
-                      onMouseLeave={() => setHoveredCat(null)}
-                      onClick={() => handleDonutClick(seg.category)}
-                      className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
-                    >
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
-                      <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
-                      <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
-                    </button>
-                  );
-                })}
-                {catFilter && (
-                  <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
-                    Clear filter ×
-                  </button>
-                )}
-              </div>
-            </div>
-            )}
-          </div>
-
-          {/* Right column: Filters + Category accordion + transaction list */}
-          <div className="min-w-0 space-y-3">
+        <div className="min-w-0 space-y-3">
 
             {/* Type filter tabs */}
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -2033,9 +2043,10 @@ export default function TransactionsSection() {
                 : `${filtered.length} of ${activeTransactions.length} shown`
               }
             </p>
-          </div>
         </div>
       )}
+      </div>
+    </div>
       {selectedTx && (
         <TransactionDetailPanel
           tx={selectedTx}
@@ -2073,6 +2084,6 @@ export default function TransactionsSection() {
         onCancel={() => { if (!deletingTellerTransactions) setDeleteTellerConfirmation(false); }}
         onConfirm={() => { void handleDeleteTellerTransactions(); }}
       />
-    </div>
+    </>
   );
 }
