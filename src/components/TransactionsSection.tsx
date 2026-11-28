@@ -1408,7 +1408,7 @@ export default function TransactionsSection() {
     <div className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 xl:gap-8 lg:items-start animate-slide-up">
 
       {/* ── LEFT PANEL: Period, Summary & Charts (sticky on desktop) ──────── */}
-      <div className="lg:col-span-5 xl:col-span-5 lg:sticky lg:top-24 rounded-2xl border border-border/50 bg-card p-5 sm:p-6 space-y-5 min-w-0">
+      <div className="lg:col-span-7 xl:col-span-7 lg:sticky lg:top-24 rounded-2xl border border-border/50 bg-card p-5 sm:p-6 space-y-5 min-w-0">
         {/* Period controls + Month coverage */}
         <div className="space-y-2.5">
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1437,7 +1437,7 @@ export default function TransactionsSection() {
             </div>
           </div>
 
-          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 gap-1.5 sm:grid-cols-12 lg:grid-cols-6 xl:grid-cols-12">
+          <div aria-label={`Transaction coverage for ${year}`} className="grid grid-cols-6 gap-1.5 sm:grid-cols-12">
             {MONTHS.map((monthName, index) => {
               const monthNumber = index + 1;
               const transactionCount = monthCoverage[monthNumber] ?? 0;
@@ -1519,8 +1519,8 @@ export default function TransactionsSection() {
               ))}
             </div>
             {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
-              <div className="flex flex-col items-center gap-4 rounded-xl border border-border/40 bg-background/40 p-4 sm:p-5">
-                <div className="w-44 h-44 sm:w-56 sm:h-56">
+              <div className="flex flex-col xl:flex-row items-center justify-center gap-6 xl:gap-8 rounded-xl border border-border/40 bg-background/40 p-5 sm:p-7">
+                <div className="w-56 h-56 sm:w-64 sm:h-64 lg:w-80 lg:h-80 xl:w-[340px] xl:h-[340px] shrink-0">
                   <SpendingDonut
                     segments={donutSegments}
                     total={donutTotal}
@@ -1528,7 +1528,7 @@ export default function TransactionsSection() {
                     onHover={setHoveredCat}
                   />
                 </div>
-                <div className="w-full flex flex-wrap justify-center gap-1">
+                <div className="w-full xl:flex-1 flex flex-wrap xl:flex-col justify-center gap-1.5 min-w-0">
                   {donutSegments.map(seg => {
                     const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
                     const isActive = catFilter === seg.category;
@@ -1539,16 +1539,21 @@ export default function TransactionsSection() {
                         onMouseEnter={() => setHoveredCat(seg.category)}
                         onMouseLeave={() => setHoveredCat(null)}
                         onClick={() => handleDonutClick(seg.category)}
-                        className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
+                        className={"flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 transition-all text-xs sm:text-sm " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
                       >
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
-                        <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
-                        <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                          <span className="truncate text-foreground/80">{seg.emoji} {seg.label}</span>
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0 tabular-nums">
+                          <span className="text-foreground/60 font-medium hidden sm:inline">{formatCurrency(seg.amount)}</span>
+                          <span className="text-foreground/40 w-9 text-right">{pct}%</span>
+                        </span>
                       </button>
                     );
                   })}
                   {catFilter && (
-                    <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
+                    <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-3 py-1.5 transition-colors self-start">
                       Clear filter ×
                     </button>
                   )}
@@ -1560,7 +1565,7 @@ export default function TransactionsSection() {
       </div>
 
       {/* ── RIGHT PANEL: Transactions List, Filters & Actions ─────────────── */}
-      <div className="lg:col-span-7 xl:col-span-7 rounded-2xl border border-border/50 bg-card p-5 sm:p-6 min-w-0">
+      <div className="lg:col-span-5 xl:col-span-5 rounded-2xl border border-border/50 bg-card p-5 sm:p-6 min-w-0">
         <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-foreground">Transactions</h2>

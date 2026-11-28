@@ -45,15 +45,15 @@ export default function SpendingFlow({ transactions, periodLabel }: { transactio
     return <p className="rounded-xl border border-border/40 p-6 text-center text-sm text-foreground/50">No income or spending to show for {periodLabel}. Transfers and ignored transactions are excluded.</p>;
   }
 
-  const height = Math.max(320, Math.max(left.length, right.length) * 55 + 50);
-  const chartHeight = height - 68;
+  const height = Math.max(400, Math.max(left.length, right.length) * 60 + 64);
+  const chartHeight = height - 72;
   const gap = 24;
   const scale = (chartHeight - gap * (Math.max(left.length, right.length) - 1)) / total;
   const centerY = (height - total * scale) / 2;
 
   function drawNodes(nodes: FlowNode[], side: "left" | "right") {
-    const x = side === "left" ? 205 : 595;
-    const centralX = side === "left" ? 390 : 410;
+    const x = side === "left" ? 180 : 540;
+    const centralX = side === "left" ? 348 : 372;
     const totalHeight = nodes.reduce((sum, node) => sum + node.amount * scale, 0) + gap * (nodes.length - 1);
     let nodeY = (height - totalHeight) / 2;
     let centerOffset = centerY;
@@ -68,15 +68,15 @@ export default function SpendingFlow({ transactions, periodLabel }: { transactio
           <path
             d={side === "left" ? ribbon(x, centralX, y, center, width) : ribbon(centralX, x, center, y, width)}
             fill={node.color}
-            fillOpacity={0.28}
+            fillOpacity={0.32}
           />
-          <rect x={side === "left" ? x - 5 : x} y={y} width={5} height={width} fill={node.color} />
+          <rect x={side === "left" ? x - 6 : x} y={y} width={6} height={Math.max(width, 2)} rx={1.5} fill={node.color} />
           <text x={side === "left" ? x - 12 : x + 12} y={y + width / 2 - 3}
-            textAnchor={side === "left" ? "end" : "start"} fill="currentColor" fontSize="11">
+            textAnchor={side === "left" ? "end" : "start"} fill="currentColor" fontSize="12" fontWeight="500">
             {node.label.length > 22 ? `${node.label.slice(0, 21)}…` : node.label}
           </text>
-          <text x={side === "left" ? x - 12 : x + 12} y={y + width / 2 + 11}
-            textAnchor={side === "left" ? "end" : "start"} fill="currentColor" opacity={0.65} fontSize="10">
+          <text x={side === "left" ? x - 12 : x + 12} y={y + width / 2 + 12}
+            textAnchor={side === "left" ? "end" : "start"} fill="currentColor" opacity={0.65} fontSize="11">
             {formatCurrency(node.amount)}
           </text>
           <title>{node.label}: {formatCurrency(node.amount)}</title>
@@ -86,21 +86,21 @@ export default function SpendingFlow({ transactions, periodLabel }: { transactio
   }
 
   return (
-    <section aria-label={`Income and spending flow for ${periodLabel}`} className="rounded-xl border border-border/40 bg-background/40 p-3 sm:p-5">
+    <section aria-label={`Income and spending flow for ${periodLabel}`} className="rounded-xl border border-border/40 bg-background/40 p-4 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-semibold text-foreground">Income to spending</h3>
         <span className="text-xs text-foreground/50">{periodLabel}</span>
       </div>
       <p className="mt-1 text-xs text-foreground/50">All transactions in this period, excluding transfers and ignored transactions. List filters do not affect this chart.</p>
       <p className="mt-1 text-xs text-foreground/40 sm:hidden">Swipe horizontally to see the full diagram.</p>
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 800 ${height}`} className="mx-auto w-full min-w-[560px] lg:min-w-0 text-foreground" role="img"
+      <div className="mt-3 overflow-x-auto">
+        <svg viewBox={`0 0 720 ${height}`} className="block mx-auto w-full min-w-[560px] lg:min-w-0 text-foreground" role="img"
           aria-label={`Recorded income ${formatCurrency(flow.totalIncome)}, spending ${formatCurrency(flow.totalExpenses)}${flow.shortfall > 0 ? `, income shortfall ${formatCurrency(flow.shortfall)}` : `, income less spending ${formatCurrency(flow.remainder)}`}.`}>
-          <text x="10" y="16" fill="currentColor" opacity={0.6} fontSize="11">INCOME SOURCES</text>
-          <text x="595" y="16" fill="currentColor" opacity={0.6} fontSize="11">SPENDING CATEGORIES</text>
+          <text x="8" y="18" fill="currentColor" opacity={0.6} fontSize="11" fontWeight="600">INCOME SOURCES</text>
+          <text x="540" y="18" fill="currentColor" opacity={0.6} fontSize="11" fontWeight="600">SPENDING CATEGORIES</text>
           {drawNodes(left, "left")}
           {drawNodes(right, "right")}
-          <rect x={390} y={centerY} width={20} height={total * scale} rx={3} fill="#6c5ce7" />
+          <rect x={348} y={centerY} width={24} height={total * scale} rx={4} fill="#6c5ce7" />
         </svg>
       </div>
       <div className="sr-only">
