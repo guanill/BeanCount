@@ -94,7 +94,7 @@ export default function SpendingFlow({ transactions, periodLabel }: { transactio
       <p className="mt-1 text-xs text-foreground/50">All transactions in this period, excluding transfers and ignored transactions. List filters do not affect this chart.</p>
       <p className="mt-1 text-xs text-foreground/40 sm:hidden">Swipe horizontally to see the full diagram.</p>
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 800 ${height}`} className="mx-auto w-full min-w-[700px] text-foreground" role="img"
+        <svg viewBox={`0 0 800 ${height}`} className="mx-auto w-full min-w-[560px] lg:min-w-0 text-foreground" role="img"
           aria-label={`Recorded income ${formatCurrency(flow.totalIncome)}, spending ${formatCurrency(flow.totalExpenses)}${flow.shortfall > 0 ? `, income shortfall ${formatCurrency(flow.shortfall)}` : `, income less spending ${formatCurrency(flow.remainder)}`}.`}>
           <text x="10" y="16" fill="currentColor" opacity={0.6} fontSize="11">INCOME SOURCES</text>
           <text x="595" y="16" fill="currentColor" opacity={0.6} fontSize="11">SPENDING CATEGORIES</text>

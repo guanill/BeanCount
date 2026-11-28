@@ -202,7 +202,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
+        <div className="max-w-7xl xl:max-w-[1440px] mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-accent rounded-xl glow-pulse">
               <Bean className="w-5 h-5 text-white" />
@@ -283,7 +283,7 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8 space-y-6 sm:space-y-8">
+      <main className="max-w-7xl xl:max-w-[1440px] mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-24 md:pb-8 space-y-6 sm:space-y-8">
         {view === "overview" && (
           <>
             {data.accounts.bank.length + data.accounts.cash.length + data.accounts.stock.length + data.accounts.crypto.length === 0 && (
