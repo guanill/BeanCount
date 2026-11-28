@@ -44,10 +44,39 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  min-block-size: 100dvh;
+}
+
+/* Container-query aware cards */
+.cq-card {
+  container-type: inline-size;
+}
+
+.cq-asset-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+@container (inline-size > 460px) {
+  .cq-asset-layout {
+    flex-direction: row;
+    gap: 1.75rem;
+  }
+}
+
+.fluid-hero-value {
+  font-size: clamp(1.85rem, 1.3rem + 1.8vw, 3rem);
+  line-height: 1.08;
 }
 
 button,

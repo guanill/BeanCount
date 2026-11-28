@@ -1736,57 +1736,59 @@ export default function TransactionsSection() {
           <p className="text-foreground/30 text-sm">Sync your bank via Teller or plant your first bean manually</p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-5 xl:space-y-0 xl:grid xl:grid-cols-[minmax(380px,460px)_1fr] xl:gap-6 xl:items-start">
 
-          {/* â"€â"€ Donut chart (full width) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
-          <div className="flex w-fit items-center gap-1 rounded-xl border border-border/40 bg-background p-1 mx-auto" aria-label="Spending chart view">
-            {(["flow", "donut"] as const).map(chart => (
-              <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
-                className={`rounded-lg px-4 py-1.5 text-xs font-medium ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
-                {chart === "flow" ? "Income flow" : "Category donut"}
-              </button>
-            ))}
-          </div>
-          {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-44 h-44 sm:w-56 sm:h-56">
-              <SpendingDonut
-                segments={donutSegments}
-                total={donutTotal}
-                highlightedCat={hoveredCat}
-                onHover={setHoveredCat}
-              />
-            </div>
-            {/* Donut legend */}
-            <div className="w-full flex flex-wrap justify-center gap-1">
-              {donutSegments.map(seg => {
-                const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
-                const isActive = catFilter === seg.category;
-                return (
-                  <button
-                    key={seg.category}
-                    type="button"
-                    onMouseEnter={() => setHoveredCat(seg.category)}
-                    onMouseLeave={() => setHoveredCat(null)}
-                    onClick={() => handleDonutClick(seg.category)}
-                    className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
-                  >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
-                    <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
-                    <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
-                  </button>
-                );
-              })}
-              {catFilter && (
-                <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
-                  Clear filter ×
+          {/* Chart panel (sticky alongside transactions on wide desktop) */}
+          <div className="xl:sticky xl:top-6 rounded-2xl border border-border/40 bg-card/40 p-4 space-y-4">
+            <div className="flex w-fit items-center gap-1 rounded-xl border border-border/40 bg-background p-1 mx-auto" aria-label="Spending chart view">
+              {(["flow", "donut"] as const).map(chart => (
+                <button key={chart} type="button" aria-pressed={chartView === chart} onClick={() => setChartView(chart)}
+                  className={`rounded-lg px-4 py-1.5 text-xs font-medium ${chartView === chart ? "bg-accent text-white" : "text-foreground/60 hover:text-foreground"}`}>
+                  {chart === "flow" ? "Income flow" : "Category donut"}
                 </button>
-              )}
+              ))}
             </div>
+            {chartView === "flow" ? <SpendingFlow transactions={transactions} periodLabel={periodLabel} /> : (
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-44 h-44 sm:w-52 sm:h-52">
+                <SpendingDonut
+                  segments={donutSegments}
+                  total={donutTotal}
+                  highlightedCat={hoveredCat}
+                  onHover={setHoveredCat}
+                />
+              </div>
+              {/* Donut legend */}
+              <div className="w-full flex flex-wrap justify-center gap-1">
+                {donutSegments.map(seg => {
+                  const pct = donutTotal > 0 ? Math.round((seg.amount / donutTotal) * 100) : 0;
+                  const isActive = catFilter === seg.category;
+                  return (
+                    <button
+                      key={seg.category}
+                      type="button"
+                      onMouseEnter={() => setHoveredCat(seg.category)}
+                      onMouseLeave={() => setHoveredCat(null)}
+                      onClick={() => handleDonutClick(seg.category)}
+                      className={"flex items-center gap-1.5 rounded-lg px-2.5 py-1 transition-all text-xs " + (isActive ? "bg-accent/10 ring-1 ring-accent/20" : hoveredCat === seg.category ? "bg-card-hover" : "hover:bg-card/60")}
+                    >
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                      <span className="truncate text-foreground/70">{seg.emoji} {seg.label}</span>
+                      <span className="text-foreground/35 shrink-0 tabular-nums">{pct}%</span>
+                    </button>
+                  );
+                })}
+                {catFilter && (
+                  <button onClick={() => setCatFilter(null)} className="text-xs text-accent/60 hover:text-accent px-2.5 py-1 transition-colors">
+                    Clear filter ×
+                  </button>
+                )}
+              </div>
+            </div>
+            )}
           </div>
-          )}
 
-          {/* â"€â"€ Category accordion + transaction list â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ */}
+          {/* Category accordion + transaction list */}
           <div className="min-w-0 space-y-3">
 
             {/* Type filter tabs */}

@@ -11,7 +11,7 @@ interface Props {
 export default function NetWorthHistory({ snapshots }: Props) {
   if (snapshots.length < 2) {
     return (
-      <section className="rounded-2xl bg-card border border-border/50 p-5">
+      <section className="h-full flex flex-col justify-between rounded-2xl bg-card border border-border/50 p-5">
         <h2 className="text-lg font-bold text-foreground">Net worth history</h2>
         <p className="text-sm text-foreground/50 mt-2">
           Your daily trend will appear here after a second snapshot is recorded.
@@ -29,7 +29,7 @@ export default function NetWorthHistory({ snapshots }: Props) {
   const range = Math.max(...values) - min || 1;
 
   return (
-    <section className="rounded-2xl bg-card border border-border/50 p-5">
+    <section className="h-full flex flex-col justify-between rounded-2xl bg-card border border-border/50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div>
           <h2 className="text-lg font-bold text-foreground">Net worth history</h2>

@@ -14,47 +14,46 @@ interface Props {
 
 export default function FinalTotals({ assetsTotal, debtsOwedTotal, pointsValue, creditCardDebt, liabilitiesTotal, netWorth }: Props) {
   const lines = [
-    { label: "Total Assets (Bank + Cash + Stocks + Crypto)", value: assetsTotal, color: "text-blue", icon: Plus, positive: true },
-    { label: "Owed to You", value: debtsOwedTotal, color: "text-green", icon: Plus, positive: true },
-    { label: "Credit Card Points Value", value: pointsValue, color: "text-yellow", icon: Plus, positive: true },
-    { label: "Credit Card Debt", value: creditCardDebt, color: "text-red", icon: Minus, positive: false },
-    { label: "Pending & Owed", value: liabilitiesTotal, color: "text-red", icon: Minus, positive: false },
+    { label: "Total Assets", sub: "Bank, Cash, Stocks, Crypto", value: assetsTotal, color: "text-blue", icon: Plus, positive: true },
+    { label: "Owed to You", sub: "Pending & partial", value: debtsOwedTotal, color: "text-green", icon: Plus, positive: true },
+    { label: "Card Points", sub: "Estimated value", value: pointsValue, color: "text-yellow", icon: Plus, positive: true },
+    { label: "Card Debt", sub: "Balances owed", value: creditCardDebt, color: "text-red", icon: Minus, positive: false },
+    { label: "Liabilities", sub: "Pending & owed", value: liabilitiesTotal, color: "text-red", icon: Minus, positive: false },
   ];
 
   return (
-    <div className="rounded-2xl bg-card border border-border/50 p-6 animate-slide-up">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-2.5 rounded-xl bg-accent/20">
-          <Calculator className="w-5 h-5 text-accent-light" />
+    <div className="rounded-2xl bg-card border border-border/50 p-5 animate-slide-up">
+      <div className="flex items-center gap-2.5 mb-4">
+        <div className="p-2 rounded-xl bg-accent/20">
+          <Calculator className="w-4 h-4 text-accent-light" />
         </div>
-        <h2 className="text-lg font-bold text-foreground">Final Summary</h2>
+        <h2 className="text-base font-bold text-foreground">Net Worth Equation</h2>
       </div>
 
-      <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
         {lines.map((line, i) => (
-          <div key={i} className="flex items-center justify-between py-2 border-b border-border/30 last:border-0">
-            <div className="flex items-center gap-2">
-              <line.icon className={`w-4 h-4 ${line.positive ? "text-green" : "text-red"}`} />
-              <span className="text-sm text-foreground/70">{line.label}</span>
+          <div key={i} className="rounded-xl bg-background/60 border border-border/30 p-3 flex flex-col justify-between min-w-0">
+            <div className="flex items-center gap-1.5 text-xs text-foreground/60">
+              <line.icon className={`w-3.5 h-3.5 shrink-0 ${line.positive ? "text-green" : "text-red"}`} />
+              <span className="truncate font-medium">{line.label}</span>
             </div>
-            <span className={`text-sm font-bold ${line.color}`}>
+            <div className={`text-base font-bold tabular-nums mt-2 truncate ${line.color}`}>
               {line.positive ? "" : "-"}{formatCurrency(line.value)}
-            </span>
+            </div>
+            <div className="text-[10px] text-foreground/35 truncate mt-0.5">{line.sub}</div>
           </div>
         ))}
 
-        {/* Divider */}
-        <div className="border-t-2 border-accent/30 my-2" />
-
-        {/* Net worth */}
-        <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-accent/10 border border-accent/20">
-          <div className="flex items-center gap-2">
-            <Equal className="w-5 h-5 text-accent-light" />
-            <span className="text-base font-bold text-foreground">NET WORTH</span>
+        {/* Net worth result tile */}
+        <div className="col-span-2 sm:col-span-3 xl:col-span-1 rounded-xl bg-accent/15 border border-accent/30 p-3 flex flex-col justify-between min-w-0">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-accent-light">
+            <Equal className="w-3.5 h-3.5 shrink-0" />
+            <span>NET WORTH</span>
           </div>
-          <span className={`text-2xl font-black ${netWorth >= 0 ? "text-green" : "text-red"}`}>
+          <div className={`text-lg font-black tabular-nums mt-2 truncate ${netWorth >= 0 ? "text-green" : "text-red"}`}>
             {formatCurrency(netWorth)}
-          </span>
+          </div>
+          <div className="text-[10px] text-foreground/40 truncate mt-0.5">Total position</div>
         </div>
       </div>
     </div>

@@ -2495,10 +2495,10 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
         <ProjectionChart config={effectiveConfig} loanPaymentsTotal={getLoanPaymentsForMonth} filingStatus={taxFilingStatus} paidChargeIds={paidChargeIds} />
       </div>
 
-      {/* ── Config + Year Grid (2-col on lg) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 lg:gap-6">
-        {/* Sidebar: config cards (horizontal on mobile, stacked in sidebar on lg) */}
-        <div className="order-2 lg:order-1 space-y-3">
+      {/* ── Config + Year Grid (2-col on lg, sticky sidebar) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] xl:grid-cols-[340px_1fr] gap-5 items-start">
+        {/* Sidebar: config cards (horizontal on mobile, sticky sidebar on lg) */}
+        <div className="order-2 lg:order-1 space-y-3 lg:sticky lg:top-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-3">
             {/* Starting balance */}
             <div className="bg-card border border-border/40 rounded-2xl p-3 flex items-center gap-3">
@@ -2760,7 +2760,7 @@ export default function PlannerSection({ netWorth, stockTotal = 0 }: { netWorth:
           </div>
 
           {/* Month grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
           {yearData.map((d, i) => {
             const eventsM     = config.events.filter(e => e.year === d.year && e.month === d.month);
             const vestEventsM     = allVestEvents.filter(e => e.year === d.year && e.month === d.month);
